@@ -34,8 +34,14 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
 
   /* ---------- ingest (token auth, capture first; design §8.5, §19.2) ---------- */
   app.addContentTypeParser('text/plain', { parseAs: 'string' }, (_r, body, done) => done(null, body));
+  // Keep the exact bytes of JSON bodies: HMAC signatures are computed over what the sender sent, not a re-serialization.
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    (req as any).rawBody = body;
+    try { done(null, body ? JSON.parse(body as string) : {}); } catch (e) { done(Object.assign(e as Error, { statusCode: 400 }), undefined); }
+  });
   const ingest = (channel: 'email' | 'device', defaultSource: Source) => async (req: any, reply: any) => {
-    const raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+    const raw: string = req.rawBody ?? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {}));
     const bearer = (req.query?.token as string | undefined) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
     const a = authenticate(db, { label: req.headers['x-hk-token'] as string, signature: req.headers['x-hk-signature'] as string, timestamp: req.headers['x-hk-timestamp'] as string, nonce: req.headers['x-hk-nonce'] as string, bearer, body: raw }, channel);
     if (!a.ok) return reply.code(401).send({ error: a.reason });

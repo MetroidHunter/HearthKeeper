@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { seedHousehold } from './helpers.js';
 import { buildApp } from '../src/server/app.js';
-import { createToken, clearParsers } from '../src/ingest/events.js';
+import { createToken, clearParsers, sign } from '../src/ingest/events.js';
 import { signSession, verifySession } from '../src/server/auth.js';
 import { addRule } from '../src/core/rules.js';
 
@@ -42,6 +42,17 @@ describe('api', () => {
     const r2 = await app.inject({ method: 'POST', url: `/ingest/device?token=${t.secret}`, headers: { 'content-type': 'text/plain' }, payload: '$100.00 allowance transferred to Marion on October 3, 2026 at 09:16AM' });
     expect(r2.statusCode).toBe(200);
     expect((await app.inject({ url: '/api/transactions?hidden=1' })).json()).toHaveLength(2);
+  });
+
+  it('hmac-signed email ingest verifies against the exact raw bytes (Apps Script path)', async () => {
+    const { h, app } = mk();
+    const t = createToken(h.db, 'receiver-mailbox', 'email');
+    const body = '{"source":"amazon_receipt",  "text":"Order caf\u00e9 ✓ $12.00","messageId":"m1"}'; // odd spacing + unicode on purpose
+    const ts = String(Math.floor(Date.now() / 1000)), nonce = 'abc123';
+    const hdr = { 'content-type': 'application/json', 'x-hk-token': 'receiver-mailbox', 'x-hk-timestamp': ts, 'x-hk-nonce': nonce, 'x-hk-signature': sign(t.secret, ts, nonce, body) };
+    expect((await app.inject({ method: 'POST', url: '/ingest/email', headers: hdr, payload: body })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/ingest/email', headers: hdr, payload: body })).statusCode).toBe(401); // replayed nonce
+    expect((await app.inject({ method: 'POST', url: '/ingest/email', headers: { ...hdr, 'x-hk-nonce': 'n2' }, payload: body })).statusCode).toBe(401); // signature no longer matches
   });
 
   it('email ingest of an unknown shape is captured, creates nothing, and shows up in Shapes', async () => {
