@@ -66,12 +66,27 @@ export function explore(db: DB, q: string, p: Period) {
   return { totalCents: total, monthlyAverageCents: Math.round(total / months), count: rows.length, sparkline: [...byMonth].sort().map(([month, cents]) => ({ month, cents })) };
 }
 
+/** Ranked top-3 category suggestions (design §9.5): the suggesting rule, the merchant's past categories, then categories of similar descriptors. */
+export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number | null; descriptor_clean: string | null }): { id: number; name: string; why: string }[] {
+  const out: { id: number; name: string; why: string }[] = [];
+  const add = (id: number | null | undefined, why: string) => { if (id && out.length < 3 && !out.some((o) => o.id === id)) { const c = db.prepare("SELECT name FROM categories WHERE id=? AND status='active'").get(id) as any; if (c) out.push({ id, name: c.name, why }); } };
+  if (t.decided_rule_id) { const r = db.prepare('SELECT action_json FROM rules WHERE id=?').get(t.decided_rule_id) as any; const n = r ? JSON.parse(r.action_json).category : null; if (n) add((db.prepare('SELECT id FROM categories WHERE name=? COLLATE NOCASE').get(n) as any)?.id, 'rule'); }
+  const past = db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN transactions me ON me.id=? AND me.merchant_id IS NOT NULL AND x.merchant_id=me.merchant_id
+    WHERE s.category_id IS NOT NULL AND x.id!=me.id GROUP BY s.category_id ORDER BY n DESC LIMIT 3`).all(t.id) as any[];
+  for (const p of past) add(p.id, 'merchant history');
+  if (t.descriptor_clean && out.length < 3) {
+    const first = t.descriptor_clean.split(' ')[0];
+    if (first.length >= 4) for (const r of db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id WHERE x.descriptor_clean LIKE ? AND s.category_id IS NOT NULL AND x.id!=? GROUP BY s.category_id ORDER BY n DESC LIMIT 3`).all(`${first}%`, t.id) as any[]) add(r.id, 'similar');
+  }
+  return out;
+}
+
 /** Inbox / "Needs you" (design §15.1). */
 export function inbox(db: DB) {
   const rows = (where: string) => db.prepare(`SELECT t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note_state, t.flag_reason, t.decided_rule_id, a.name account FROM transactions t JOIN accounts a ON a.id=t.account_id
     WHERE t.status!='void' AND ${where} ORDER BY t.occurred_on DESC LIMIT 200`).all();
   return {
-    needsCategory: rows("t.kind NOT IN ('ignored','internal_transfer') AND (t.review_state='needs_category')"),
+    needsCategory: (rows("t.kind NOT IN ('ignored','internal_transfer') AND (t.review_state='needs_category')") as any[]).map((t) => ({ ...t, suggestions: suggestionsFor(db, t) })),
     needsNote: rows("t.note_state IN ('needs_note','ambiguous','awaiting_note')"),
     staleProvisionals: rows("t.status='stale'"),
     flagged: rows('t.flagged=1'),

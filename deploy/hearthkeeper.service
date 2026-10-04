@@ -1,0 +1,17 @@
+[Unit]
+Description=HearthKeeper
+After=network-online.target
+
+[Service]
+User=hearthkeeper
+WorkingDirectory=/opt/hearthkeeper
+EnvironmentFile=/etc/hearthkeeper.env
+ExecStart=/usr/bin/node --import tsx src/server/main.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/hearthkeeper
+
+[Install]
+WantedBy=multi-user.target

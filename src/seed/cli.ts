@@ -2,6 +2,7 @@
  *   init [--user "Name:email" ...]      create accounts + ingest tokens (prints secrets once)
  *   migrate --dir <exports> --asof YYYY-MM-DD [--oracle <dir>]   import sheet CSVs, then run parity if oracle files exist
  *   seed-rules --guesser <IFTTT_guess.gs>   convert the old categorizer into rules
+ *   demo                                  load fictional data to try the UI
  *   profiles                              create Greenlight profiles (needs categories)
  */
 import { readFileSync, existsSync } from 'node:fs';
@@ -34,6 +35,10 @@ if (cmd === 'init') {
   process.exitCode = parity.passed ? 0 : 1;
 } else if (cmd === 'seed-rules') {
   console.log(JSON.stringify(seedFromGuesser(db, read(flag('guesser')!)), null, 2));
+} else if (cmd === 'demo') {
+  const { seedDemo } = await import('./demo.js');
+  seedDemo(db, new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
+  console.log('Demo data loaded (fictional). Start with: HK_AUTH=dev npm start');
 } else if (cmd === 'profiles') {
   const missing = seedGreenlightProfiles(db);
   console.log(missing.length ? `Missing categories (create them first): ${missing.join(', ')}` : 'Greenlight profiles ready');

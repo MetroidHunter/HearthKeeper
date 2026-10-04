@@ -1,9 +1,12 @@
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { MIGRATIONS } from './schema.js';
 
 export type DB = Database.Database;
 
 export function openDb(file = ':memory:'): DB {
+  if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
   const db = new Database(file);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');

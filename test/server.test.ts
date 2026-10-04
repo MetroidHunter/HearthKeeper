@@ -114,3 +114,15 @@ describe('api', () => {
     expect((await app.inject({ url: '/api/budget' })).json().header).toMatchObject({ livePlan: 'P', incomeCents: 1246667 });
   });
 });
+
+describe('inbox suggestions', () => {
+  it('ranks rule suggestion first, then merchant history', async () => {
+    const { h, app } = mk();
+    addRule(h.db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'cafe' }] }, action: { type: 'categorize', category: 'Eating Out' }, mode: 'suggest' });
+    const csv = 'Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n10/01/2026,10/01/2026,SQ *NEW CAFE,Food,Sale,-9.40,\n';
+    const sug = (await app.inject({ method: 'POST', url: '/api/imports/suggest-mapping', headers: H, payload: { csv } })).json();
+    await app.inject({ method: 'POST', url: '/api/imports/commit', headers: H, payload: { institution: 'Chase', csv, spec: { columnMap: sug.columnMap, dateFormat: sug.dateFormat, signRule: sug.signRule, skipRows: 0 } } });
+    const t = (await app.inject({ url: '/api/inbox' })).json().needsCategory[0];
+    expect(t.suggestions[0]).toMatchObject({ name: 'Eating Out', why: 'rule' });
+  });
+});

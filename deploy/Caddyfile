@@ -1,0 +1,5 @@
+# Replace with your domain. Caddy obtains and renews the Let's Encrypt certificate automatically (design §17.3).
+hearth.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

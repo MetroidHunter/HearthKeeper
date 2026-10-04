@@ -55,7 +55,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/ingest/device', ingest('device', 'greenlight_msg'));
   app.post('/ingest/email', ingest('email', 'email_unknown'));
   app.post('/ingest/heartbeat', async (req: any, reply) => {
-    const a = authenticate(db, { bearer: (req.query?.token as string) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1], body: '' }, 'device');
+    const bearer = (req.query?.token as string) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+    const a = (() => { const d = authenticate(db, { bearer, body: '' }, 'device'); return d.ok ? d : authenticate(db, { bearer, body: '' }, 'email'); })();
     if (!a.ok) return reply.code(401).send({ error: a.reason });
     db.prepare("UPDATE ingest_tokens SET last_seen_at=datetime('now') WHERE id=?").run(a.tokenId);
     return { ok: true };
@@ -71,6 +72,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const steps = closeChecklist(db, now());
     return { closeReadiness: steps, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
   });
+
+  app.get('/api/accounts', async () => db.prepare('SELECT id, name, institution, type, shared, in_system FROM accounts WHERE in_system=1 ORDER BY id').all());
 
   /* ---------- categories & budgets ---------- */
   app.get('/api/categories', async () => db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all());
@@ -212,9 +215,10 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
 }
 
 import { existsSync, readFileSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, resolve } from 'node:path';
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
-function registerStatic(app: FastifyInstance, dir: string) {
+function registerStatic(app: FastifyInstance, rawDir: string) {
+  const dir = resolve(rawDir);
   app.get('/*', async (req, reply) => {
     const p = normalize((req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0])).replace(/^(\.\.[/\\])+/, '');
     let f = join(dir, p);

@@ -6,15 +6,15 @@ export type Source = 'chase_alert' | 'chase_csv' | 'wf_csv' | 'simplefin' | 'gre
 /** Template fingerprint: numbers, dates, amounts, names replaced by placeholders (design §19.2 Shapes page). */
 export function fingerprint(text: string): string {
   return text
-    .replace(/https?:\/\/\S+/g, 'URL')
-    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, 'EMAIL')
-    .replace(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?/gi, 'DATE')
-    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, 'DATE')
-    .replace(/\b\d{1,2}:\d{2}\s*(?:[AP]M)?/gi, 'TIME')
-    .replace(/[$€£]\s?[\d,]+(?:\.\d+)?/g, '$AMT')
-    .replace(/\b\d[\d,.-]*\b/g, 'N')
-    .replace(/\b[A-Z][a-z]+(?='s\b|’s\b)/g, 'NAME')
-    .replace(/\b(?:[A-Z]{2,}[*#]?\s?)+(?=[A-Z][a-z]|\s|$)/g, 'CAPS ')
+    .replace(/https?:\/\/\S+/g, '‹url›')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '‹email›')
+    .replace(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?/gi, '‹date›')
+    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, '‹date›')
+    .replace(/\b\d{1,2}:\d{2}\s*(?:[AP]M)?/gi, '‹time›')
+    .replace(/[$€£]\s?[\d,]+(?:\.\d+)?/g, '‹amt›')
+    .replace(/\b\d[\d,.-]*\b/g, '‹n›')
+    .replace(/\b[A-Z][a-z]+(?='s\b|’s\b)/g, '‹name›')
+    .replace(/\b(?:[A-Z]{2,}[*#]?\s?)+(?=[A-Z][a-z]|\s|$)/g, '‹caps› ')
     .replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
