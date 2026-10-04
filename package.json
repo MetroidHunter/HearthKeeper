@@ -1,0 +1,27 @@
+{
+  "name": "hearthkeeper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HearthKeeper: envelope budgeting, ingestion and categorization (see docs/DESIGN.md)",
+  "scripts": {
+    "dev": "tsx watch src/server/main.ts",
+    "start": "tsx src/server/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "better-sqlite3": "^12.0.0",
+    "fastify": "^5.0.0",
+    "luxon": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
