@@ -1,0 +1,222 @@
+import Fastify, { type FastifyInstance } from 'fastify';
+import type { DB } from '../core/db.js';
+import { audit } from '../core/db.js';
+import { registerAuth, type AuthConfig } from './auth.js';
+import { addCategory, budgetHistory, retireCategory, setBudget } from '../core/categories.js';
+import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod } from '../core/reports.js';
+import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust } from '../core/plans.js';
+import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
+import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
+import { closeChecklist, closePeriod } from '../core/close.js';
+import { answerCategory, promotable } from '../core/answers.js';
+import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
+import { addRule, backtest, type RuleMatch } from '../core/rules.js';
+import { categoryBalance, checkInvariants } from '../core/balance.js';
+import { authenticate, captureEvent, shapes, decideShape, replay, parseEvent, silentTokens, createToken, type Source } from '../ingest/events.js';
+import { previewImport, commitImport, coverage, markStale } from '../ingest/import.js';
+import { suggestMapping, parseCsv } from '../ingest/csv.js';
+import { processGreenlightMessage, createRequest, fundRequest, walletBalance, missingAllowances } from '../greenlight/engine.js';
+import { registerGreenlightParser, extractText } from '../greenlight/parser.js';
+import { importNotesCsv, runNoteMatcher } from '../notes/matcher.js';
+
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+
+export interface AppOptions { auth: AuthConfig; staticDir?: string; now?: () => string }
+
+export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
+  const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
+  const now = opts.now ?? today;
+  registerGreenlightParser();
+  registerAuth(app, opts.auth);
+  app.get('/healthz', async () => ({ ok: true }));
+  const actor = (req: { user?: string }) => req.user ?? 'unknown';
+  const rec = (v: unknown) => (v ?? {}) as Record<string, any>;
+
+  /* ---------- ingest (token auth, capture first; design §8.5, §19.2) ---------- */
+  app.addContentTypeParser('text/plain', { parseAs: 'string' }, (_r, body, done) => done(null, body));
+  const ingest = (channel: 'email' | 'device', defaultSource: Source) => async (req: any, reply: any) => {
+    const raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+    const bearer = (req.query?.token as string | undefined) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+    const a = authenticate(db, { label: req.headers['x-hk-token'] as string, signature: req.headers['x-hk-signature'] as string, timestamp: req.headers['x-hk-timestamp'] as string, nonce: req.headers['x-hk-nonce'] as string, bearer, body: raw }, channel);
+    if (!a.ok) return reply.code(401).send({ error: a.reason });
+    const body = rec(req.body);
+    const source = (req.query?.source as Source | undefined) ?? (body.source as Source | undefined) ?? defaultSource;
+    const payload = typeof req.body === 'string' ? req.body : (body.text ?? body.payload ?? raw);
+    const cap = captureEvent(db, { source, channel, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), headers: channel === 'email' ? body.headers : undefined, tokenId: a.tokenId, dedupeKey: body.messageId ? `${source}:${body.messageId}` : undefined });
+    if (!cap.duplicate) parseEvent(db, cap.id); // no parser => stays pending; nothing is created
+    return { id: cap.id, duplicate: cap.duplicate };
+  };
+  app.post('/ingest/device', ingest('device', 'greenlight_msg'));
+  app.post('/ingest/email', ingest('email', 'email_unknown'));
+  app.post('/ingest/heartbeat', async (req: any, reply) => {
+    const a = authenticate(db, { bearer: (req.query?.token as string) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1], body: '' }, 'device');
+    if (!a.ok) return reply.code(401).send({ error: a.reason });
+    db.prepare("UPDATE ingest_tokens SET last_seen_at=datetime('now') WHERE id=?").run(a.tokenId);
+    return { ok: true };
+  });
+
+  /* ---------- reports ---------- */
+  app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now()));
+  app.get('/api/budget/pie', async (req: any) => budgetPie(db, req.query.today ?? now(), req.query.mode === 'spent' ? 'spent' : 'allocated'));
+  app.get('/api/reports/spend-by', async (req: any) => spendBy(db, req.query.dim ?? 'category', { from: req.query.from ?? monthPeriod(now().slice(0, 7)).from, to: req.query.to ?? now() }));
+  app.get('/api/explore', async (req: any) => explore(db, String(req.query.q ?? ''), { from: req.query.from ?? '2020-01-01', to: req.query.to ?? now() }));
+  app.get('/api/inbox', async () => inbox(db));
+  app.get('/api/dashboard', async () => {
+    const steps = closeChecklist(db, now());
+    return { closeReadiness: steps, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
+  });
+
+  /* ---------- categories & budgets ---------- */
+  app.get('/api/categories', async () => db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all());
+  app.post('/api/categories', async (req) => ({ id: addCategory(db, rec(req.body) as any, actor(req)) }));
+  app.patch('/api/categories/:id', async (req: any) => {
+    const b = rec(req.body); const id = Number(req.params.id);
+    const cur = db.prepare('SELECT version FROM categories WHERE id=?').get(id) as any;
+    if (b.version !== undefined && b.version !== cur.version) throw Object.assign(new Error('conflict: edited elsewhere'), { statusCode: 409 });
+    for (const [k, col] of [['name', 'name'], ['discretionary', 'discretionary'], ['cushionCents', 'cushion_cents'], ['overagePriority', 'overage_priority']] as const)
+      if (b[k] !== undefined) db.prepare(`UPDATE categories SET ${col}=?, version=version+1 WHERE id=?`).run(typeof b[k] === 'boolean' ? Number(b[k]) : b[k], id);
+    audit(db, 'category', id, 'update', undefined, b, actor(req));
+    return { ok: true };
+  });
+  app.post('/api/categories/:id/budget', async (req: any) => { const b = rec(req.body); setBudget(db, Number(req.params.id), b.monthlyCents, b.effectiveMonth ?? now().slice(0, 7), { reason: b.reason, actor: actor(req) }); return { ok: true }; });
+  app.get('/api/categories/:id', async (req: any) => {
+    const id = Number(req.params.id);
+    return { category: db.prepare('SELECT * FROM categories WHERE id=?').get(id), balance: categoryBalance(db, id, now()), history: budgetHistory(db, id),
+      rules: db.prepare("SELECT * FROM rules WHERE action_json LIKE ?").all(`%"${(db.prepare('SELECT name FROM categories WHERE id=?').get(id) as any)?.name}"%`),
+      transactions: db.prepare('SELECT t.* FROM transactions t JOIN transaction_splits s ON s.transaction_id=t.id WHERE s.category_id=? ORDER BY t.occurred_on DESC LIMIT 100').all(id) };
+  });
+  app.post('/api/categories/:id/retire', async (req: any) => { const b = rec(req.body); return retireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { moveBalanceTo: b.moveBalanceTo, actor: actor(req) }); });
+  app.post('/api/favorites', async (req: any) => { const b = rec(req.body); db.prepare('INSERT OR IGNORE INTO favorites(user_id, category_id) VALUES (?,?)').run(b.userId ?? 1, b.categoryId); return { ok: true }; });
+
+  /* ---------- earnings & plans ---------- */
+  app.get('/api/scenarios', async () => (db.prepare('SELECT * FROM earning_scenarios ORDER BY id DESC').all() as any[]).map((s) => ({ ...s, lines: scenarioLines(db, s.id).map((l) => ({ ...l, ...lineMetrics(l) })), monthlyNetCents: scenarioMonthlyNet(db, s.id) })));
+  app.post('/api/scenarios', async (req) => { const b = rec(req.body); return { id: createScenario(db, b.name, b.lines, b.notes) }; });
+  app.put('/api/scenarios/:id/lines', async (req: any) => { setScenarioLines(db, Number(req.params.id), rec(req.body).lines); return { ok: true }; });
+  app.post('/api/scenarios/:id/clone', async (req: any) => ({ id: cloneScenario(db, Number(req.params.id), rec(req.body).name) }));
+  app.get('/api/plans', async () => (db.prepare('SELECT * FROM budget_plans ORDER BY id DESC').all() as any[]).map((p) => ({ ...p, ...planHeader(db, p.id) })));
+  app.get('/api/plans/:id', async (req: any) => ({ plan: db.prepare('SELECT * FROM budget_plans WHERE id=?').get(req.params.id), header: planHeader(db, Number(req.params.id)),
+    items: db.prepare('SELECT i.*, c.name FROM budget_plan_items i JOIN categories c ON c.id=i.category_id WHERE plan_id=? ORDER BY c.name').all(req.params.id) }));
+  app.post('/api/plans', async (req) => { const b = rec(req.body); return { id: createPlan(db, b.name, b.from === 'live' ? { livePlan: true } : b.fromPlanId ? { planId: b.fromPlanId } : 'blank', b.month ?? now().slice(0, 7)) }; });
+  app.put('/api/plans/:id/items/:cat', async (req: any) => { setPlanItem(db, Number(req.params.id), Number(req.params.cat), rec(req.body).monthlyCents, rec(req.body).note); return { ok: true }; });
+  app.post('/api/plans/:id/bulk', async (req: any) => { bulkAdjust(db, Number(req.params.id), rec(req.body)); return { ok: true }; });
+  app.put('/api/plans/:id/scenario', async (req: any) => { assignScenario(db, Number(req.params.id), rec(req.body).scenarioId ?? null); return { ok: true }; });
+  app.get('/api/plans/:id/diff', async (req: any) => diffPlan(db, Number(req.params.id), req.query.month ?? now().slice(0, 7), now()));
+  app.post('/api/plans/:id/make-live', async (req: any) => { const b = rec(req.body); return makeLive(db, Number(req.params.id), { effectiveMonth: b.effectiveMonth ?? now().slice(0, 7), actor: actor(req), today: now(), confirmRestate: b.confirmRestate }); });
+
+  /* ---------- transactions ---------- */
+  app.get('/api/transactions', async (req: any) => {
+    const q = req.query; const where: string[] = ["t.status!='void'"]; const args: unknown[] = [];
+    if (q.from) { where.push('t.occurred_on>=?'); args.push(q.from); } if (q.to) { where.push('t.occurred_on<=?'); args.push(q.to); }
+    if (q.account) { where.push('t.account_id=?'); args.push(q.account); }
+    if (q.category) { where.push('EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id=?)'); args.push(q.category); }
+    if (q.kind) { where.push('t.kind=?'); args.push(q.kind); }
+    if (q.hidden !== '1') where.push("t.kind NOT IN ('ignored','internal_transfer')");
+    if (q.q) { where.push('(LOWER(t.descriptor_raw) LIKE ? OR LOWER(COALESCE(t.note,\'\')) LIKE ?)'); args.push(`%${String(q.q).toLowerCase()}%`, `%${String(q.q).toLowerCase()}%`); }
+    const rows = db.prepare(`SELECT t.*, a.name account FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE ${where.join(' AND ')} ORDER BY t.occurred_on DESC, t.id DESC LIMIT ? OFFSET ?`).all(...args, Number(q.limit ?? 100), Number(q.offset ?? 0)) as any[];
+    const sp = db.prepare('SELECT s.*, c.name category FROM transaction_splits s LEFT JOIN categories c ON c.id=s.category_id WHERE transaction_id=?');
+    return rows.map((r) => ({ ...r, splits: sp.all(r.id) }));
+  });
+  app.post('/api/transactions', async (req) => { // quick add (manual / cash)
+    const b = rec(req.body);
+    const id = createTransaction(db, { accountId: b.accountId, occurredOn: b.occurredOn ?? now(), amountCents: b.amountCents, descriptor: b.descriptor ?? 'Manual entry', kind: b.amountCents < 0 ? 'spending' : 'income', note: b.note });
+    if (b.categoryId) setSplits(db, id, [{ categoryId: b.categoryId, amountCents: b.amountCents }], 'user'); else classify(db, id);
+    return { id };
+  });
+  app.post('/api/transactions/:id/categorize', async (req: any) => {
+    const b = rec(req.body); const id = Number(req.params.id);
+    const t = db.prepare('SELECT amount_cents FROM transactions WHERE id=?').get(id) as any;
+    const splits = b.splits ?? [{ categoryId: b.categoryId, amountCents: t.amount_cents }];
+    return answerCategory(db, id, splits, { makeRule: b.makeRule, actor: actor(req) });
+  });
+  app.post('/api/transactions/:id/ignore', async (req: any) => { ignoreTransaction(db, Number(req.params.id), rec(req.body).reason ?? 'user', actor(req)); return { ok: true }; });
+  app.post('/api/transactions/:id/restore', async (req: any) => { restoreTransaction(db, Number(req.params.id)); return { ok: true }; });
+  app.patch('/api/transactions/:id', async (req: any) => {
+    const b = rec(req.body); const id = Number(req.params.id);
+    const cur = db.prepare('SELECT version FROM transactions WHERE id=?').get(id) as any;
+    if (b.version !== undefined && b.version !== cur.version) throw Object.assign(new Error('conflict: edited elsewhere'), { statusCode: 409 });
+    if (b.note !== undefined) db.prepare("UPDATE transactions SET note=?, note_state='user_provided', note_source='manual', version=version+1 WHERE id=?").run(b.note, id);
+    if (b.flagged !== undefined) db.prepare('UPDATE transactions SET flagged=?, flag_reason=?, version=version+1 WHERE id=?').run(Number(b.flagged), b.flagReason ?? null, id);
+    audit(db, 'transaction', id, 'update', undefined, b, actor(req));
+    return { ok: true };
+  });
+  app.get('/api/audit', async (req: any) => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(Number(req.query.limit ?? 200)));
+
+  /* ---------- rules & merchants ---------- */
+  app.get('/api/rules', async () => db.prepare('SELECT * FROM rules ORDER BY priority, id').all());
+  app.post('/api/rules/backtest', async (req) => backtest(db, { match: rec(req.body).match as RuleMatch }));
+  app.post('/api/rules', async (req) => { const b = rec(req.body); return { id: addRule(db, b as any), backtest: backtest(db, { match: b.match }) }; });
+  app.patch('/api/rules/:id', async (req: any) => { const b = rec(req.body); if (b.mode) db.prepare('UPDATE rules SET mode=? WHERE id=?').run(b.mode, req.params.id); if (b.enabled !== undefined) db.prepare('UPDATE rules SET enabled=? WHERE id=?').run(Number(b.enabled), req.params.id); return { ok: true }; });
+  app.get('/api/rules/promotable', async () => promotable(db));
+  app.get('/api/merchants', async () => db.prepare("SELECT m.*, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ORDER BY review_state, name").all());
+  app.post('/api/merchants/:id/merge', async (req: any) => {
+    const into = rec(req.body).intoId; const id = Number(req.params.id);
+    db.transaction(() => { db.prepare('UPDATE transactions SET merchant_id=? WHERE merchant_id=?').run(into, id); db.prepare('UPDATE merchant_aliases SET merchant_id=? WHERE merchant_id=?').run(into, id);
+      db.prepare('INSERT INTO merchant_aliases(merchant_id, match_type, pattern) SELECT ?, \'contains\', name FROM merchants WHERE id=?').run(into, id);
+      db.prepare('DELETE FROM merchant_group_members WHERE merchant_id=?').run(id); db.prepare('DELETE FROM merchants WHERE id=?').run(id); })();
+    return { ok: true };
+  });
+  app.patch('/api/merchants/:id', async (req: any) => { const b = rec(req.body); if (b.name) db.prepare('UPDATE merchants SET name=?, review_state=\'reviewed\' WHERE id=?').run(b.name, req.params.id);
+    if (b.defaultCategoryId !== undefined) db.prepare('UPDATE merchants SET default_category_id=?, default_mode=COALESCE(?, default_mode), review_state=\'reviewed\' WHERE id=?').run(b.defaultCategoryId, b.defaultMode ?? null, req.params.id); return { ok: true }; });
+  app.post('/api/merchant-groups', async (req) => { const b = rec(req.body); const id = Number(db.prepare('INSERT INTO merchant_groups(name) VALUES (?)').run(b.name).lastInsertRowid); for (const m of b.merchantIds ?? []) db.prepare('INSERT OR IGNORE INTO merchant_group_members VALUES (?,?)').run(id, m); return { id }; });
+
+  /* ---------- transfers & close ---------- */
+  app.get('/api/transfers', async () => db.prepare('SELECT e.*, (SELECT json_group_array(json_object(\'categoryId\', category_id, \'cents\', amount_cents)) FROM envelope_transfer_legs WHERE transfer_id=e.id) legs FROM envelope_transfers e ORDER BY id DESC LIMIT 200').all());
+  app.get('/api/transfers/rebalance', async (req: any) => proposeRebalance(db, req.query.asOf ?? now()));
+  app.post('/api/transfers/rebalance', async (req) => commitRebalance(db, rec(req.body) as any, actor(req)));
+  app.post('/api/transfers/place-pool', async (req) => { const b = rec(req.body); return { id: placePool(db, b.asOf ?? now(), b.poolCategoryId, b.allocations, actor(req)) }; });
+  app.post('/api/transfers/manual', async (req) => { const b = rec(req.body); return { id: manualTransfer(db, b.date ?? now(), b.from, b.to, b.cents, b.memo, actor(req)) }; });
+  app.post('/api/transfers/adjustment', async (req) => { const b = rec(req.body); return { id: adjustment(db, b.date ?? now(), b.categoryId, b.cents, b.reason, actor(req)) }; });
+  app.get('/api/close', async (req: any) => closeChecklist(db, req.query.through ?? now(), { walletTyped: req.query.wallet !== undefined ? Number(req.query.wallet) : undefined }));
+  app.post('/api/close', async (req) => ({ id: closePeriod(db, rec(req.body).through ?? now(), actor(req)) }));
+
+  /* ---------- imports ---------- */
+  app.post('/api/imports/preview', async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec); });
+  app.post('/api/imports/suggest-mapping', async (req) => suggestMapping(parseCsv(rec(req.body).csv)));
+  app.post('/api/imports/commit', async (req) => { const b = rec(req.body); return commitImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId, filename: b.filename }); });
+  app.post('/api/imports/notes', async (req) => { const b = rec(req.body); const n = importNotesCsv(db, b.csv, b.source ?? 'amazon'); return { ...n, ...runNoteMatcher(db) }; });
+  app.get('/api/coverage', async () => coverage(db, now()));
+  app.post('/api/maintenance/stale', async () => ({ stale: markStale(db, now()) }));
+
+  /* ---------- greenlight ---------- */
+  app.get('/api/greenlight', async () => {
+    const wallet = db.prepare("SELECT id FROM accounts WHERE type='greenlight_wallet' LIMIT 1").get() as any;
+    return { profiles: db.prepare('SELECT p.*, c.name category FROM greenlight_profiles p JOIN categories c ON c.id=p.category_id').all(),
+      requests: db.prepare("SELECT * FROM greenlight_requests ORDER BY id DESC LIMIT 50").all(), walletBalanceCents: wallet ? walletBalance(db, wallet.id) : null,
+      missingAllowances: missingAllowances(db, now()), unrecognized: db.prepare("SELECT * FROM raw_events WHERE source='greenlight_msg' AND parse_status='unrecognized' ORDER BY id DESC LIMIT 50").all() };
+  });
+  app.patch('/api/greenlight/profiles/:id', async (req: any) => { const b = rec(req.body); for (const [k, c] of [['spendPolicy', 'spend_policy'], ['requestPolicy', 'request_policy'], ['withdrawPolicy', 'withdraw_policy'], ['categoryId', 'category_id']] as const) if (b[k] !== undefined) db.prepare(`UPDATE greenlight_profiles SET ${c}=? WHERE id=?`).run(b[k], req.params.id); return { ok: true }; });
+  app.post('/api/greenlight/requests', async (req) => { const b = rec(req.body); return { id: createRequest(db, b.profileId, b.amountCents, b.requestedAt ?? now()) }; });
+  app.post('/api/greenlight/requests/:id/approve', async (req: any) => ({ txnId: fundRequest(db, Number(req.params.id), now(), rec(req.body).categoryId) }));
+  app.post('/api/greenlight/requests/:id/decline', async (req: any) => { db.prepare("UPDATE greenlight_requests SET status='declined' WHERE id=? AND status='pending'").run(req.params.id); return { ok: true }; });
+
+  /* ---------- ingest health, shapes, replay ---------- */
+  app.get('/api/ingest/health', async () => ({ perSource: db.prepare('SELECT source, COUNT(*) events, MAX(received_at) last_event, SUM(parse_status IN (\'unrecognized\',\'error\')) failed, SUM(parse_status=\'pending\') pending FROM raw_events GROUP BY source').all(), tokens: db.prepare('SELECT id, label, channel, last_seen_at, expected_cadence_hours FROM ingest_tokens').all(), silent: silentTokens(db) }));
+  app.get('/api/shapes', async () => shapes(db));
+  app.post('/api/shapes/decide', async (req) => { const b = rec(req.body); decideShape(db, b.fingerprint, b.source, b.decision); return { ok: true }; });
+  app.post('/api/ingest/replay', async (req) => replay(db, rec(req.body)));
+  app.get('/api/ingest/events', async (req: any) => db.prepare('SELECT id, source, channel, received_at, parse_status, error, payload FROM raw_events WHERE (? IS NULL OR parse_status=?) ORDER BY id DESC LIMIT 200').all(req.query.status ?? null, req.query.status ?? null));
+  app.post('/api/ingest/tokens', async (req) => { const b = rec(req.body); return createToken(db, b.label, b.channel, b.expectedCadenceHours); }); // secret is shown once
+
+  app.setErrorHandler((err: any, _req, reply) => {
+    const status = err.statusCode ?? (/must|required|only|cannot|exceeds|requires|already|retroactive/i.test(err.message) ? 400 : 500);
+    reply.code(status).send({ error: err.message });
+  });
+  if (opts.staticDir) registerStatic(app, opts.staticDir);
+  return app;
+}
+
+import { existsSync, readFileSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
+const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
+function registerStatic(app: FastifyInstance, dir: string) {
+  app.get('/*', async (req, reply) => {
+    const p = normalize((req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0])).replace(/^(\.\.[/\\])+/, '');
+    let f = join(dir, p);
+    if (!f.startsWith(dir) || !existsSync(f)) f = join(dir, 'index.html'); // SPA fallback
+    if (!existsSync(f)) return reply.code(404).send({ error: 'not found' });
+    reply.header('content-type', MIME[extname(f)] ?? 'application/octet-stream');
+    if (f.endsWith('sw.js')) reply.header('service-worker-allowed', '/');
+    return reply.send(readFileSync(f));
+  });
+}
+export { extractText, processGreenlightMessage };
