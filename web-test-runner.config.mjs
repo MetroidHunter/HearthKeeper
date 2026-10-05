@@ -25,9 +25,10 @@ const proxy = async (ctx, next) => {
   const chunks = [];
   for await (const c of ctx.req) chunks.push(c);
   const body = chunks.length ? Buffer.concat(chunks) : undefined;
-  const r = await fetch(`http://127.0.0.1:${API_PORT}${ctx.url}`, { method: ctx.method, headers: { 'content-type': ctx.get('content-type') || 'application/json', 'x-requested-with': ctx.get('x-requested-with') || '' }, body: ['GET', 'HEAD'].includes(ctx.method) ? undefined : body });
+  const r = await fetch(`http://127.0.0.1:${API_PORT}${ctx.url}`, { method: ctx.method, headers: { 'content-type': ctx.get('content-type') || 'application/json', 'x-requested-with': ctx.get('x-requested-with') || '', cookie: ctx.get('cookie') || '' }, body: ['GET', 'HEAD'].includes(ctx.method) ? undefined : body });
   ctx.status = r.status;
   ctx.set('content-type', r.headers.get('content-type') ?? 'application/json');
+  for (const c of r.headers.getSetCookie?.() ?? []) ctx.append('set-cookie', c.replace(/;\s*Secure/i, '')); // the e2e origin is plain http
   ctx.body = Buffer.from(await r.arrayBuffer());
 };
 

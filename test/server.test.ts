@@ -126,3 +126,20 @@ describe('inbox suggestions', () => {
     expect(t.suggestions[0]).toMatchObject({ name: 'Eating Out', why: 'rule' });
   });
 });
+
+describe('auth endpoints', () => {
+  it('/auth/me reports mode and who is signed in; sign-in sets an httpOnly cookie for allowlisted emails only', async () => {
+    const h = seedHousehold();
+    const app = buildApp(h.db, { auth: { mode: 'google', allowlist: ['Me@Example.com'], googleClientId: 'cid', sessionSecret: 's3' }, verifyIdToken: async (t) => (t === 'ok' ? 'me@example.com' : t === 'other' ? 'x@example.com' : null) });
+    expect((await app.inject({ url: '/auth/me' })).json()).toEqual({ mode: 'google', user: null, googleClientId: 'cid' });
+    expect((await app.inject({ method: 'POST', url: '/auth/google', payload: { idToken: 'other' } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/auth/google', payload: { idToken: 'junk' } })).statusCode).toBe(403);
+    const ok = await app.inject({ method: 'POST', url: '/auth/google', payload: { idToken: 'ok' } });
+    expect(ok.statusCode).toBe(200);
+    const cookie = String(ok.headers['set-cookie']);
+    expect(cookie).toMatch(/HttpOnly/); expect(cookie).toMatch(/SameSite=Lax/);
+    const sess = cookie.split(';')[0];
+    expect((await app.inject({ url: '/auth/me', headers: { cookie: sess } })).json().user).toBe('me@example.com');
+    expect((await app.inject({ url: '/api/budget', headers: { cookie: sess } })).statusCode).toBe(200);
+  });
+});

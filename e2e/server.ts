@@ -18,8 +18,12 @@ function reset(db: DB) {
 
 const db = openDb(':memory:');
 reset(db);
-const app = buildApp(db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 'e2e' } });
-app.post('/__e2e/reset', async () => { reset(db); return { ok: true }; });
+const auth = { mode: 'dev' as 'dev' | 'google', allowlist: ['me@example.com'], googleClientId: 'e2e-client-id.apps.googleusercontent.com', sessionSecret: 'e2e-secret' };
+// fake Google: 'good-token' is an allowed user, 'stranger-token' is a valid Google user who is not on the allowlist
+const verifyIdToken = async (t: string) => (t === 'good-token' ? 'me@example.com' : t === 'stranger-token' ? 'stranger@example.com' : null);
+const app = buildApp(db, { auth, verifyIdToken });
+app.post('/__e2e/auth-mode', async (req) => { auth.mode = (req.body as { mode: 'dev' | 'google' }).mode; return { ok: true, mode: auth.mode }; });
+app.post('/__e2e/reset', async () => { auth.mode = 'dev'; reset(db); return { ok: true }; });
 const port = Number(process.env.E2E_API_PORT ?? 8765);
 await app.listen({ port, host: '127.0.0.1' });
 console.log(`E2E_READY ${port}`);

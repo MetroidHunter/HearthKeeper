@@ -6,6 +6,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const r = await fetch(url, { method, headers: H, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await r.text();
   const data = text ? JSON.parse(text) : null;
+  if (r.status === 401) window.dispatchEvent(new CustomEvent('hk-unauthorized'));
   if (!r.ok) throw new ApiError(r.status, data?.error ?? r.statusText);
   return data as T;
 }

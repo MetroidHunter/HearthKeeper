@@ -41,6 +41,13 @@ export function registerAuth(app: FastifyInstance, cfg: AuthConfig, verifyId: (t
     reply.header('set-cookie', `${COOKIE}=${signSession(cfg.sessionSecret, email)}; HttpOnly; SameSite=Lax; Path=/; Secure; Max-Age=${14 * 86400}`);
     return { ok: true, user: email };
   });
+  /** Public: tells the UI which sign-in to show and who (if anyone) is signed in. Never exposes secrets. */
+  app.get('/auth/me', async (req) => {
+    if (cfg.mode === 'dev') return { mode: 'dev', user: cfg.devUser ?? 'dev', googleClientId: null };
+    const m = /(?:^|;\s*)hk_session=([^;]+)/.exec(req.headers.cookie ?? '');
+    const email = verifySession(cfg.sessionSecret, m?.[1]);
+    return { mode: 'google', user: email && allowed.has(email) ? email : null, googleClientId: cfg.googleClientId ?? null };
+  });
   app.post('/auth/logout', async (_req, reply) => { reply.header('set-cookie', `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`); return { ok: true }; });
   app.addHook('onRequest', async (req: FastifyRequest, reply) => {
     const path = req.url.split('?')[0];
