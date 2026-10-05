@@ -65,7 +65,7 @@ export class HkApp extends LitElement {
     const base = '/' + ((this.path.split('?')[0]).split('/')[1] ?? '');
     const hit = ROUTES.find(([p]) => p === base) ?? ROUTES[0];
     return html`<nav class="top">${ROUTES.map(([p, label]) => html`<a href="#${p}" class=${p === hit[0] ? 'on' : ''}>${label}</a>`)}
-      ${this.auth.mode === 'google' ? html`<a href="#" style="margin-left:auto" @click=${async (e: Event) => { e.preventDefault(); await fetch('/auth/logout', { method: 'POST', headers: { 'x-requested-with': 'hearthkeeper' }, credentials: 'same-origin' }); await this.loadAuth(); }}>Sign out (${this.auth.user})</a>` : ''}</nav>
+      ${this.auth.mode === 'google' ? html`<a href="#" style="margin-left:auto" @click=${async (e: Event) => { e.preventDefault(); await fetch('/auth/logout', { method: 'POST', headers: { 'x-requested-with': 'hearthkeeper' }, credentials: 'same-origin' }); navigator.serviceWorker?.controller?.postMessage('logout'); try { localStorage.removeItem('hk-offline-queue'); } catch { /* ignore */ } await this.loadAuth(); }}>Sign out (${this.auth.user})</a>` : ''}</nav>
       <main>${hit[2]()}</main>${nothing}`;
   }
 }

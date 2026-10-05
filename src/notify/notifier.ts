@@ -52,7 +52,8 @@ export class Notifier {
       else if (!opts.ignoreQuiet && inQuietHours(prefs, this.now())) status = 'quiet';
       else if (this.subs(userId).length === 0) status = 'no_device';
       if (status === 'sent') {
-        const body = prefs.lockScreenPrivacy && payload.id ? { ...payload, title: 'HearthKeeper', body: 'Something needs you', actions: payload.actions } : payload;
+        // lock-screen privacy hides merchant, amount and category names for EVERY kind except the explicit test push; one-tap actions go with them
+        const body: PushPayload = prefs.lockScreenPrivacy && kind !== 'test' && !payload.close ? { title: 'HearthKeeper', body: kind === 'digest' ? 'Your morning digest is ready' : kind === 'silence' ? 'A source went quiet' : 'Something needs you', tag: payload.tag, url: payload.url, id: payload.id } : payload;
         for (const s of this.subs(userId)) {
           const r = await this.transport.send(s, body);
           if (r === 'gone') this.db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(s.id);

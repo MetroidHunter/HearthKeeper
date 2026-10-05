@@ -9,8 +9,12 @@ export interface ImportPreview { profileId: number | null; signature: string; su
 
 export function getOrCreateProfile(db: DB, institution: string, rows: string[][], spec?: ProfileSpec): { id: number; spec: ProfileSpec; signature: string } | { id: null; signature: string; suggested: ReturnType<typeof suggestMapping> } {
   const hasHeader = spec ? spec.columnMap.hasHeader : suggestMapping(rows).columnMap.hasHeader;
-  const signature = layoutSignature(rows, hasHeader, spec?.skipRows ?? 0);
+  const signature = `${institution}:${layoutSignature(rows, hasHeader, spec?.skipRows ?? 0)}`; // scoped: two institutions can share a headerless column count
   const ex = db.prepare('SELECT * FROM import_profiles WHERE header_signature=?').get(signature) as any;
+  if (ex && spec) { // an explicit mapping is a correction: it replaces the saved one
+    db.prepare('UPDATE import_profiles SET column_map_json=?, date_format=?, sign_rule=?, skip_rows=? WHERE id=?').run(JSON.stringify(spec.columnMap), spec.dateFormat, spec.signRule, spec.skipRows, ex.id);
+    return { id: ex.id, signature, spec };
+  }
   if (ex) return { id: ex.id, signature, spec: { columnMap: JSON.parse(ex.column_map_json), dateFormat: ex.date_format, signRule: ex.sign_rule, skipRows: ex.skip_rows } };
   if (!spec) return { id: null, signature, suggested: suggestMapping(rows) };
   const id = Number(db.prepare('INSERT INTO import_profiles(name, institution, header_signature, column_map_json, date_format, sign_rule, skip_rows) VALUES (?,?,?,?,?,?,?)')

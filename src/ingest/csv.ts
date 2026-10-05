@@ -87,7 +87,10 @@ export function rowFingerprint(institution: string, date: string, cents: number,
 /** Heuristic starting point for the mapping wizard: suggest columns from header names / content. */
 export function suggestMapping(rows: string[][]): { columnMap: ColumnMap; dateFormat: string; signRule: 'as_is' | 'invert' } {
   const first = rows[0] ?? [];
-  const looksHeader = first.some((c) => /[A-Za-z]{3,}/.test(c)) && !first.some((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim()));
+  // a header row has words but no dates and no money amounts; a data row has at least one of those
+  const isDate = (c: string) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim()) || /^\d{4}-\d{2}-\d{2}$/.test(c.trim());
+  const isMoney = (c: string) => /^-?[$(]?[\d,]+\.\d{2}\)?$/.test(c.trim());
+  const looksHeader = first.some((c) => /[A-Za-z]{3,}/.test(c)) && !first.some((c) => isDate(c) || isMoney(c));
   const names = first.map((c) => c.trim().toLowerCase());
   const find = (...re: RegExp[]) => { const i = names.findIndex((n) => re.some((r) => r.test(n))); return i >= 0 ? (looksHeader ? first[i] : i) : undefined; };
   const sample = rows[looksHeader ? 1 : 0] ?? [];
@@ -98,6 +101,6 @@ export function suggestMapping(rows: string[][]): { columnMap: ColumnMap; dateFo
     return { dateFormat, signRule: 'as_is', columnMap: { hasHeader: true, date: find(/^(transaction )?date$/, /trans.*date/) ?? first[0], postDate: find(/post/), amount: find(/^amount$/), debit: find(/debit/), credit: find(/credit/), description: find(/desc/, /payee/, /name/, /merchant/) ?? first[1], category: find(/^category$/), note: find(/memo|note/) } };
   }
   const amtIdx = sample.findIndex((c, i) => i !== dateIdx && /^-?[$(]?[\d,]+\.\d{2}\)?$/.test(c.trim()));
-  const descIdx = sample.reduce((best, c, i) => (i !== dateIdx && i !== amtIdx && c.length > (sample[best]?.length ?? -1) ? i : best), 0);
+  const descIdx = sample.reduce((best, c, i) => (i !== dateIdx && i !== amtIdx && c.length > (best < 0 ? -1 : sample[best].length) ? i : best), -1); // best starts at -1: it must never default to the date column
   return { dateFormat, signRule: 'as_is', columnMap: { hasHeader: false, date: Math.max(dateIdx, 0), amount: Math.max(amtIdx, 0), description: descIdx } };
 }

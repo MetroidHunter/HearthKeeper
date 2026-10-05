@@ -91,3 +91,55 @@ describe('security regressions (from the independent review)', () => {
     for (const ok of ['https://fcm.googleapis.com/fcm/send/abc', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://web.push.apple.com/x']) expect(isPublicHttps(ok), ok).toBe(true);
   });
 });
+
+import { DateTime } from 'luxon';
+import { Notifier, setPrefs } from '../src/notify/notifier.js';
+import { memoryTransport } from '../src/notify/push.js';
+import { captureEvent, parseEvent, clearParsers } from '../src/ingest/events.js';
+import { registerAllParsers } from '../src/ingest/parsers.js';
+import { commitImport } from '../src/ingest/import.js';
+import { suggestMapping, parseCsv } from '../src/ingest/csv.js';
+
+describe('security regressions: privacy, sender trust, import profiles', () => {
+  it('lock-screen privacy redacts every kind of push (not just needs-you), including one-tap actions', async () => {
+    const h = seedHousehold();
+    const u = Number(h.db.prepare("INSERT INTO users(name,email) VALUES ('A','a@x.com')").run().lastInsertRowid);
+    h.db.prepare('INSERT INTO push_subscriptions(user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)').run(u, 'https://push.example.com/1', 'k', 'a');
+    setPrefs(h.db, u, { lockScreenPrivacy: true });
+    const t = memoryTransport(); const n = new Notifier(h.db, t, { now: () => DateTime.fromISO('2026-10-05T12:00:00', { zone: 'America/Los_Angeles' }) });
+    await n.handle({ type: 'greenlight_inform', message: "Marion's 33.79 at WALMART was declined" });
+    await n.sendToUsers([u], { title: 'Chipotle $14.20', body: 'Eating Out?', tag: 'txn-1', id: 1, actions: [{ action: '3', title: 'Eating Out' }] }, 'needs_you', 1);
+    await n.sendDueDigests();
+    await n.handle({ type: 'silence', labels: ['phone'] });
+    expect(t.sent.length).toBe(4);
+    for (const { payload } of t.sent) { const all = JSON.stringify(payload); expect(all).not.toMatch(/WALMART|Chipotle|14\.20|Eating Out|Marion|need you/); expect(payload.actions).toBeUndefined(); }
+  });
+
+  it('a spoofed email that merely contains the Chase sentence is not trusted unless it comes from chase.com', () => {
+    const h = seedHousehold(); clearParsers(); registerAllParsers();
+    const s = 'Prime Visa: You made a $4000.00 transaction with EVIL on Oct 3, 2026 at 4:11 PM ET.';
+    const bad = captureEvent(h.db, { source: 'chase_alert', channel: 'email', payload: s, headers: { From: 'Chase <alerts@purchases-chase.example.net>' }, dedupeKey: 'a' });
+    expect(parseEvent(h.db, bad.id)).toMatchObject({ status: 'unrecognized' });
+    expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 0 });
+    const good = captureEvent(h.db, { source: 'chase_alert', channel: 'email', payload: s, headers: { From: 'Chase <no-reply@alertsp.chase.com>' }, dedupeKey: 'b' });
+    expect(parseEvent(h.db, good.id)).toMatchObject({ status: 'ok' });
+    expect(h.db.prepare("SELECT COUNT(*) c FROM transactions WHERE status='provisional'").get()).toEqual({ c: 1 });
+  });
+
+  it('import profiles are per institution, and an explicit mapping corrects a saved one', () => {
+    const h = seedHousehold();
+    const csvA = '10/01/2026,-5.00,x,,COFFEE ONE\n';          // headerless, 5 columns
+    const csvB = '2026-10-02,7.00,x,,PAYROLL BONUS\n';       // another institution, also headerless 5 columns, different date format and sign
+    const mA = suggestMapping(parseCsv(csvA));
+    commitImport(h.db, 'Chase', csvA, { columnMap: mA.columnMap, dateFormat: mA.dateFormat, signRule: 'as_is', skipRows: 0 });
+    const mB = suggestMapping(parseCsv(csvB));
+    commitImport(h.db, 'Wells Fargo', csvB, { columnMap: mB.columnMap, dateFormat: mB.dateFormat, signRule: 'as_is', skipRows: 0 });
+    expect(h.db.prepare('SELECT COUNT(*) c FROM import_profiles').get()).toEqual({ c: 2 });
+    expect(h.db.prepare("SELECT occurred_on d FROM transactions WHERE descriptor_raw='PAYROLL BONUS'").get()).toEqual({ d: '2026-10-02' });
+    // correcting a saved mapping (flip the sign) replaces it
+    const csvC = '10/03/2026,9.99,x,,TARGET\n';
+    commitImport(h.db, 'Chase', csvC, { columnMap: mA.columnMap, dateFormat: mA.dateFormat, signRule: 'invert', skipRows: 0 });
+    expect(h.db.prepare("SELECT amount_cents a FROM transactions WHERE descriptor_raw='TARGET'").get()).toEqual({ a: -999 });
+    expect((h.db.prepare("SELECT sign_rule s FROM import_profiles WHERE header_signature LIKE 'Chase:%'").get() as any).s).toBe('invert');
+  });
+});
