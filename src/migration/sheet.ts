@@ -5,6 +5,7 @@ import { monthOf, monthIndex } from '../core/time.js';
 import { parseCsv } from '../ingest/csv.js';
 import { createTransfer } from '../core/transfers.js';
 import { setBudget } from '../core/categories.js';
+import { saveReport } from './worksheet.js';
 
 /**
  * Legacy import (design §18). Inputs are CSV exports of the sheet tabs. Column headers are matched by name (case-insensitive) so the exact
@@ -177,5 +178,6 @@ export function importSheets(db: DB, ex: SheetExports): MigrationReport {
     audit(db, 'migration', 'sheets', 'import', undefined, { tx: rep.transactionsImported, legs: rep.legacyLegsImported }, 'migration');
   })();
   rep.categoriesMissingFromList = [...new Set(rep.categoriesMissingFromList)];
+  saveReport(db, { ...rep, legacySplitGroups: rep.legacySplitGroups.filter((g) => !g.balanced), reallocationRows: rep.reallocationRows.length, importedAt: new Date().toISOString() }); // review it on the Migration page
   return rep;
 }

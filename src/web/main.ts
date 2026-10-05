@@ -18,6 +18,7 @@ import './pages/categories.js';
 import './pages/signin.js';
 import './pages/settings.js';
 import './pages/analytics.js';
+import './pages/migration.js';
 
 const ROUTES: [string, string, () => TemplateResult][] = [
   ['/', 'Home', () => html`<hk-home></hk-home>`],
@@ -34,6 +35,7 @@ const ROUTES: [string, string, () => TemplateResult][] = [
   ['/analytics', 'Analytics', () => html`<hk-analytics></hk-analytics>`],
   ['/explore', 'Explore', () => html`<hk-explore></hk-explore>`],
   ['/categories', 'Categories', () => html`<hk-categories></hk-categories>`],
+  ['/migration', 'Migration', () => html`<hk-migration></hk-migration>`],
   ['/ingest', 'Ingest health', () => html`<hk-ingest></hk-ingest>`],
   ['/settings', 'Settings', () => html`<hk-settings></hk-settings>`],
 ];

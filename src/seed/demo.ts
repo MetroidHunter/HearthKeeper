@@ -39,6 +39,14 @@ export function seedDemo(db: DB, today: string) {
   const plan = createPlan(db, 'Current budget', { livePlan: true }, month);
   assignScenario(db, plan, sc);
   makeLive(db, plan, { effectiveMonth: month, today, actor: 'demo' });
+  // legacy leftovers parked by the old sheet (NEEDS CATEGORY / blank), to demo the migration worksheet
+  const legacy = Number(db.prepare("INSERT INTO accounts(name,institution,type,in_system) VALUES ('Legacy','Legacy','bank',0)").run().lastInsertRowid);
+  for (const [d, cents, desc, bucket] of [['2025-05-09', 30000, 'ZELLE FROM PREMIER VOCAL ENTERTAINMENT LLC ON 05/09', 'NEEDS CATEGORY'], ['2025-01-25', -5232, 'PETSMART # 0377', '(blank)'], ['2025-03-05', -4459, 'ADMIT ONE COMMUNITY', 'NEEDS CATEGORY']] as const) {
+    const id = Number(db.prepare("INSERT INTO transactions(account_id,kind,status,occurred_on,amount_cents,descriptor_raw,review_state) VALUES (?,?, 'posted', ?,?,?, 'needs_category')").run(legacy, cents < 0 ? 'spending' : 'income', d, cents, desc).lastInsertRowid);
+    db.prepare("INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,memo,origin) VALUES (?,NULL,?,?, 'legacy')").run(id, cents, `legacy:${bucket}`);
+  }
+  addRule(db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'premier vocal' }] }, action: { type: 'categorize', category: 'Gig Income' }, mode: 'suggest' });
+  addRule(db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'petsmart' }] }, action: { type: 'categorize', category: 'Pets' }, mode: 'suggest' });
   registerGreenlightParser();
   let n = 0;
   for (const m of ['$50.00 allowance transferred to Miracle', '$100.00 allowance transferred to Marion', 'Miracle spent $21.83 at El Rinconsito Seattle', 'Marion spent $7.07 at WAL-MART #3658 GREENSBORO NC', 'they can no longer use their debit card with payment apps', 'Marion\'s Greenlight card is on the way! 📫'])

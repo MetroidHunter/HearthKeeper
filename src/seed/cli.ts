@@ -1,6 +1,6 @@
 /** Usage: tsx src/seed/cli.ts <command> [...]
  *   init [--user "Name:email" ...]      create accounts + ingest tokens (prints secrets once)
- *   migrate --dir <exports> --asof YYYY-MM-DD [--oracle <dir>]   import sheet CSVs, then run parity if oracle files exist
+ *   migrate --dir <exports> --asof YYYY-MM-DD [--oracle <dir>] [--merchants]   import sheet CSVs, then run parity if oracle files exist
  *   seed-rules --guesser <IFTTT_guess.gs>   convert the old categorizer into rules
  *   backtest-rules                        compare the seeded rules with every categorized historical transaction
  *   demo                                  load fictional data to try the UI
@@ -14,6 +14,7 @@ import { importSheets } from '../migration/sheet.js';
 import { runParity, formatParity } from '../migration/parity.js';
 import { seedFromGuesser } from './guesser.js';
 import { backtestHistory } from './backtest.js';
+import { bootstrapMerchants } from '../migration/merchants.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -29,6 +30,7 @@ if (cmd === 'init') {
   const dir = flag('dir')!, asOf = flag('asof')!;
   const rep = importSheets(db, { list: read(join(dir, 'List.csv')), history: read(join(dir, 'History.csv')), budget: read(join(dir, 'Budget.csv')), transactions: read(join(dir, 'Transactions.csv')) });
   console.log(JSON.stringify({ ...rep, legacySplitGroups: rep.legacySplitGroups.filter((g) => !g.balanced) }, null, 2));
+  if (rest.includes('--merchants')) { const b = bootstrapMerchants(db); console.log(JSON.stringify({ ...b, mergeSuggestions: b.mergeSuggestions.slice(0, 15) }, null, 2)); }
   const od = flag('oracle') ?? dir;
   const f = (n: string) => (existsSync(join(od, n)) ? read(join(od, n)) : undefined);
   

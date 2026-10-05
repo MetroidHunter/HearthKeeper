@@ -6,7 +6,7 @@ describe('Navigation smoke: every page renders without uncaught errors', () => {
   beforeEach(() => { trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
   for (const [route, h1] of [['/', 'Home'], ['/dashboard', 'Dashboard'], ['/budget', 'Budget'], ['/transactions', 'Transactions'], ['/plans', 'Plans'], ['/earnings', 'Earnings'], ['/transfers', 'Transfers'],
-    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Settings']]) {
+    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Settings'], ['/analytics', 'Analytics'], ['/migration', 'Migration']]) {
     it(`renders ${route}`, async () => { await mount(route); expect(text($('h1'))).to.equal(h1); await sleep(150); });
   }
 });
@@ -134,5 +134,27 @@ describe('Settings: notifications', () => {
     expect(text(document.body)).to.match(/need you/); // digest preview
     const q = (await api('/api/me/notify-prefs')).quiet;
     expect(q.start).to.equal('22:00');
+  });
+});
+
+describe('Migration worksheet', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('resolves parked leftovers with one tap per suggestion and shows the before/after balance of every category touched', async () => {
+    await mount('/migration');
+    await waitFor(() => $$('tbody tr').length === 3, 'three parked rows');
+    const before = await api('/api/migration');
+    byText('button', /Accept top suggestions/).click();
+    await waitFor(() => !$('#apply').disabled, 'apply enabled');
+    $('#apply').click();
+    await waitFor(() => /Applied \d/.test(text(document.body)), 'result card');
+    expect(text(document.body)).to.match(/Gig Income/); expect(text(document.body)).to.match(/Pets/);
+    const after = await api('/api/migration');
+    expect(after.worksheet.length).to.be.lessThan(before.worksheet.length);
+    // the Gig Income balance moved by exactly the Zelle amount
+    const gig = $$('table tbody tr').find((r) => /^Gig Income/.test(text(r)));
+    expect(text(gig)).to.match(/\+\$300\.00/);
   });
 });

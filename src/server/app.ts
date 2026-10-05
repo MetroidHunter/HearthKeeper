@@ -21,6 +21,8 @@ import { extractText } from '../greenlight/parser.js';
 import { Notifier, getPrefs, setPrefs } from '../notify/notifier.js';
 import { vapidKeys } from '../notify/push.js';
 import { registerAllParsers } from '../ingest/parsers.js';
+import { worksheetItems, applyWorksheet, loadReport } from '../migration/worksheet.js';
+import { bootstrapMerchants } from '../migration/merchants.js';
 import { importNotesCsv, runNoteMatcher } from '../notes/matcher.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
@@ -224,6 +226,11 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/imports/notes', async (req) => { const b = rec(req.body); const n = importNotesCsv(db, b.csv, b.source ?? 'amazon'); return { ...n, ...runNoteMatcher(db) }; });
   app.get('/api/coverage', async () => coverage(db, now()));
   app.post('/api/maintenance/stale', async () => ({ stale: markStale(db, now()) }));
+
+  /* ---------- migration review (design D32, §18.4) ---------- */
+  app.get('/api/migration', async () => { const items = worksheetItems(db); return { report: loadReport(db), worksheet: items, total: items.reduce((a, i) => a + i.amountCents, 0) }; });
+  app.post('/api/migration/apply', async (req) => applyWorksheet(db, rec(req.body).assignments ?? [], now(), actor(req)));
+  app.post('/api/migration/merchants', async () => bootstrapMerchants(db));
 
   /* ---------- greenlight ---------- */
   app.get('/api/greenlight', async () => {

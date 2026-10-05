@@ -38,3 +38,30 @@ describe('rules', () => {
     expect(decide([a, b, c], { descriptor: 'TARGET', amount_cents: -300 }).rule?.id).toBe(3);
   });
 });
+
+describe('descriptor cleaning: shapes seen in real bank history (names are fake)', () => {
+  const c = (raw: string) => cleanDescriptor(raw, { year: 2025 });
+  it('decodes HTML entities', () => { expect(c('GERBER COLLISION &amp; GLASS').clean).toBe('GERBER COLLISION & GLASS'); });
+  it('collapses Amazon marketplace references into one merchant and keeps the ref', () => {
+    for (const raw of ['AMZN Mktp US*1Z8137DV2', 'Amazon.com*MF1J56KS1', 'AMAZON MKTPL*EN4MK4PN3']) expect(c(raw).clean).toBe('AMAZON');
+    expect(c('AMZN Mktp US*1Z8137DV2').refCode).toBe('1Z8137DV2');
+    expect(c('AMAZON PRIME*AB12CD34E').clean).not.toBe('AMAZON'); // Prime is its own category in the guesser
+  });
+  it('strips p2p date codes and reference numbers and extracts the owner', () => {
+    expect(c('VENMO CASHOUT 250826 1044441294478 BRYS SEPULVEDA')).toMatchObject({ clean: 'VENMO CASHOUT', ownerHint: 'brys' });
+    expect(c('VENMO PAYMENT 230730 1028486636483 MIRACLE SEPULVEDA')).toMatchObject({ clean: 'VENMO PAYMENT', ownerHint: 'miracle' });
+    expect(c('PAYPAL INST XFER 240426 CRUNCHYROLL BRYS SEPULVEDA')).toMatchObject({ clean: 'PAYPAL INST XFER CRUNCHYROLL', ownerHint: 'brys' });
+    expect(c('ZELLE FROM PRETTY PARLOR LLC ON 10/13 REF # USBAJ1RATBJE U.S. BANK SEN').clean).toBe('ZELLE FROM PRETTY PARLOR LLC');
+    expect(c('RECURRING TRANSFER TO JOE Q WAY2SAVE SAVINGS REF #OP0SRZNP99 XXXXXX').clean).toBe('RECURRING TRANSFER TO JOE Q WAY2SAVE SAVINGS');
+  });
+  it('wells fargo debit rows: authorized date, processor ref, card, phone', () => {
+    const d = c('PURCHASE AUTHORIZED ON 03/29 SQ *ATULEA Seattle WA S382088862271994 CARD 4481');
+    expect(d).toMatchObject({ authorizedOn: '2025-03-29', cardLast4: '4481', clean: 'ATULEA' });
+    expect(c('RECURRING PAYMENT AUTHORIZED ON 12/29 GOOGLE *Google Sto 855-836-3987 CA S582364002354301 CARD 4481').clean).toBe('GOOGLE STO');
+  });
+  it('trailing opaque references are removed; ordinary names are untouched', () => {
+    expect(c('GOOGLE *CLOUD ZHK8FF').clean).toBe('CLOUD');
+    expect(c('HONG KONG BISTRO').clean).toBe('HONG KONG BISTRO');
+    expect(c('SAFEWAY #1551').clean).toBe('SAFEWAY');
+  });
+});
