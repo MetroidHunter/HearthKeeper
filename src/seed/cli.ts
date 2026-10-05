@@ -5,6 +5,9 @@
  *   backtest-rules                        compare the seeded rules with every categorized historical transaction
  *   demo                                  load fictional data to try the UI
  *   profiles                              create Greenlight profiles (needs categories)
+ *   snapshot --out <dir> [--name n]       consistent gzip copy of the database + manifest (for moving data between machines)
+ *   verify --file <x.sqlite.gz>           read-only proof that a snapshot is intact (checksums, row counts, integrity, invariants)
+ *   tokens                                print the ingest token secrets stored in the database
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,6 +22,14 @@ import { bootstrapMerchants } from '../migration/merchants.js';
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
 const all = (n: string) => rest.flatMap((x, i) => (x === `--${n}` ? [rest[i + 1]] : []));
+if (cmd === 'verify') {
+  const { verifySnapshot } = await import('../ops/snapshot.js');
+  const r = await verifySnapshot(flag('file')!, flag('manifest'));
+  for (const i of r.info) console.log(`info: ${i}`);
+  for (const p of r.problems) console.log(`PROBLEM: ${p}`);
+  console.log(r.ok ? `OK (${Object.entries(r.tables).filter(([t]) => ['transactions', 'categories', 'merchants', 'rules'].includes(t)).map(([t, n]) => `${t}=${n}`).join(', ')})` : 'FAILED');
+  process.exit(r.ok ? 0 : 1);
+}
 const db = openDb(`${process.env.HK_DATA_DIR ?? './data'}/hearthkeeper.sqlite`);
 const read = (p: string) => readFileSync(p, 'utf8');
 
@@ -47,6 +58,12 @@ if (cmd === 'init') {
   const { seedDemo } = await import('./demo.js');
   seedDemo(db, new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
   console.log('Demo data loaded (fictional). Start with: HK_AUTH=dev npm start');
+} else if (cmd === 'snapshot') {
+  const { snapshot } = await import('../ops/snapshot.js');
+  const r = await snapshot(db, flag('out') ?? './snapshots', flag('name'));
+  console.log(`${r.gz}\n${r.manifest}\n${r.m.tables.transactions ?? 0} transactions, ${(r.m.gzBytes / 1024).toFixed(0)} KB`);
+} else if (cmd === 'tokens') {
+  for (const t of db.prepare('SELECT label, channel, secret FROM ingest_tokens ORDER BY id').all() as any[]) console.log(`${t.label}\t${t.channel}\t${t.secret}`);
 } else if (cmd === 'profiles') {
   const missing = seedGreenlightProfiles(db);
   console.log(missing.length ? `Missing categories (create them first): ${missing.join(', ')}` : 'Greenlight profiles ready');

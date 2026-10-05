@@ -1,5 +1,11 @@
-# Replace with your domain. Caddy obtains and renews the Let's Encrypt certificate automatically (design §17.3).
+# bootstrap.sh replaces the hostname with $HK_DOMAIN. Caddy obtains and renews the Let's Encrypt certificate itself (design §17.3).
 hearth.example.com {
 	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		-Server
+	}
 	reverse_proxy 127.0.0.1:8080
 }

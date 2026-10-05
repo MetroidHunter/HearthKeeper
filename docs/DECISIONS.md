@@ -66,3 +66,6 @@ Provisional rows match posted rows exact-first, then by unique tolerance; stale 
 
 ## D52. Late Chase alerts
 An alert whose charge already posted via CSV (same account, amount, date within 2 days, shared descriptor token) attaches to the posted row (`late_alert`) instead of creating a duplicate provisional.
+
+## D53. Deployment is scripts, not instructions
+`deploy/bootstrap.sh` is idempotent and is also the update path; it keeps its settings in `/etc/hearthkeeper.env`. Code reaches the VM as a `git archive` tarball over ssh, so the VM needs no git credentials. Data moves as a verified snapshot (`hk snapshot` / `hk verify`: checksums, row counts, SQLite integrity, money invariants, schema-version check) rather than by re-running the migration on the server, so the server never needs the spreadsheets. Rebuilding from the sheets stays a laptop-side, repeatable script (`build-prod-db.sh`).

@@ -35,8 +35,8 @@ HK_DATA_DIR=./data npm run hk -- backtest-rules                                 
 - Point the IFTTT webhook applet at `https://<host>/ingest/device?token=<greenlight-device secret>`; install `tools/receiver-apps-script.gs` in the receiver mailbox with the `receiver-mailbox` secret.
 - Keep the Sheets applet running (dual-run) for a month; compare.
 
-## 6. Deploy
-`deploy/` has Caddy, systemd, the env file template, the nightly SQLite backup and a restore drill. Set `HK_AUTH=google`, `HK_GOOGLE_CLIENT_ID`, `HK_ALLOWED_EMAILS`, `HK_SESSION_SECRET`.
+## 6. Deploy and move the data
+See `docs/DEPLOY.md`: `deploy/build-prod-db.sh` (steps 1, 2 and 4 above in one repeatable script), `deploy/push-code.sh` and `deploy/push-data.sh`.
 
 ## 7. First close
 Run one close in the app (**Close**), keep the sheets read-only for another month, then archive them and turn off the IFTTT Sheets applet.
