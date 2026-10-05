@@ -4,6 +4,7 @@ import { CHASE_ZONE, HOME_ZONE } from '../core/time.js';
 import { parseCents } from '../core/money.js';
 import { classify, createTransaction } from '../core/transactions.js';
 import { fingerprint, registerParser, type RawEvent } from '../ingest/events.js';
+import { emitNotify } from '../notify/bus.js';
 import { extractText } from '../greenlight/parser.js';
 
 /**
@@ -51,6 +52,7 @@ export function registerChaseParser() {
       if (!txnId) {
         txnId = createTransaction(db, { accountId, kind: 'spending', status: 'provisional', occurredOn: alert.occurredOn, authorizedAt: alert.authorizedAtUtc, amountCents: alert.amountCents, descriptor: alert.vendor, sourceEventIds: [ev.id] });
         classify(db, txnId);
+        if ((db.prepare('SELECT review_state r FROM transactions WHERE id=?').get(txnId) as { r: string }).r === 'needs_category') emitNotify({ type: 'needs_you', txnId, lane: 'fast' });
       }
       db.prepare('INSERT INTO event_results(raw_event_id, parser, outcome, txn_id) VALUES (?,?,?,?)').run(ev.id, 'chase', dup ? 'duplicate' : 'created', txnId);
       return { status: 'ok' };

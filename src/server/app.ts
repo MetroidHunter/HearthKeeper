@@ -17,12 +17,14 @@ import { previewImport, commitImport, coverage, markStale } from '../ingest/impo
 import { suggestMapping, parseCsv } from '../ingest/csv.js';
 import { processGreenlightMessage, createRequest, fundRequest, walletBalance, missingAllowances } from '../greenlight/engine.js';
 import { extractText } from '../greenlight/parser.js';
+import { Notifier, getPrefs, setPrefs } from '../notify/notifier.js';
+import { vapidKeys } from '../notify/push.js';
 import { registerAllParsers } from '../ingest/parsers.js';
 import { importNotesCsv, runNoteMatcher } from '../notes/matcher.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 
-export interface AppOptions { auth: AuthConfig; verifyIdToken?: (idToken: string) => Promise<string | null>; staticDir?: string; now?: () => string }
+export interface AppOptions { auth: AuthConfig; notifier?: Notifier; verifyIdToken?: (idToken: string) => Promise<string | null>; staticDir?: string; now?: () => string }
 
 export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
@@ -62,6 +64,30 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     db.prepare("UPDATE ingest_tokens SET last_seen_at=datetime('now') WHERE id=?").run(a.tokenId);
     return { ok: true };
   });
+
+  /* ---------- push + notification preferences (design §15.2, §15.3) ---------- */
+  const userIdOf = (req: { user?: string }): number | null => {
+    const u = req.user ? (db.prepare('SELECT id FROM users WHERE LOWER(email)=LOWER(?)').get(req.user) as { id: number } | undefined) : undefined;
+    return u?.id ?? (db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get() as { id: number } | undefined)?.id ?? null; // dev mode: the first user
+  };
+  app.get('/api/push/public-key', async () => ({ publicKey: vapidKeys(db).publicKey }));
+  app.post('/api/push/subscribe', async (req: any, reply) => {
+    const b = rec(req.body); const uid = userIdOf(req);
+    if (!uid) return reply.code(400).send({ error: 'no user to attach the subscription to' });
+    if (!b.endpoint || !b.keys?.p256dh || !b.keys?.auth) return reply.code(400).send({ error: 'endpoint and keys are required' });
+    db.prepare(`INSERT INTO push_subscriptions(user_id, endpoint, p256dh, auth, user_agent) VALUES (?,?,?,?,?)
+      ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth`).run(uid, b.endpoint, b.keys.p256dh, b.keys.auth, String(req.headers['user-agent'] ?? ''));
+    return { ok: true };
+  });
+  app.post('/api/push/unsubscribe', async (req) => { db.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').run(rec(req.body).endpoint); return { ok: true }; });
+  app.post('/api/push/test', async (req: any, reply) => {
+    const uid = userIdOf(req);
+    if (!opts.notifier || !uid) return reply.code(400).send({ error: 'push is not configured on this server' });
+    return { results: await opts.notifier.sendToUsers([uid], { title: 'HearthKeeper test', body: 'Push notifications work.', tag: 'test', url: '/#/' }, 'test', null, { ignoreQuiet: true }) };
+  });
+  app.get('/api/me/notify-prefs', async (req) => { const uid = userIdOf(req); return uid ? { ...getPrefs(db, uid), devices: (db.prepare('SELECT COUNT(*) c FROM push_subscriptions WHERE user_id=?').get(uid) as { c: number }).c } : null; });
+  app.put('/api/me/notify-prefs', async (req) => { const uid = userIdOf(req); return uid ? setPrefs(db, uid, rec(req.body) as any) : null; });
+  app.get('/api/digest', async () => (opts.notifier ?? new Notifier(db, { send: async () => 'ok' })).digest());
 
   /* ---------- reports ---------- */
   app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now()));
@@ -136,7 +162,9 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const b = rec(req.body); const id = Number(req.params.id);
     const t = db.prepare('SELECT amount_cents FROM transactions WHERE id=?').get(id) as any;
     const splits = b.splits ?? [{ categoryId: b.categoryId, amountCents: t.amount_cents }];
-    return answerCategory(db, id, splits, { makeRule: b.makeRule, actor: actor(req) });
+    const out = answerCategory(db, id, splits, { makeRule: b.makeRule, actor: actor(req) });
+    void opts.notifier?.retract(id, userIdOf(req)); // the first answer closes the prompt on the other phone
+    return out;
   });
   app.post('/api/transactions/:id/ignore', async (req: any) => { ignoreTransaction(db, Number(req.params.id), rec(req.body).reason ?? 'user', actor(req)); return { ok: true }; });
   app.post('/api/transactions/:id/restore', async (req: any) => { restoreTransaction(db, Number(req.params.id)); return { ok: true }; });

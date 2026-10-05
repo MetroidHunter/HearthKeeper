@@ -16,6 +16,10 @@ self.addEventListener('fetch', (e) => {
 });
 self.addEventListener('push', (e) => {
   const d = e.data ? e.data.json() : { title: 'HearthKeeper', body: 'Something needs you' };
+  if (d.close) { // another phone answered: dismiss this prompt
+    e.waitUntil(self.registration.getNotifications({ tag: d.tag }).then((ns) => ns.forEach((n) => n.close())));
+    return;
+  }
   e.waitUntil(self.registration.showNotification(d.title, { body: d.body, data: d, actions: d.actions || [], tag: d.tag }));
 });
 self.addEventListener('notificationclick', (e) => {

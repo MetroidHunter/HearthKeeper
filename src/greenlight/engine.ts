@@ -2,6 +2,7 @@ import { audit, type DB } from '../core/db.js';
 import { createTransaction, setSplits, suggestCategory } from '../core/transactions.js';
 import { daysBetween, pacificDateOfUtc } from '../core/time.js';
 import { parseGreenlight, type GreenlightEvent } from './parse.js';
+import { emitNotify } from '../notify/bus.js';
 
 export interface Profile { id: number; display_name: string; name_pattern: string; category_id: number; wallet_account_id: number; spend_policy: 'ignore' | 'reclassify'; request_policy: 'as_allowance' | 'ask_category'; withdraw_policy: string; active: number }
 
@@ -67,12 +68,13 @@ export function processGreenlightMessage(db: DB, rawEventId: number, text: strin
       }
       case 'declined': {
         const message = `${profile.display_name}'s ${(ev.amountCents / 100).toFixed(2)} at ${ev.vendor} was declined${ev.control ? `: ${ev.control} control` : ev.reason ? `: ${ev.reason}` : ''}`;
-        db.prepare("INSERT INTO notification_log(kind, ref_id) VALUES ('greenlight_declined', ?)").run(rawEventId);
+        emitNotify({ type: 'greenlight_inform', message, profile: profile.display_name });
         return done({ outcome: 'inform', message });
       }
       case 'request': {
         // never posts a charge by itself (§11.5); the approval message is unseen so the pending request asks you (D23)
         const requestId = createRequest(db, profile.id, ev.amountCents, date, rawEventId);
+        emitNotify({ type: 'greenlight_request', requestId });
         return done({ outcome: 'request', requestId });
       }
       case 'withdraw': {
@@ -83,6 +85,7 @@ export function processGreenlightMessage(db: DB, rawEventId: number, text: strin
           descriptor: `GREENLIGHT ATM WITHDRAW ${ev.vendor}`, sourceEventIds: [rawEventId], greenlightRef: `withdraw:${profile.id}:${rawEventId}`,
           ignoredReason: policy === 'debit_category' ? null : 'greenlight_withdraw', flagged, flagReason: flagged ? `${profile.display_name} withdrew ${(ev.amountCents / 100).toFixed(2)} at ${ev.vendor}: categorize or ignore` : null });
         if (policy === 'debit_category') setSplits(db, id, [{ categoryId: profile.category_id, amountCents: -ev.amountCents, origin: 'rule' }], 'rule');
+        if (flagged) emitNotify({ type: 'needs_you', txnId: id, lane: 'fast' });
         return done({ outcome: policy === 'debit_category' ? 'withdraw_debited' : flagged ? 'withdraw_flagged' : 'withdraw_ignored', txnId: id }, id);
       }
       case 'spend': return done(handleSpend(db, profile, ev, rawEventId, date, at));
@@ -108,6 +111,7 @@ function handleSpend(db: DB, profile: Profile, ev: Extract<GreenlightEvent, { ty
   const id = createTransaction(db, { accountId: profile.wallet_account_id, kind: 'greenlight_reclass', status: 'provisional', occurredOn: date, authorizedAt: at, amountCents: 0,
     descriptor: ev.vendor, sourceEventIds: [rawEventId], greenlightRef: ref });
   writeReclass(db, id, profile, ev.amountCents, sug.categoryId !== profile.category_id ? sug.categoryId : null, sug);
+  if ((db.prepare('SELECT review_state r FROM transactions WHERE id=?').get(id) as { r: string }).r === 'needs_category') emitNotify({ type: 'needs_you', txnId: id, lane: 'fast' });
   return { outcome: 'spend_reclassified', txnId: id };
 }
 

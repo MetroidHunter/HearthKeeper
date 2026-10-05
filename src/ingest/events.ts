@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DB } from '../core/db.js';
+import { withNotifySuppressed } from '../notify/bus.js';
 
 export type Source = 'chase_alert' | 'chase_csv' | 'wf_csv' | 'simplefin' | 'greenlight_msg' | 'wf_notice' | 'amazon_receipt' | 'venmo_receipt' | 'paypal_receipt' | 'notes_csv' | 'manual' | 'email_unknown' | 'device_unknown';
 
@@ -109,11 +110,13 @@ export function replay(db: DB, opts: { source?: string; includeOk?: boolean } = 
   const ids = (opts.source ? db.prepare(`SELECT id FROM raw_events WHERE ${where} ORDER BY id`).all(opts.source) : db.prepare(`SELECT id FROM raw_events WHERE ${where} ORDER BY id`).all()) as { id: number }[];
   const byStatus: Record<string, number> = {};
   let replayed = 0;
-  for (const { id } of ids) {
-    const r = parseEvent(db, id);
-    if (!r) continue;
-    replayed++; byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
-  }
+  withNotifySuppressed(() => {
+    for (const { id } of ids) {
+      const r = parseEvent(db, id);
+      if (!r) continue;
+      replayed++; byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+    }
+  });
   return { replayed, byStatus };
 }
 

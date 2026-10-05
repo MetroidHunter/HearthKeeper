@@ -16,6 +16,7 @@ import './pages/explore.js';
 import './pages/dashboard.js';
 import './pages/categories.js';
 import './pages/signin.js';
+import './pages/settings.js';
 
 const ROUTES: [string, string, () => TemplateResult][] = [
   ['/', 'Home', () => html`<hk-home></hk-home>`],
@@ -32,6 +33,7 @@ const ROUTES: [string, string, () => TemplateResult][] = [
   ['/explore', 'Explore', () => html`<hk-explore></hk-explore>`],
   ['/categories', 'Categories', () => html`<hk-categories></hk-categories>`],
   ['/ingest', 'Ingest health', () => html`<hk-ingest></hk-ingest>`],
+  ['/settings', 'Settings', () => html`<hk-settings></hk-settings>`],
 ];
 
 @customElement('hk-app')

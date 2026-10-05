@@ -88,4 +88,10 @@ CREATE TABLE ingest_nonces(token_id INTEGER NOT NULL, nonce TEXT NOT NULL, ts IN
 `
 CREATE TABLE event_results(raw_event_id INTEGER NOT NULL, parser TEXT NOT NULL, outcome TEXT NOT NULL, txn_id INTEGER, PRIMARY KEY(raw_event_id, parser));
 `,
+`
+CREATE TABLE push_subscriptions(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, user_agent TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), last_ok_at TEXT);
+ALTER TABLE notification_log ADD COLUMN tag TEXT;
+ALTER TABLE notification_log ADD COLUMN status TEXT NOT NULL DEFAULT 'sent';
+CREATE INDEX notification_log_tag ON notification_log(tag);
+`,
 ];

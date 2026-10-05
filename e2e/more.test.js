@@ -6,7 +6,7 @@ describe('Navigation smoke: every page renders without uncaught errors', () => {
   beforeEach(() => { trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
   for (const [route, h1] of [['/', 'Home'], ['/dashboard', 'Dashboard'], ['/budget', 'Budget'], ['/transactions', 'Transactions'], ['/plans', 'Plans'], ['/earnings', 'Earnings'], ['/transfers', 'Transfers'],
-    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health']]) {
+    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Settings']]) {
     it(`renders ${route}`, async () => { await mount(route); expect(text($('h1'))).to.equal(h1); await sleep(150); });
   }
 });
@@ -114,5 +114,25 @@ describe('Categories', () => {
     const id = (await api('/api/categories')).find((c) => c.name === 'E2E Hobby').id;
     location.hash = `#/categories/${id}`;
     await waitFor(() => /Budget history/.test(text(document.body)) && /\$75\.00/.test(text(document.body)), 'history timeline');
+  });
+});
+
+describe('Settings: notifications', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('shows verbose defaults, saves quiet hours / digest hour / privacy, and previews the digest', async () => {
+    await mount('/settings');
+    await waitFor(() => $('#push'), 'prefs');
+    expect($('#push').checked).to.equal(true);
+    expect($('#quiet').checked).to.equal(false);   // verbose first: quiet hours off by default
+    expect($('#privacy').checked).to.equal(false);
+    $('#quiet').click(); await waitFor(async () => (await api('/api/me/notify-prefs')).quiet.enabled === true, 'quiet saved');
+    setInput($('#digest-hour'), '9', 'change'); await waitFor(async () => (await api('/api/me/notify-prefs')).digestHour === 9, 'digest hour saved');
+    $('#privacy').click(); await waitFor(async () => (await api('/api/me/notify-prefs')).lockScreenPrivacy === true, 'privacy saved');
+    expect(text(document.body)).to.match(/need you/); // digest preview
+    const q = (await api('/api/me/notify-prefs')).quiet;
+    expect(q.start).to.equal('22:00');
   });
 });
