@@ -1,7 +1,7 @@
 import type { DB } from '../core/db.js';
 import { categoryBalance, periodTotals, currentAllocation } from '../core/balance.js';
-import { monthsInclusive, monthOf } from '../core/time.js';
-import { parseCents } from '../core/money.js';
+import { monthsInclusive, monthOf, monthIndex } from '../core/time.js';
+import { parseCentsExact as parseCents } from '../core/money.js';
 import { parseCsv } from '../ingest/csv.js';
 import { NEEDS_CATEGORY } from './sheet.js';
 
@@ -11,6 +11,7 @@ export interface Oracle {
   internalHJ?: string;   // category, months, total                    (Internal!H:J)
   budgetCurrent?: string; // category, current                          (Budget!D)
   periods?: string;      // category, spent_this, gained_this, spent_last, gained_last   (Internal!M:W / Budget!E:H)
+  periodsMonth?: string; // the sheet's "this month" for the periods oracle (YYYY-MM); defaults to the as-of month
   allocated?: string;    // single value: Budget!C2
   txnCount?: number; txnTotal?: string;  // Transactions: row count and total amount
 }
@@ -27,9 +28,14 @@ function kv(csv: string | undefined, cols: number): Map<string, string[]> {
 const usd = (s: string | undefined) => (s === undefined || s === '' || /^n\/a$/i.test(s) ? 0 : parseCents(s));
 
 /** Legacy null-category splits count as the NEEDS CATEGORY pseudo-category for parity (§18.2). */
-function pseudoNeeds(db: DB, asOf: string): number {
-  return (db.prepare(`SELECT COALESCE(SUM(s.amount_cents),0) v FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id WHERE s.category_id IS NULL AND s.memo LIKE 'legacy:%' AND t.occurred_on<=?`).get(asOf) as any).v;
+function pseudoNeeds(db: DB, asOf: string, which: 'needs' | 'blank' = 'needs'): number {
+  const memo = which === 'needs' ? `legacy:${NEEDS_CATEGORY}` : 'legacy:(blank)';
+  return (db.prepare(`SELECT COALESCE(SUM(s.amount_cents),0) v FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id WHERE s.category_id IS NULL AND s.memo=? AND t.occurred_on<=?`).get(memo, asOf) as any).v;
 }
+/** The sheet's own figures are floats with a rounded accrual (toFixed(2)), so "to the cent" means within half a cent. */
+export const TOLERANCE_CENTS = 0.5;
+const differs = (c: { sheet: number | string; app: number | string }) =>
+  typeof c.sheet === 'number' && typeof c.app === 'number' ? Math.abs(c.app - c.sheet) > TOLERANCE_CENTS : c.sheet !== c.app;
 function lifetimeTxn(db: DB, categoryId: number, asOf: string): number {
   const b = categoryBalance(db, categoryId, asOf);
   return b.splits + b.transfers;
@@ -38,16 +44,19 @@ function lifetimeTxn(db: DB, categoryId: number, asOf: string): number {
 export function runParity(db: DB, asOf: string, oracle: Oracle, explanations: Record<string, string> = {}): ParityReport {
   const checks: Check[] = [];
   const add = (c: Check) => { c.diff = typeof c.sheet === 'number' && typeof c.app === 'number' ? (c.app as number) - c.sheet : undefined; checks.push(c); };
-  const cats = db.prepare('SELECT id, name, start_month FROM categories').all() as any[];
+  const cats = db.prepare('SELECT id, name, start_month, retired_month FROM categories').all() as any[];
+  /** The sheet counts months only up to a retired category's last stop month (exclusive); live categories count through the as-of month. */
+  const sheetMonths = (c: any) => (c.retired_month ? Math.max(0, monthIndex(c.retired_month) - monthIndex(c.start_month)) : monthsInclusive(c.start_month, monthOf(asOf)));
   const byName = new Map(cats.map((c) => [lc(c.name), c]));
 
   for (const [k, v] of kv(oracle.internalHJ, 3)) {
     const c = byName.get(k); if (!c) { add({ test: 'P1', subject: `${k} (months)`, sheet: Number(v[0]), app: 'missing category' }); continue; }
-    add({ test: 'P1', subject: `${c.name} months`, sheet: Number(v[0]), app: monthsInclusive(c.start_month, monthOf(asOf)) });
+    add({ test: 'P1', subject: `${c.name} months`, sheet: Number(v[0]), app: sheetMonths(c) });
     add({ test: 'P1', subject: `${c.name} total`, sheet: usd(v[1]), app: categoryBalance(db, c.id, asOf).accrued });
   }
   for (const [k, v] of kv(oracle.internalAB, 2)) {
     if (k === lc(NEEDS_CATEGORY)) { add({ test: 'P2', subject: `${NEEDS_CATEGORY} lifetime txns`, sheet: usd(v[0]), app: pseudoNeeds(db, asOf) }); continue; }
+    if (k === '(blank)') { add({ test: 'P2', subject: 'blank-category lifetime txns', sheet: usd(v[0]), app: pseudoNeeds(db, asOf, 'blank') }); continue; }
     const c = byName.get(k); if (!c) { add({ test: 'P2', subject: k, sheet: usd(v[0]), app: 'missing category' }); continue; }
     add({ test: 'P2', subject: `${c.name} lifetime txns`, sheet: usd(v[0]), app: lifetimeTxn(db, c.id, asOf) });
   }
@@ -57,8 +66,9 @@ export function runParity(db: DB, asOf: string, oracle: Oracle, explanations: Re
     add({ test: 'P3', subject: `${c.name} current`, sheet: usd(v[0]), app: (categoryBalance(db, c.id, asOf).total ?? 0) + (k === lc(NEEDS_CATEGORY) ? pseudoNeeds(db, asOf) : 0) });
   }
   if (oracle.periods) {
-    const thisFrom = `${monthOf(asOf)}-01`, thisTo = `${monthOf(asOf)}-31`;
-    const [y, m] = monthOf(asOf).split('-').map(Number);
+    const pm = oracle.periodsMonth ?? monthOf(asOf);
+    const thisFrom = `${pm}-01`, thisTo = `${pm}-31`;
+    const [y, m] = pm.split('-').map(Number);
     const lastM = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
     for (const [k, v] of kv(oracle.periods, 5)) {
       const c = byName.get(k); if (!c) continue;
@@ -77,7 +87,7 @@ export function runParity(db: DB, asOf: string, oracle: Oracle, explanations: Re
   }
   if (oracle.allocated) add({ test: 'P6', subject: 'allocated total', sheet: parseCents(oracle.allocated.trim()), app: currentAllocation(db, monthOf(asOf)).allocated });
 
-  const mismatches = checks.filter((c) => c.sheet !== c.app);
+  const mismatches = checks.filter(differs);
   for (const c of mismatches) c.explained = explanations[`${c.test}:${c.subject}`] ?? explanations[c.subject];
   const unexplained = mismatches.filter((c) => !c.explained);
   return { asOf, checks, mismatches, unexplained, passed: unexplained.length === 0 };

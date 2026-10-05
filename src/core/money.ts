@@ -18,3 +18,13 @@ export function formatCents(c: number): string {
   const a = Math.abs(c);
   return `${sign}$${Math.floor(a / 100).toLocaleString('en-US')}.${String(a % 100).padStart(2, '0')}`;
 }
+
+/**
+ * Legacy-faithful parse: keeps fractional cents (the sheet holds half-cent and 6-decimal split amounts, and monthly targets like 400/12).
+ * Bank-sourced amounts are always whole cents; only the legacy import uses this. Result is in cents and may be fractional.
+ */
+export function parseCentsExact(input: string | number): number {
+  const n = typeof input === 'number' ? input : Number(String(input).trim().replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1'));
+  if (!Number.isFinite(n)) throw new Error(`Bad money value: ${input}`);
+  return Number((n * 100).toFixed(6));
+}

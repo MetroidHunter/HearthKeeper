@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import { audit, type DB } from '../core/db.js';
-import { parseCents } from '../core/money.js';
+import { parseCentsExact as parseCents } from '../core/money.js';
 import { monthOf, monthIndex } from '../core/time.js';
 import { parseCsv } from '../ingest/csv.js';
 import { createTransfer } from '../core/transfers.js';
@@ -30,9 +30,9 @@ export interface MigrationReport {
 
 const ALIASES = {
   list: { name: ['name', 'category'], parent: ['parent', 'group'], start: ['start date', 'start'], deprecated: ['deprecated'] },
-  history: { category: ['category', 'name'], amount: ['amount', 'budget', 'old amount', 'previous amount', 'monthly'], stop: ['month stopped using', 'stopped using', 'stop month', 'stop date', 'month stopped'] },
-  budget: { parent: ['parent', 'group'], name: ['name', 'category'], amount: ['budget', 'amount', 'monthly', 'target'], current: ['current'] },
-  txn: { date: ['date'], name: ['name', 'description'], category: ['category'], amount: ['amount', 'price'], notes: ['notes', 'note'], splitTotal: ['split total'] },
+  history: { category: ['budget name', 'category', 'name'], amount: ['amount', 'budget', 'old amount', 'previous amount', 'monthly'], stop: ['month stopped using', 'stopped using', 'stop month', 'stop date', 'month stopped'] },
+  budget: { parent: ['parent budget', 'parent', 'group'], name: ['budget name', 'name', 'category'], amount: ['budget', 'amount', 'monthly', 'target'], current: ['current'] },
+  txn: { date: ['date'], name: ['name', 'description'], category: ['category'], amount: ['charge', 'amount', 'price'], notes: ['notes', 'note'], splitTotal: ['split total'] },
 };
 
 function table(csv: string, required: string[][], label: string): { rows: Record<string, string>[]; cols: (keys: string[]) => string | undefined } {
@@ -172,7 +172,7 @@ export function importSheets(db: DB, ex: SheetExports): MigrationReport {
       insSplit.run(id, cid, cents, cid === null ? `legacy:${isNeeds ? NEEDS_CATEGORY : '(blank)'}` : null, 'legacy');
       rep.transactionsImported++;
     }
-    for (const [key, g] of groups) if (g.n > 1) rep.legacySplitGroups.push({ key, rows: g.n, sum: g.sum, splitTotal: g.st, balanced: g.sum === g.st });
+    for (const [key, g] of groups) if (g.n > 1) rep.legacySplitGroups.push({ key, rows: g.n, sum: g.sum, splitTotal: g.st, balanced: g.st !== null && Math.abs(g.sum - g.st) <= 0.5 });
     db.prepare("UPDATE categories SET status='retired' WHERE name=? COLLATE NOCASE").run(NEEDS_CATEGORY); // becomes the needs_category state, hidden from pickers
     audit(db, 'migration', 'sheets', 'import', undefined, { tx: rep.transactionsImported, legs: rep.legacyLegsImported }, 'migration');
   })();

@@ -29,7 +29,8 @@ if (cmd === 'init') {
   console.log(JSON.stringify({ ...rep, legacySplitGroups: rep.legacySplitGroups.filter((g) => !g.balanced) }, null, 2));
   const od = flag('oracle') ?? dir;
   const f = (n: string) => (existsSync(join(od, n)) ? read(join(od, n)) : undefined);
-  const parity = runParity(db, asOf, { internalAB: f('oracle_internal_AB.csv'), internalHJ: f('oracle_internal_HJ.csv'), budgetCurrent: f('oracle_budget_current.csv'), periods: f('oracle_periods.csv'), allocated: f('oracle_allocated.txt'),
+  
+  const parity = runParity(db, asOf, { internalAB: f('oracle_internal_AB.csv'), internalHJ: f('oracle_internal_HJ.csv'), budgetCurrent: f('oracle_budget_current.csv'), periods: f('oracle_periods.csv'), periodsMonth: f('oracle_periods_month.txt')?.trim(), allocated: f('oracle_allocated.txt'),
     txnCount: f('oracle_txn_count.txt') ? Number(f('oracle_txn_count.txt')) : undefined, txnTotal: f('oracle_txn_total.txt')?.trim() });
   console.log(formatParity(parity));
   process.exitCode = parity.passed ? 0 : 1;
