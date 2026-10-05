@@ -21,7 +21,7 @@ Everything here is a script in `deploy/`; nothing needs hand-typed commands on t
    HK_ALLOWED_EMAILS=you@gmail.com,partner@gmail.com \
    bash deploy/push-code.sh
    ```
-   No gcloud? Use `HK_HOST=user@ip` and plain ssh. At the end the script reports service health, and whether the public HTTPS URL answers (TLS certificate issued).
+   Any of the three settings you leave out are asked for interactively and saved on the VM in `/etc/hearthkeeper.env`, so on the first run `HK_VM=... HK_ZONE=... bash deploy/push-code.sh` is enough. No gcloud? Use `HK_HOST=user@ip` and plain ssh. At the end the script reports service health, and whether the public HTTPS URL answers (TLS certificate issued).
 3. **Data**: see below. Until you load data the app starts with an empty database.
 4. Open `https://hearthkeeper.com`, sign in with an allowlisted Google account.
 

@@ -24,9 +24,17 @@ log() { printf '\n==> %s\n' "$*"; }
 set_kv() { # set_kv KEY VALUE: replace-or-append in the env file without sed escaping traps
   local k=$1 v=$2; touch "$ENVF"; grep -v "^$k=" "$ENVF" > "$ENVF.tmp" || true; printf '%s=%s\n' "$k" "$v" >> "$ENVF.tmp"; mv "$ENVF.tmp" "$ENVF"; chmod 600 "$ENVF"
 }
-: "${HK_DOMAIN:?set HK_DOMAIN (e.g. hearthkeeper.com)}"
-: "${HK_GOOGLE_CLIENT_ID:?set HK_GOOGLE_CLIENT_ID}"
-: "${HK_ALLOWED_EMAILS:?set HK_ALLOWED_EMAILS (comma separated)}"
+ask() { # ask VAR "question": keep the stored/exported value, else prompt when a terminal is attached, else fail with a clear message
+  local var=$1 q=$2 cur=${!1:-}
+  if [ -z "$cur" ]; then
+    [ -t 0 ] || { echo "$var is not set and there is no terminal to ask on (export it, or run via push-code.sh which attaches one)"; exit 1; }
+    read -r -p "$q: " cur; [ -n "$cur" ] || { echo "$var is required"; exit 1; }
+  fi
+  printf -v "$var" '%s' "$cur"
+}
+ask HK_DOMAIN "Domain (e.g. hearthkeeper.com)"
+ask HK_GOOGLE_CLIENT_ID "Google OAuth client ID (…apps.googleusercontent.com)"
+ask HK_ALLOWED_EMAILS "Allowed sign-in emails, comma separated"
 set_kv HK_DOMAIN "$HK_DOMAIN"
 set_kv HK_AUTH google
 set_kv HK_GOOGLE_CLIENT_ID "$HK_GOOGLE_CLIENT_ID"
