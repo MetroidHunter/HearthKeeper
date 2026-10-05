@@ -24,9 +24,11 @@ $manifest = $gz.Substring(0, $gz.Length - '.sqlite.gz'.Length) + '.manifest.json
 if (-not (Test-Path -LiteralPath $manifest)) { throw "Missing manifest next to the snapshot: $manifest" }
 if (-not $HostName -and -not $Vm) { throw 'Set -Vm (and -Zone) for gcloud, or -HostName user@ip for plain ssh.' }
 
+# Runs a command, echoes its stdout live and returns it (stderr goes straight to the console, so PowerShell 5.1 does not turn it into errors).
 function Run([string]$exe, [string[]]$arguments) {
-  & $exe @arguments
+  $lines = & $exe @arguments | ForEach-Object { Write-Host $_; $_ }
   if ($LASTEXITCODE -ne 0) { throw "$exe failed with exit code $LASTEXITCODE" }
+  return ($lines -join "`n")
 }
 
 Write-Host '==> verifying locally (checksum against the manifest)'
@@ -42,14 +44,16 @@ $remote = "sudo bash /opt/hearthkeeper/deploy/install-data.sh /tmp/$name $forceA
 
 if ($HostName) {
   Write-Host "==> uploading to ${HostName}"
-  Run 'scp' @($gz, $manifest, "${HostName}:/tmp/")
+  $null = Run 'scp' @($gz, $manifest, "${HostName}:/tmp/")
   Write-Host '==> installing on the VM'
-  Run 'ssh' @($HostName, $remote)
+  $out = Run 'ssh' @($HostName, $remote)
 } else {
   $zoneArgs = if ($Zone) { @('--zone', $Zone) } else { @() }
   Write-Host "==> uploading to $Vm"
-  Run 'gcloud' (@('compute', 'scp') + $zoneArgs + @($gz, $manifest, "${Vm}:/tmp/"))
+  $null = Run 'gcloud' (@('compute', 'scp') + $zoneArgs + @($gz, $manifest, "${Vm}:/tmp/"))
   Write-Host '==> installing on the VM'
-  Run 'gcloud' (@('compute', 'ssh', $Vm) + $zoneArgs + @('--', $remote))
+  $out = Run 'gcloud' (@('compute', 'ssh', $Vm) + $zoneArgs + @('--', $remote))
 }
+# An exit code is not enough proof: some Windows ssh clients (plink) can return 0 without the remote command having run.
+if ($out -notmatch '==> installed') { throw 'The VM did not report a successful install (no "==> installed" line in its output). Do NOT assume the data is loaded; check on the VM: sudo ls -la /var/lib/hearthkeeper /tmp' }
 Write-Host '==> done. Delete your local copy of the snapshot when you no longer need it.'
