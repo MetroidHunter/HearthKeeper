@@ -17,8 +17,8 @@ export function verifySession(secret: string, token: string | undefined): string
   if (!token) return null;
   const [body, sig] = token.split('.');
   if (!body || !sig) return null;
-  const want = createHmac('sha256', secret).update(body).digest('base64url');
-  if (want.length !== sig.length || !timingSafeEqual(Buffer.from(want), Buffer.from(sig))) return null;
+  const want = Buffer.from(createHmac('sha256', secret).update(body).digest('base64url')), got = Buffer.from(sig);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null; // compare BYTE lengths: a multibyte cookie of equal string length would make timingSafeEqual throw
   try { const j = JSON.parse(Buffer.from(body, 'base64url').toString()); return j.exp > Date.now() ? String(j.email) : null; } catch { return null; }
 }
 
@@ -33,7 +33,7 @@ declare module 'fastify' { interface FastifyRequest { user?: string } }
 
 export function registerAuth(app: FastifyInstance, cfg: AuthConfig, verifyId: (t: string) => Promise<string | null> = (t) => verifyGoogleIdToken(t, cfg.googleClientId ?? '')) {
   const allowed = new Set(cfg.allowlist.map((e) => e.toLowerCase()));
-  app.post('/auth/google', async (req, reply) => {
+  app.post('/auth/google', { bodyLimit: 16 * 1024 }, async (req, reply) => {
     const { idToken } = (req.body ?? {}) as { idToken?: string };
     if (cfg.mode === 'dev') return { ok: true, user: cfg.devUser ?? 'dev' };
     const email = idToken ? await verifyId(idToken) : null;
@@ -48,10 +48,13 @@ export function registerAuth(app: FastifyInstance, cfg: AuthConfig, verifyId: (t
     const email = verifySession(cfg.sessionSecret, m?.[1]);
     return { mode: 'google', user: email && allowed.has(email) ? email : null, googleClientId: cfg.googleClientId ?? null };
   });
-  app.post('/auth/logout', async (_req, reply) => { reply.header('set-cookie', `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`); return { ok: true }; });
+  app.post('/auth/logout', async (req, reply) => {
+    if (req.headers['x-requested-with'] !== 'hearthkeeper') return reply.code(403).send({ error: 'csrf' }); // logout is a mutation too
+    reply.header('set-cookie', `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`); return { ok: true }; });
   app.addHook('onRequest', async (req: FastifyRequest, reply) => {
-    const path = req.url.split('?')[0];
-    if (path.startsWith('/ingest/') || path.startsWith('/auth/') || path === '/healthz' || !path.startsWith('/api/')) return; // ingest has its own token auth; static assets are public
+    // Protection follows the MATCHED ROUTE, not the raw URL: the router decodes percent-escapes (`/%61pi/x` is `/api/x`), a raw-URL prefix test does not.
+    const route = req.routeOptions?.url ?? '';
+    if (!route.startsWith('/api/')) return; // /ingest/* has its own token auth; /auth/*, /healthz and the static shell are public
     if (cfg.mode === 'dev') { req.user = cfg.devUser ?? 'dev'; }
     else {
       const m = /(?:^|;\s*)hk_session=([^;]+)/.exec(req.headers.cookie ?? '');

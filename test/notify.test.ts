@@ -123,8 +123,8 @@ describe('notifications (verbose first, design §15.3)', () => {
     const key = (await app.inject({ url: '/api/push/public-key' })).json().publicKey as string;
     expect(key.length).toBeGreaterThan(40);
     expect((await app.inject({ url: '/api/push/public-key' })).json().publicKey).toBe(key); // stable across calls
-    expect((await app.inject({ method: 'POST', url: '/api/push/subscribe', headers: H, payload: { endpoint: 'https://p/x' } })).statusCode).toBe(400);
-    expect((await app.inject({ method: 'POST', url: '/api/push/subscribe', headers: H, payload: { endpoint: 'https://p/x', keys: { p256dh: 'k', auth: 'a' } } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/api/push/subscribe', headers: H, payload: { endpoint: 'https://fcm.googleapis.com/fcm/send/abc' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: '/api/push/subscribe', headers: H, payload: { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'k', auth: 'a' } } })).statusCode).toBe(200);
     const prefs = (await app.inject({ method: 'PUT', url: '/api/me/notify-prefs', headers: H, payload: { quiet: { enabled: true, start: '21:00', end: '06:00' }, digestHour: 9 } })).json();
     expect(prefs).toMatchObject({ digestHour: 9, quiet: { enabled: true, start: '21:00', end: '06:00' }, push: true });
     s.t.sent.length = 0;

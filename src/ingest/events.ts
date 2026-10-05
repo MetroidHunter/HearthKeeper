@@ -6,7 +6,7 @@ export type Source = 'chase_alert' | 'chase_csv' | 'wf_csv' | 'simplefin' | 'gre
 
 /** Template fingerprint: numbers, dates, amounts, names replaced by placeholders (design §19.2 Shapes page). */
 export function fingerprint(text: string): string {
-  return text
+  return text.slice(0, 2000) // bounded input, and every pattern below is linear-time: forwarded email is attacker-controlled
     .replace(/https?:\/\/\S+/g, '‹url›')
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '‹email›')
     .replace(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?/gi, '‹date›')
@@ -15,7 +15,7 @@ export function fingerprint(text: string): string {
     .replace(/[$€£]\s?[\d,]+(?:\.\d+)?/g, '‹amt›')
     .replace(/\b\d[\d,.-]*\b/g, '‹n›')
     .replace(/\b[A-Z][a-z]+(?='s\b|’s\b)/g, '‹name›')
-    .replace(/\b(?:[A-Z]{2,}[*#]?\s?)+(?=[A-Z][a-z]|\s|$)/g, '‹caps› ')
+    .replace(/\b[A-Z]{2,}[*#]?(?=[A-Z][a-z]|\s|$)/g, '‹caps›')
     .replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
@@ -39,7 +39,7 @@ export function createToken(db: DB, label: string, channel: 'email' | 'device' |
   return { id, secret };
 }
 
-const safeEq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const safeEq = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 export function sign(secret: string, ts: string, nonce: string, body: string): string { return createHmac('sha256', secret).update(`${ts}.${nonce}.${body}`).digest('hex'); }
 
 export interface AuthInput { label?: string; signature?: string; timestamp?: string; nonce?: string; bearer?: string; body: string; now?: number }

@@ -28,12 +28,25 @@ import { bootstrapMerchants } from '../migration/merchants.js';
 import { noteCandidates, pickNote, proposeItemSplits } from '../notes/matcher.js';
 import { importNotesCsv, runNoteMatcher } from '../notes/matcher.js';
 
+/** Push endpoints are fetched by the server, so reject anything that is not https to a public host (SSRF). */
+export function isPublicHttps(u: string): boolean {
+  try {
+    const x = new URL(u); const h = x.hostname.toLowerCase();
+    if (x.protocol !== 'https:' || x.username || x.password) return false;
+    if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || !h.includes('.') && !h.includes(':')) return false;
+    if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || h === '[::1]' || h.startsWith('[fc') || h.startsWith('[fd') || h.startsWith('[fe80')) return false;
+    return true;
+  } catch { return false; }
+}
+
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 
 export interface AppOptions { auth: AuthConfig; notifier?: Notifier; verifyIdToken?: (idToken: string) => Promise<string | null>; staticDir?: string; now?: () => string }
 
 export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
-  const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
+  const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 }); // 1 MB default; only the CSV import routes (behind auth) get more
+  const BIG = { bodyLimit: 25 * 1024 * 1024 };
+  app.addHook('onSend', async (req, reply) => { if ((req.routeOptions?.url ?? '').startsWith('/api/')) reply.header('cache-control', 'no-store'); }); // never let a proxy or the browser keep financial JSON
   const now = opts.now ?? today;
   registerAllParsers();
   registerAuth(app, opts.auth, opts.verifyIdToken);
@@ -49,23 +62,28 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     (req as any).rawBody = body;
     try { done(null, body ? JSON.parse(body as string) : {}); } catch (e) { done(Object.assign(e as Error, { statusCode: 400 }), undefined); }
   });
+  const ALLOWED_SOURCES: Record<'email' | 'device', string[]> = { device: ['greenlight_msg', 'chase_alert', 'wf_notice', 'device_unknown'], email: ['chase_alert', 'wf_notice', 'amazon_receipt', 'venmo_receipt', 'paypal_receipt', 'email_unknown'] };
   const ingest = (channel: 'email' | 'device', defaultSource: Source) => async (req: any, reply: any) => {
     const raw: string = req.rawBody ?? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {}));
-    const bearer = (req.query?.token as string | undefined) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+    // A secret in the URL ends up in proxy logs, so it is accepted only on the device channel (IFTTT cannot set headers or sign). Email must sign (HMAC) or use the Authorization header.
+    const bearer = (channel === 'device' ? (req.query?.token as string | undefined) : undefined) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
     const a = authenticate(db, { label: req.headers['x-hk-token'] as string, signature: req.headers['x-hk-signature'] as string, timestamp: req.headers['x-hk-timestamp'] as string, nonce: req.headers['x-hk-nonce'] as string, bearer, body: raw }, channel);
     if (!a.ok) return reply.code(401).send({ error: a.reason });
     const body = rec(req.body);
     const source = (req.query?.source as Source | undefined) ?? (body.source as Source | undefined) ?? defaultSource;
+    if (!ALLOWED_SOURCES[channel].includes(source)) return reply.code(400).send({ error: `source ${source} is not accepted on the ${channel} channel` }); // a leaked token must not be able to forge arbitrary sources
     const payload = typeof req.body === 'string' ? req.body : (body.text ?? body.payload ?? raw);
     const cap = captureEvent(db, { source, channel, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), headers: channel === 'email' ? body.headers : undefined, tokenId: a.tokenId, dedupeKey: body.messageId ? `${source}:${body.messageId}` : undefined });
     if (!cap.duplicate) parseEvent(db, cap.id); // no parser => stays pending; nothing is created
     return { id: cap.id, duplicate: cap.duplicate };
   };
-  app.post('/ingest/device', ingest('device', 'greenlight_msg'));
-  app.post('/ingest/email', ingest('email', 'email_unknown'));
-  app.post('/ingest/heartbeat', async (req: any, reply) => {
-    const bearer = (req.query?.token as string) ?? /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
-    const a = (() => { const d = authenticate(db, { bearer, body: '' }, 'device'); return d.ok ? d : authenticate(db, { bearer, body: '' }, 'email'); })();
+  app.post('/ingest/device', { bodyLimit: 256 * 1024 }, ingest('device', 'greenlight_msg'));
+  app.post('/ingest/email', { bodyLimit: 1024 * 1024 }, ingest('email', 'email_unknown'));
+  app.post('/ingest/heartbeat', { bodyLimit: 1024 }, async (req: any, reply) => {
+    // heartbeat: HMAC-signed (empty body) like email ingest, or a header bearer; a URL secret only for the device channel
+    const bearer = req.query?.token ? undefined : /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+    const args = { label: req.headers['x-hk-token'] as string, signature: req.headers['x-hk-signature'] as string, timestamp: req.headers['x-hk-timestamp'] as string, nonce: req.headers['x-hk-nonce'] as string, bearer, body: '' };
+    const a = (() => { const e = authenticate(db, args, 'email'); if (e.ok) return e; const d = authenticate(db, args, 'device'); if (d.ok) return d; return req.query?.token ? authenticate(db, { bearer: req.query.token as string, body: '' }, 'device') : d; })();
     if (!a.ok) return reply.code(401).send({ error: a.reason });
     db.prepare("UPDATE ingest_tokens SET last_seen_at=datetime('now') WHERE id=?").run(a.tokenId);
     return { ok: true };
@@ -81,6 +99,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const b = rec(req.body); const uid = userIdOf(req);
     if (!uid) return reply.code(400).send({ error: 'no user to attach the subscription to' });
     if (!b.endpoint || !b.keys?.p256dh || !b.keys?.auth) return reply.code(400).send({ error: 'endpoint and keys are required' });
+    if (!isPublicHttps(String(b.endpoint))) return reply.code(400).send({ error: 'push endpoint must be a public https URL' }); // the server POSTs to this URL: no internal addresses
     db.prepare(`INSERT INTO push_subscriptions(user_id, endpoint, p256dh, auth, user_agent) VALUES (?,?,?,?,?)
       ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth`).run(uid, b.endpoint, b.keys.p256dh, b.keys.auth, String(req.headers['user-agent'] ?? ''));
     return { ok: true };
@@ -232,10 +251,10 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/close', async (req) => ({ id: closePeriod(db, rec(req.body).through ?? now(), actor(req)) }));
 
   /* ---------- imports ---------- */
-  app.post('/api/imports/preview', async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec); });
-  app.post('/api/imports/suggest-mapping', async (req) => suggestMapping(parseCsv(rec(req.body).csv)));
-  app.post('/api/imports/commit', async (req) => { const b = rec(req.body); return commitImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId, filename: b.filename }); });
-  app.post('/api/imports/notes', async (req) => { const b = rec(req.body); const n = importNotesCsv(db, b.csv, b.source ?? 'amazon'); return { ...n, ...runNoteMatcher(db) }; });
+  app.post('/api/imports/preview', BIG, async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec); });
+  app.post('/api/imports/suggest-mapping', BIG, async (req) => suggestMapping(parseCsv(rec(req.body).csv)));
+  app.post('/api/imports/commit', BIG, async (req) => { const b = rec(req.body); return commitImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId, filename: b.filename }); });
+  app.post('/api/imports/notes', BIG, async (req) => { const b = rec(req.body); const n = importNotesCsv(db, b.csv, b.source ?? 'amazon'); return { ...n, ...runNoteMatcher(db) }; });
   app.get('/api/coverage', async () => coverage(db, now()));
   app.post('/api/maintenance/stale', async () => ({ stale: markStale(db, now()) }));
 
@@ -265,22 +284,25 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/ingest/tokens', async (req) => { const b = rec(req.body); return createToken(db, b.label, b.channel, b.expectedCadenceHours); }); // secret is shown once
 
   app.setErrorHandler((err: any, _req, reply) => {
-    const status = err.statusCode ?? (/must|required|only|cannot|exceeds|requires|already|retroactive/i.test(err.message) ? 400 : 500);
+    // only plain Errors thrown on purpose by our own validation are client errors; TypeError/RangeError/SqliteError are bugs or schema details
+    const status = err.statusCode ?? (err.constructor === Error && /must|required|only|cannot|exceeds|requires|already|retroactive|not accepted|unknown|closed|closed/i.test(err.message) ? 400 : 500);
+    if (status >= 500) { console.error('[error]', err); return reply.code(500).send({ error: 'internal error' }); } // never echo SQLite or stack details to a client
     reply.code(status).send({ error: err.message });
   });
   if (opts.staticDir) registerStatic(app, opts.staticDir);
   return app;
 }
 
-import { existsSync, readFileSync } from 'node:fs';
-import { extname, join, normalize, resolve } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 function registerStatic(app: FastifyInstance, rawDir: string) {
   const dir = resolve(rawDir);
   app.get('/*', async (req, reply) => {
-    const p = normalize((req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0])).replace(/^(\.\.[/\\])+/, '');
-    let f = join(dir, p);
-    if (!f.startsWith(dir) || !existsSync(f)) f = join(dir, 'index.html'); // SPA fallback
+    const raw = req.url.split('?')[0];
+    let p: string; try { p = decodeURIComponent(raw === '/' ? '/index.html' : raw); } catch { p = '/index.html'; }
+    let f = p.includes('\0') ? join(dir, 'index.html') : resolve(dir, '.' + normalize(p));
+    if ((f !== dir && !f.startsWith(dir + sep)) || !existsSync(f) || statSync(f).isDirectory()) f = join(dir, 'index.html'); // SPA fallback; never a path outside the static dir
     if (!existsSync(f)) return reply.code(404).send({ error: 'not found' });
     reply.header('content-type', MIME[extname(f)] ?? 'application/octet-stream');
     if (f.endsWith('sw.js')) reply.header('service-worker-allowed', '/');

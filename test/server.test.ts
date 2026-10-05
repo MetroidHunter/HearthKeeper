@@ -58,7 +58,7 @@ describe('api', () => {
   it('email ingest of an unknown shape is captured, creates nothing, and shows up in Shapes', async () => {
     const { h, app } = mk();
     const t = createToken(h.db, 'receiver', 'email');
-    const r = await app.inject({ method: 'POST', url: `/ingest/email?token=${t.secret}&source=chase_alert`, payload: { text: 'You made a $9.40 transaction at SQ *NEW CAFE', messageId: 'abc' } });
+    const r = await app.inject({ method: 'POST', url: '/ingest/email?source=chase_alert', headers: { authorization: `Bearer ${t.secret}` }, payload: { text: 'You made a $9.40 transaction at SQ *NEW CAFE', messageId: 'abc' } });
     expect(r.statusCode).toBe(200);
     expect((await app.inject({ url: '/api/transactions?hidden=1' })).json()).toHaveLength(0);
     const shapes = (await app.inject({ url: '/api/shapes' })).json();
