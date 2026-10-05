@@ -1,4 +1,5 @@
 import { audit, type DB } from './db.js';
+import { assertOpen } from './locks.js';
 import { cleanDescriptor } from './descriptor.js';
 import { decide, loadRules, type Candidate, type Rule } from './rules.js';
 
@@ -29,7 +30,8 @@ export function createTransaction(db: DB, t: NewTxn): number {
 
 /** Replace a transaction's splits, enforcing the §7.8 invariants. Null category = needs_category. */
 export function setSplits(db: DB, txnId: number, splits: SplitIn[], decidedBy: 'rule' | 'user' | 'merchant_default' = 'user', ruleId?: number): void {
-  const t = db.prepare('SELECT kind, amount_cents FROM transactions WHERE id=?').get(txnId) as { kind: Kind; amount_cents: number };
+  const t = db.prepare('SELECT kind, amount_cents, occurred_on FROM transactions WHERE id=?').get(txnId) as { kind: Kind; amount_cents: number; occurred_on: string };
+  if (decidedBy === 'user') assertOpen(db, t.occurred_on); // rules and ingest may still categorize late arrivals; people must reopen first
   const sum = splits.reduce((a, s) => a + s.amountCents, 0);
   if (t.kind === 'greenlight_reclass') { if (sum !== 0) throw new Error('reclass splits must sum to 0'); }
   else if (t.kind === 'internal_transfer' || t.kind === 'ignored') { if (splits.length) throw new Error(`${t.kind} transactions carry no splits`); }
@@ -47,6 +49,7 @@ export function setSplits(db: DB, txnId: number, splits: SplitIn[], decidedBy: '
 }
 
 export function ignoreTransaction(db: DB, txnId: number, reason: string, actor = 'system'): void {
+  if (actor !== 'system') assertOpen(db, (db.prepare('SELECT occurred_on d FROM transactions WHERE id=?').get(txnId) as { d: string }).d);
   db.transaction(() => {
     db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(txnId);
     db.prepare("UPDATE transactions SET kind='ignored', ignored_reason=?, review_state='not_needed', version=version+1 WHERE id=?").run(reason, txnId);

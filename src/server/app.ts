@@ -8,6 +8,7 @@ import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
 import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetVsActual } from '../core/analytics.js';
+import { listPeriods, reopenPeriod } from '../core/locks.js';
 import { closeChecklist, closePeriod } from '../core/close.js';
 import { answerCategory, promotable } from '../core/answers.js';
 import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
@@ -226,6 +227,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/transfers/manual', async (req) => { const b = rec(req.body); return { id: manualTransfer(db, b.date ?? now(), b.from, b.to, b.cents, b.memo, actor(req)) }; });
   app.post('/api/transfers/adjustment', async (req) => { const b = rec(req.body); return { id: adjustment(db, b.date ?? now(), b.categoryId, b.cents, b.reason, actor(req)) }; });
   app.get('/api/close', async (req: any) => closeChecklist(db, req.query.through ?? now(), { walletTyped: req.query.wallet !== undefined ? Number(req.query.wallet) : undefined }));
+  app.get('/api/close/periods', async () => listPeriods(db));
+  app.delete('/api/close/:id', async (req: any) => ({ reopened: reopenPeriod(db, Number(req.params.id), actor(req), String(rec(req.body).reason ?? '')) }));
   app.post('/api/close', async (req) => ({ id: closePeriod(db, rec(req.body).through ?? now(), actor(req)) }));
 
   /* ---------- imports ---------- */

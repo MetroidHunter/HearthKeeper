@@ -1,4 +1,4 @@
-import type { DB } from './db.js';
+import { audit, type DB } from './db.js';
 import { categoryBalance } from './balance.js';
 import { daysBetween } from './time.js';
 import { missingAllowances, walletBalance } from '../greenlight/engine.js';
@@ -34,11 +34,12 @@ export function closeChecklist(db: DB, throughDate: string, opts: { walletTyped?
   return steps;
 }
 
-/** Optional soft lock (Phase 5): editing a closed period needs a reopen. */
+/** Snapshot balances and soft-lock edits through a date (see locks.ts for enforcement and reopen). */
 export function closePeriod(db: DB, throughDate: string, actor: string): number {
   const snap: Record<number, number | null> = {};
   for (const c of db.prepare('SELECT id FROM categories').all() as any[]) snap[c.id] = categoryBalance(db, c.id, throughDate).total;
-  return Number(db.prepare('INSERT INTO close_periods(through_date, closed_by, snapshot_json) VALUES (?,?,?)').run(throughDate, actor, JSON.stringify(snap)).lastInsertRowid);
+  const id = Number(db.prepare('INSERT INTO close_periods(through_date, closed_by, snapshot_json) VALUES (?,?,?)').run(throughDate, actor, JSON.stringify(snap)).lastInsertRowid);
+  audit(db, 'close_period', id, 'close', undefined, { throughDate }, actor);
+  return id;
 }
-export function lockedThrough(db: DB): string | null { return (db.prepare('SELECT MAX(through_date) d FROM close_periods').get() as any).d ?? null; }
-export function assertOpen(db: DB, date: string): void { const l = lockedThrough(db); if (l && date <= l) throw new Error(`Period through ${l} is closed; reopen it first`); }
+export { lockedThrough, assertOpen } from './locks.js';

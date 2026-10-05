@@ -1,6 +1,8 @@
 import { audit, type DB } from './db.js';
 import { monthOf } from './time.js';
 import { categoryBalance } from './balance.js';
+import { isOpenMonth } from './locks.js';
+import { PeriodClosedError, lockedThrough } from './locks.js';
 
 export function ensureGroup(db: DB, name: string): number {
   const r = db.prepare('SELECT id FROM category_groups WHERE name=?').get(name) as { id: number } | undefined;
@@ -25,6 +27,7 @@ export function addCategory(db: DB, c: NewCategory, actor = 'system'): number {
 
 /** Append (or replace within the same month) a budget version: the quick path of design §12.2. */
 export function setBudget(db: DB, categoryId: number, monthlyCents: number, effectiveMonth: string, opts: { reason?: string; planId?: number; actor?: string } = {}): void {
+  if (opts.actor !== 'migration' && opts.reason !== 'legacy' && !isOpenMonth(db, effectiveMonth)) throw new PeriodClosedError(lockedThrough(db)!); // a budget change restates a closed month
   const prev = db.prepare('SELECT monthly_cents FROM category_budget_versions WHERE category_id=? AND effective_month<=? ORDER BY effective_month DESC LIMIT 1').get(categoryId, effectiveMonth) as { monthly_cents: number } | undefined;
   db.prepare(`INSERT INTO category_budget_versions(category_id,monthly_cents,effective_month,plan_id,reason,created_by) VALUES (?,?,?,?,?,?)
     ON CONFLICT(category_id, effective_month) DO UPDATE SET monthly_cents=excluded.monthly_cents, plan_id=excluded.plan_id, reason=excluded.reason, created_by=excluded.created_by`)

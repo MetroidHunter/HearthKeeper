@@ -1,5 +1,6 @@
 import { audit, type DB } from './db.js';
 import { categoryBalance } from './balance.js';
+import { assertOpen } from './locks.js';
 
 /** Envelope movements (design §13). Transfers are excluded from spend reports by construction. */
 export interface Leg { categoryId: number; cents: number }
@@ -8,6 +9,7 @@ export type TransferKind = 'reconcile' | 'pool_payment' | 'placement' | 'manual'
 export function createTransfer(db: DB, kind: TransferKind, occurredOn: string, legs: Leg[], memo?: string, actor = 'system', legacyName?: string): number {
   const sum = legs.reduce((a, l) => a + l.cents, 0);
   if (kind !== 'adjustment' && kind !== 'legacy' && sum !== 0) throw new Error(`${kind} legs must sum to 0 (got ${sum})`);
+  if (kind !== 'legacy' && actor !== 'migration') assertOpen(db, occurredOn);
   return db.transaction(() => {
     const id = Number(db.prepare('INSERT INTO envelope_transfers(occurred_on, kind, memo, created_by, legacy_name) VALUES (?,?,?,?,?)').run(occurredOn, kind, memo ?? null, actor, legacyName ?? null).lastInsertRowid);
     const ins = db.prepare('INSERT INTO envelope_transfer_legs(transfer_id, category_id, amount_cents) VALUES (?,?,?)');
