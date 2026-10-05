@@ -58,8 +58,8 @@ export function processGreenlightMessage(db: DB, rawEventId: number, text: strin
         const id = createTransaction(db, { accountId: profile.wallet_account_id, kind: 'greenlight_allowance', occurredOn: date, authorizedAt: at, amountCents: -ev.amountCents,
           descriptor: `GREENLIGHT ALLOWANCE ${profile.display_name}`, sourceEventIds: [rawEventId], greenlightRef: `allowance:${rawEventId}` });
         setSplits(db, id, [{ categoryId: profile.category_id, amountCents: -ev.amountCents, origin: 'rule' }], 'rule');
-        const exp = db.prepare(`SELECT id, expected_on FROM greenlight_expected_allowances WHERE profile_id=? AND amount_cents=? AND fulfilled_txn_id IS NULL ORDER BY expected_on LIMIT 1`).get(profile.id, ev.amountCents) as any;
-        if (exp && Math.abs(daysBetween(exp.expected_on, date)) <= 3) db.prepare('UPDATE greenlight_expected_allowances SET fulfilled_txn_id=? WHERE id=?').run(id, exp.id);
+        const exp = db.prepare(`SELECT id, expected_on FROM greenlight_expected_allowances WHERE profile_id=? AND amount_cents=? AND fulfilled_txn_id IS NULL AND ABS(julianday(expected_on)-julianday(?))<=3 ORDER BY ABS(julianday(expected_on)-julianday(?)), expected_on LIMIT 1`).get(profile.id, ev.amountCents, date, date) as any;
+        if (exp) db.prepare('UPDATE greenlight_expected_allowances SET fulfilled_txn_id=? WHERE id=?').run(id, exp.id);
         return done({ outcome: 'allowance', txnId: id }, id);
       }
       case 'return': {

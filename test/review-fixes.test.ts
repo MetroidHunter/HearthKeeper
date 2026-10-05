@@ -50,3 +50,13 @@ describe('review fixes: rounding and retire', () => {
 });
 import { categoryBalance as cb } from '../src/core/balance.js';
 function categoryBalanceAt(h: any, c: number) { return cb(h.db, c, '2026-01-31').total ?? 0; }
+
+import { importNotesCsv } from '../src/notes/matcher.js';
+describe('review fixes: notes csv multiset dedupe', () => {
+  it('keeps identical legit rows in one file, but re-importing the file adds nothing', () => {
+    const h = seedHousehold();
+    const csv = 'date,amount,note\n2026-10-01,-5.00,coffee\n2026-10-01,-5.00,coffee\n';
+    expect(importNotesCsv(h.db, csv, 'venmo')).toMatchObject({ imported: 2, duplicates: 0 });
+    expect(importNotesCsv(h.db, csv, 'venmo')).toMatchObject({ imported: 0, duplicates: 2 });
+  });
+});

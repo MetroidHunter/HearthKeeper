@@ -37,6 +37,7 @@ export function importNotesCsv(db: DB, csv: string, defaultSource: WrapperSource
   const h = rows[0].map((c) => c.trim().toLowerCase());
   const col = (n: string) => h.indexOf(n);
   let imported = 0, skippedPhantom = 0, duplicates = 0;
+  const seenInFile = new Map<string, number>(); // multiset dedupe: identical legit rows within one file are all kept
   db.transaction(() => {
     for (const r of rows.slice(1)) {
       const date = normDate(r[col('date')]); if (!date) continue;
@@ -47,8 +48,10 @@ export function importNotesCsv(db: DB, csv: string, defaultSource: WrapperSource
       const note = (r[col('note')] ?? '').trim();
       const ref = col('ref') >= 0 ? r[col('ref')] : null;
       const cp = col('counterparty') >= 0 ? r[col('counterparty')] : null;
-      const dup = db.prepare('SELECT id FROM external_notes WHERE source=? AND occurred_on=? AND amount_cents=? AND note=? AND COALESCE(order_ref,\'\')=COALESCE(?,\'\') AND COALESCE(counterparty,\'\')=COALESCE(?,\'\')').get(source, date, amount, note, ref, cp);
-      if (dup) { duplicates++; continue; }
+      const key = [source, date, amount, note, ref ?? '', cp ?? ''].join('\u0001');
+      const k = seenInFile.get(key) ?? 0; seenInFile.set(key, k + 1);
+      const existing = (db.prepare('SELECT COUNT(*) c FROM external_notes WHERE source=? AND occurred_on=? AND amount_cents=? AND note=? AND COALESCE(order_ref,\'\')=COALESCE(?,\'\') AND COALESCE(counterparty,\'\')=COALESCE(?,\'\')').get(source, date, amount, note, ref, cp) as { c: number }).c;
+      if (k < existing) { duplicates++; continue; }
       const acct = col('account') >= 0 && r[col('account')] ? (db.prepare('SELECT id FROM accounts WHERE name=? COLLATE NOCASE').get(r[col('account')]) as any)?.id ?? null : null;
       const id = Number(db.prepare('INSERT INTO external_notes(source, account_id, occurred_on, amount_cents, note, counterparty, order_ref) VALUES (?,?,?,?,?,?,?)').run(source, acct, date, amount, note, cp, ref).lastInsertRowid);
       const items = col('items') >= 0 ? r[col('items')] : '';
