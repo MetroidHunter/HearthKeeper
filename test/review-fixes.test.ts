@@ -60,3 +60,13 @@ describe('review fixes: notes csv multiset dedupe', () => {
     expect(importNotesCsv(h.db, csv, 'venmo')).toMatchObject({ imported: 0, duplicates: 2 });
   });
 });
+
+import { findSubsetsLoose } from '../src/notes/matcher.js';
+describe('review fixes: multi-shipment subset search', () => {
+  it('finds the shipped subset when the charge includes tax, and refuses to guess when several fit', () => {
+    const items = [{ name: 'a', qty: 1, cents: 2000 }, { name: 'b', qty: 1, cents: 5000 }, { name: 'c', qty: 1, cents: 9000 }];
+    expect(findSubsetsLoose(items, 2170)).toEqual([[0]]); // $20 item + 8.5% tax
+    expect(findSubsetsLoose(items, 7000).length).toBeGreaterThan(0);
+    expect(findSubsetsLoose(items, 100)).toEqual([]);
+  });
+});

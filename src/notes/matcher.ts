@@ -186,6 +186,18 @@ export function findSubsets(items: ItemIn[], orderTotalCents: number, chargeCent
   return hits;
 }
 
+/** Order total unknown: a subset fits when the charge is its item total plus at most `maxExtraBp` of tax+shipping (or up to 5% under it, for promos). */
+export function findSubsetsLoose(items: ItemIn[], chargeCents: number, maxExtraBp = 1500, limit = 5): number[][] {
+  const hits: number[][] = [];
+  const n = Math.min(items.length, 16);
+  for (let mask = 1; mask < 1 << n && hits.length < limit; mask++) {
+    let s = 0; const idx: number[] = [];
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) { s += items[i].cents; idx.push(i); }
+    if (s <= chargeCents + Math.ceil(chargeCents * 0.05) + 1 && chargeCents <= s + Math.ceil((s * maxExtraBp) / 10000) + 1) hits.push(idx);
+  }
+  return hits;
+}
+
 export function proposeItemSplits(db: DB, txnId: number): SplitProposal | null {
   const t = db.prepare('SELECT id, amount_cents FROM transactions WHERE id=?').get(txnId) as any;
   const note = db.prepare('SELECT id FROM external_notes WHERE matched_txn_id=?').get(txnId) as { id: number } | undefined;
@@ -196,7 +208,7 @@ export function proposeItemSplits(db: DB, txnId: number): SplitProposal | null {
   const itemsSum = items.reduce((a, i) => a + i.cents, 0);
   let chosen = items, status: SplitProposal['status'] = 'proposed', subsets: number[][] | undefined;
   if (itemsSum > charge) { // multi-shipment: the charge covers part of the order
-    subsets = findSubsets(items, charge, charge); // best effort when order total is unknown
+    subsets = findSubsetsLoose(items, charge); // order total unknown: allow tax+shipping up to ~15%
     if (subsets.length === 1) chosen = subsets[0].map((i) => items[i]);
     else { status = subsets.length ? 'pick_subset' : 'tick_items'; return { items: items.map((i) => ({ name: i.name, cents: i.cents, categoryId: null })), subsets, status }; }
   }
