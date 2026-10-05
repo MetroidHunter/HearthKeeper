@@ -41,8 +41,8 @@ describe('greenlight parsers (design §11.1 samples)', () => {
 import { existsSync, readFileSync } from 'node:fs';
 const corpus = new URL('../private/export/ifttt_messages.jsonl', import.meta.url);
 describe.skipIf(!existsSync(corpus))('real IFTTT corpus (private)', () => {
-  const msgs = readFileSync(corpus, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as string);
   it('every captured message parses to a known shape with a Pacific timestamp', () => {
+    const msgs = readFileSync(corpus, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as string);
     const bad = msgs.map(parseGreenlight).filter((p) => p.event.type === 'unrecognized' || !p.pacificDate);
     expect(bad.map((b) => b.body)).toEqual([]);
     expect(msgs.length).toBeGreaterThan(100);

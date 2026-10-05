@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { openDb } from '../src/core/db.js';
 import { importSheets } from '../src/migration/sheet.js';
@@ -11,8 +11,12 @@ const have = existsSync(new URL('Transactions.csv', dir));
 const rd = (n: string) => (existsSync(new URL(n, dir)) ? readFileSync(new URL(n, dir), 'utf8') : undefined);
 
 describe.skipIf(!have)('real BudgetProgram export (private)', () => {
-  const db = openDb();
-  const rep = importSheets(db, { list: rd('List.csv')!, history: rd('History.csv')!, budget: rd('Budget.csv')!, transactions: rd('Transactions.csv')! });
+  let db: ReturnType<typeof openDb>;
+  let rep: ReturnType<typeof importSheets>;
+  beforeAll(() => { // inside beforeAll: a skipped describe body still executes at collection time
+    db = openDb();
+    rep = importSheets(db, { list: rd('List.csv')!, history: rd('History.csv')!, budget: rd('Budget.csv')!, transactions: rd('Transactions.csv')! });
+  }, 120_000);
   it('imports without errors', () => { expect(rep.errors).toEqual([]); expect(rep.transactionsImported + rep.legacyLegsImported).toBe(Number(rd('oracle_txn_count.txt'))); });
   it('P1-P7: matches the sheet\'s own computed cells to within half a cent, zero unexplained', () => {
     const r = runParity(db, '2026-10-04', { internalAB: rd('oracle_internal_AB.csv'), internalHJ: rd('oracle_internal_HJ.csv'), budgetCurrent: rd('oracle_budget_current.csv'), periods: rd('oracle_periods.csv'), periodsMonth: rd('oracle_periods_month.txt')?.trim(),
