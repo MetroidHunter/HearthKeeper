@@ -67,4 +67,30 @@ describe('Transactions', () => {
     choose($('select', bar), 'Eating Out');
     await waitFor(async () => (await api('/api/transactions?q=SEPHORA')).every((t) => t.splits[0]?.category === 'Eating Out'), 'bulk applied');
   });
+
+  it('Assign items: proposes a split of an Amazon order that adds up to the charge, with the item rule pre-selected', async () => {
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr').length > 5, 'rows');
+    rowFor(/AMAZON/).click();
+    const dlg = await waitFor(() => $('dialog[open]'), 'dialog');
+    $('#assign-items', dlg).click();
+    await waitFor(() => $$('select', dlg).length === 2 && /Items allocated/.test(text(dlg)), 'item split rows');
+    const sels = $$('select', dlg);
+    expect(text(sels[0].selectedOptions[0])).to.equal('Pets'); // "cat litter" rule
+    byText('button', /^Save$/, dlg).click(); // second item has no category yet: the save still must add up, categories can stay blank
+    await waitFor(() => !$('dialog[open]') || /error/i.test(text($('dialog[open]'))), 'saved');
+    const t = (await api('/api/transactions?q=AMZN'))[0];
+    expect(t.splits.reduce((a, s) => a + s.amount_cents, 0)).to.equal(t.amount_cents);
+    expect(t.splits).to.have.length(2);
+  });
+
+  it('an ambiguous Venmo charge shows the candidate notes; one tap picks it', async () => {
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr').length > 5, 'rows');
+    rowFor(/VENMO PAYMENT/).click();
+    const dlg = await waitFor(() => $('dialog[open]'), 'dialog');
+    await waitFor(() => $$('.pick-note', dlg).length === 2, 'two candidate notes');
+    $$('.pick-note', dlg)[0].click();
+    await waitFor(async () => (await api('/api/transactions?q=VENMO%20PAYMENT%20261001'))[0].note_state === 'user_provided', 'note chosen');
+  });
 });

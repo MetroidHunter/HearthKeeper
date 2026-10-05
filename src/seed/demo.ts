@@ -10,6 +10,7 @@ import { captureEvent, createToken } from '../ingest/events.js';
 import { processGreenlightMessage } from '../greenlight/engine.js';
 import { registerGreenlightParser } from '../greenlight/parser.js';
 import { parseEvent } from '../ingest/events.js';
+import { runNoteMatcher } from '../notes/matcher.js';
 
 export function seedDemo(db: DB, today: string) {
   const month = today.slice(0, 7);
@@ -33,6 +34,13 @@ export function seedDemo(db: DB, today: string) {
     const id = createTransaction(db, { accountId: a === 'chase' ? chase : wf, occurredOn: day(ago), amountCents: cents, descriptor: desc, kind: cents < 0 ? 'spending' : 'income' });
     classify(db, id);
   }
+  // notes: an Amazon order with items (matches the AMZN charge), and a Venmo charge with two equally-good candidate notes (ambiguous)
+  addRule(db, { match: { all_of: [{ field: 'item_name', op: 'contains', value: 'cat litter' }] }, action: { type: 'categorize', category: 'Pets' }, mode: 'suggest' });
+  const amz = Number(db.prepare("INSERT INTO external_notes(source, occurred_on, amount_cents, note, order_ref) VALUES ('amazon', ?, -2399, 'cat litter,paper towels', '112-3456789-0123456')").run(day(8)).lastInsertRowid);
+  db.prepare("INSERT INTO external_note_items(external_note_id, name, qty, amount_cents) VALUES (?, 'cat litter', 1, 1599), (?, 'paper towels', 1, 650)").run(amz, amz);
+  createTransaction(db, { accountId: wf, occurredOn: day(5), amountCents: -5000, descriptor: 'VENMO PAYMENT 261001 1000000001 BRYS SEPULVEDA', kind: 'spending' });
+  for (const n of ['dinner with Sam', 'concert tickets']) db.prepare("INSERT INTO external_notes(source, occurred_on, amount_cents, note, counterparty) VALUES ('venmo', ?, -5000, ?, 'Sam')").run(day(6), n);
+  runNoteMatcher(db);
   const sal = createTransaction(db, { accountId: wf, kind: 'income', occurredOn: day(11), amountCents: 0, descriptor: 'noop' }); void sal;
   db.prepare("DELETE FROM transactions WHERE descriptor_raw='noop'").run();
   const sc = createScenario(db, 'Brys $220k @ 32%', [{ person: 'Brys', label: 'Salary', annualSalaryCents: 22000000, taxRateBp: 3200 }]);

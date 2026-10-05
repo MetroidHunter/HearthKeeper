@@ -23,6 +23,7 @@ import { vapidKeys } from '../notify/push.js';
 import { registerAllParsers } from '../ingest/parsers.js';
 import { worksheetItems, applyWorksheet, loadReport } from '../migration/worksheet.js';
 import { bootstrapMerchants } from '../migration/merchants.js';
+import { noteCandidates, pickNote, proposeItemSplits } from '../notes/matcher.js';
 import { importNotesCsv, runNoteMatcher } from '../notes/matcher.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
@@ -189,6 +190,11 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     audit(db, 'transaction', id, 'update', undefined, b, actor(req));
     return { ok: true };
   });
+  /* ---------- notes: confirm a match, assign items (design §10, §15.4) ---------- */
+  app.get('/api/transactions/:id/note-candidates', async (req: any) => noteCandidates(db, Number(req.params.id)));
+  app.post('/api/transactions/:id/note', async (req: any) => { const b = rec(req.body); const id = Number(req.params.id); if (b.noteId) pickNote(db, id, b.noteId); else db.prepare("UPDATE transactions SET note=?, note_state='user_provided', note_source='manual', version=version+1 WHERE id=?").run(String(b.note ?? ''), id); audit(db, 'transaction', id, 'note', undefined, b, actor(req)); return { ok: true }; });
+  app.get('/api/transactions/:id/item-splits', async (req: any) => proposeItemSplits(db, Number(req.params.id)));
+  app.get('/api/transactions/:id/history', async (req: any) => db.prepare("SELECT id, action, before_json, after_json, actor, at FROM audit_log WHERE entity IN ('transaction','transaction_splits') AND entity_id=? ORDER BY id DESC").all(String(req.params.id)));
   app.get('/api/audit', async (req: any) => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(Number(req.query.limit ?? 200)));
 
   /* ---------- rules & merchants ---------- */
