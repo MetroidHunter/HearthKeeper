@@ -57,6 +57,6 @@ export class Imports extends Page {
         ${this.preview.errors.slice(0, 5).map((e: any) => html`<div class="err">line ${e.line}: ${e.error}</div>`)}
         <button class="primary" style="margin-top:8px" ?disabled=${this.preview.new === 0} @click=${() => this.commit()}>Import ${this.preview.new} new${this.files.length > 1 ? ` (first file; ${this.files.length} selected)` : ''}</button></div>` : ''}
       ${this.preview?.notes ? html`<div class="card"><button class="primary" @click=${() => this.commit()}>Import ${this.preview.files} notes file(s) and match</button></div>` : ''}
-      ${this.result ? html`<div class="card"><b>Done</b><div class="muted">${Object.entries(this.result).map(([k, v]) => `${k}: ${v}`).join(' · ')}</div>${this.result.needsCategory > 20 ? html`<p>Backlog mode: review grouped by merchant in <a href="#/rules">Rules &amp; merchants</a>.</p>` : html`<a href="#/">Answer what needs you →</a>`}</div>` : ''}`;
+      ${this.result ? html`<div class="card"><b>Done</b><div class="muted">${Object.entries(this.result).map(([k, v]) => `${k}: ${v}`).join(' · ')}</div>${this.result.needsCategory > 20 ? html`<p>Backlog mode: <a href="#/backlog">review them grouped by merchant</a> instead of one by one.</p>` : html`<a href="#/">Answer what needs you →</a>`}</div>` : ''}`;
   }
 }

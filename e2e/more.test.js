@@ -6,7 +6,7 @@ describe('Navigation smoke: every page renders without uncaught errors', () => {
   beforeEach(() => { trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
   for (const [route, h1] of [['/', 'Home'], ['/dashboard', 'Dashboard'], ['/budget', 'Budget'], ['/transactions', 'Transactions'], ['/plans', 'Plans'], ['/earnings', 'Earnings'], ['/transfers', 'Transfers'],
-    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Settings'], ['/analytics', 'Analytics'], ['/migration', 'Migration']]) {
+    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Settings'], ['/analytics', 'Analytics'], ['/migration', 'Migration'], ['/backlog', 'Backlog review']]) {
     it(`renders ${route}`, async () => { await mount(route); expect(text($('h1'))).to.equal(h1); await sleep(150); });
   }
 });
@@ -156,5 +156,24 @@ describe('Migration worksheet', () => {
     // the Gig Income balance moved by exactly the Zelle amount
     const gig = $$('table tbody tr').find((r) => /^Gig Income/.test(text(r)));
     expect(text(gig)).to.match(/\+\$300\.00/);
+  });
+});
+
+describe('Backlog review (grouped by merchant)', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('one answer categorizes every transaction of a merchant and teaches a suggest-mode rule', async () => {
+    const accts = await api('/api/accounts'); const chase = accts.find((a) => a.name === 'Chase Prime Visa').id;
+    for (let i = 0; i < 4; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'BRAND NEW BAKERY', amountCents: -(500 + i) } });
+    await mount('/backlog');
+    const card = await waitFor(() => $$('.group').find((c) => /BRAND NEW BAKERY/.test(text(c))), 'merchant group');
+    expect(text(card)).to.match(/4×/);
+    const sel = $('select', card); choose(sel, 'Eating Out');
+    await waitFor(() => /4 categorized/.test(text(document.body)), 'bulk result');
+    const tx = await api('/api/transactions?q=BRAND%20NEW%20BAKERY');
+    expect(tx).to.have.length(4); expect(tx.every((t) => t.splits[0]?.category === 'Eating Out')).to.equal(true);
+    expect((await api('/api/rules')).some((r) => /BRAND NEW BAKERY/i.test(r.match_json) && r.mode === 'suggest')).to.equal(true);
   });
 });

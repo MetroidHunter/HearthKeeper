@@ -19,11 +19,13 @@ import './pages/signin.js';
 import './pages/settings.js';
 import './pages/analytics.js';
 import './pages/migration.js';
+import './pages/backlog.js';
 
 const ROUTES: [string, string, () => TemplateResult][] = [
   ['/', 'Home', () => html`<hk-home></hk-home>`],
   ['/dashboard', 'Dashboard', () => html`<hk-dashboard></hk-dashboard>`],
   ['/budget', 'Budget', () => html`<hk-budget></hk-budget>`],
+  ['/backlog', 'Backlog', () => html`<hk-backlog></hk-backlog>`],
   ['/transactions', 'Transactions', () => html`<hk-transactions></hk-transactions>`],
   ['/plans', 'Plans', () => html`<hk-plans></hk-plans>`],
   ['/earnings', 'Earnings', () => html`<hk-earnings></hk-earnings>`],

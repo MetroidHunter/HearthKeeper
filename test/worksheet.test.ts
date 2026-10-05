@@ -65,3 +65,23 @@ describe('migration worksheet (D32)', () => {
     expect(db.prepare('SELECT COUNT(*) c FROM merchants WHERE default_category_id IS NOT NULL').get()).toEqual({ c: 0 });
   });
 });
+
+import { groupedInbox, bulkAnswer } from '../src/core/backlog.js';
+import { seedHousehold } from './helpers.js';
+import { createTransaction, classify, setSplits } from '../src/core/transactions.js';
+describe('backlog mode', () => {
+  it('groups by merchant, applies one answer to the whole group, never overwrites a human decision, and learns a rule', () => {
+    const h = seedHousehold();
+    const mk = (d: string, c: number) => { const id = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-01', amountCents: c, descriptor: d }); classify(h.db, id); return id; };
+    const a = [mk('SQ *CORNER BAKERY SEATTLE WA', -500), mk('SQ *CORNER BAKERY SEATTLE WA', -700), mk('SQ *CORNER BAKERY SEATTLE WA', -900)];
+    mk('RANDOM SHOP', -100);
+    setSplits(h.db, a[2], [{ categoryId: h.cats['Groceries'], amountCents: -900 }], 'user'); // answered by a human meanwhile
+    const g = groupedInbox(h.db);
+    expect(g[0]).toMatchObject({ name: 'CORNER BAKERY', count: 2, totalCents: -1200 });
+    const r = bulkAnswer(h.db, [...g[0].txnIds, a[2]], h.cats['Eating Out'], { makeRule: 'suggest' });
+    expect(r).toMatchObject({ applied: 2, skipped: 1 });
+    expect(r.rule!.backtest.matched).toBeGreaterThanOrEqual(2);
+    expect((h.db.prepare('SELECT category_id c FROM transaction_splits WHERE transaction_id=?').get(a[2]) as any).c).toBe(h.cats['Groceries']);
+    expect(groupedInbox(h.db).map((x) => x.name)).toEqual(['RANDOM SHOP']);
+  });
+});

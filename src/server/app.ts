@@ -21,6 +21,7 @@ import { extractText } from '../greenlight/parser.js';
 import { Notifier, getPrefs, setPrefs } from '../notify/notifier.js';
 import { vapidKeys } from '../notify/push.js';
 import { registerAllParsers } from '../ingest/parsers.js';
+import { groupedInbox, bulkAnswer } from '../core/backlog.js';
 import { worksheetItems, applyWorksheet, loadReport } from '../migration/worksheet.js';
 import { bootstrapMerchants } from '../migration/merchants.js';
 import { noteCandidates, pickNote, proposeItemSplits } from '../notes/matcher.js';
@@ -108,6 +109,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/analytics/budget-vs-actual', async (req) => budgetVsActual(db, q(req).month ?? mon()));
   app.get('/api/explore', async (req: any) => explore(db, String(req.query.q ?? ''), { from: req.query.from ?? '2020-01-01', to: req.query.to ?? now() }));
   app.get('/api/inbox', async () => inbox(db));
+  app.get('/api/inbox/grouped', async () => groupedInbox(db));
+  app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { makeRule: b.makeRule, actor: actor(req) }); });
   app.get('/api/dashboard', async () => {
     const steps = closeChecklist(db, now());
     return { closeReadiness: steps, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
