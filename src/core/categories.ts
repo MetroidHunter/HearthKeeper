@@ -58,4 +58,19 @@ export function retireCategory(db: DB, categoryId: number, month: string, opts: 
     return { remainingCents: bal };
   })();
 }
+/** Undo a retirement. The category comes back with `monthlyCents` (default: the last non-zero amount it had) effective `month`. Months while it was retired stay at zero. */
+export function unretireCategory(db: DB, categoryId: number, month: string, opts: { monthlyCents?: number; actor?: string } = {}): { monthlyCents: number } {
+  return db.transaction(() => {
+    const c = db.prepare('SELECT name, status FROM categories WHERE id=?').get(categoryId) as { name: string; status: string } | undefined;
+    if (!c) throw new Error('unknown category');
+    if (c.status !== 'retired') throw new Error('category is not retired');
+    if (c.name.toLowerCase() === 'needs category') throw new Error('NEEDS CATEGORY is represented by the uncategorized state and cannot be reactivated');
+    const last = db.prepare('SELECT monthly_cents FROM category_budget_versions WHERE category_id=? AND monthly_cents>0 ORDER BY effective_month DESC LIMIT 1').get(categoryId) as { monthly_cents: number } | undefined;
+    const monthlyCents = opts.monthlyCents ?? last?.monthly_cents ?? 0;
+    db.prepare("UPDATE categories SET status='active', retired_month=NULL, version=version+1 WHERE id=?").run(categoryId);
+    setBudget(db, categoryId, monthlyCents, month, { reason: 'unretired', actor: opts.actor });
+    audit(db, 'category', categoryId, 'unretire', undefined, { month, monthlyCents }, opts.actor);
+    return { monthlyCents };
+  })();
+}
 export { monthOf };

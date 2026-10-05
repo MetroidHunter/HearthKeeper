@@ -23,7 +23,7 @@ export function budgetPage(db: DB, today: string, periods?: [Period, Period], us
   });
   const live = db.prepare("SELECT id, name, income_snapshot_cents FROM budget_plans WHERE status='live'").get() as any;
   const income = live?.income_snapshot_cents ?? 0;
-  return { periods: [a, b], rows, header: { livePlan: live?.name ?? null, incomeCents: income, allocatedCents: alloc.allocated, unallocatedCents: income - alloc.allocated } };
+  return { periods: [a, b], rows, uncategorized: uncategorized(db), header: { livePlan: live?.name ?? null, incomeCents: income, allocatedCents: alloc.allocated, unallocatedCents: income - alloc.allocated } };
 }
 
 /** Budget percentage pie (D18, D25): share of allocation or of spend, by group with category drill-down. */
@@ -86,15 +86,65 @@ export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number 
 }
 
 /** Inbox / "Needs you" (design §15.1). */
-export function inbox(db: DB) {
-  const rows = (where: string) => db.prepare(`SELECT t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note_state, t.flag_reason, t.decided_rule_id, a.name account FROM transactions t JOIN accounts a ON a.id=t.account_id
-    WHERE t.status!='void' AND ${where} ORDER BY t.occurred_on DESC LIMIT 200`).all();
+export type InboxReason = 'needs_category' | 'flagged' | 'needs_note' | 'stale';
+/** Plain-language reason an item is waiting on a person (shown on every Home/Backlog card). */
+export function whyNeedsYou(t: any, reason: InboxReason, today = new Date().toISOString().slice(0, 10)): string {
+  if (reason === 'needs_category') {
+    if (t.legacy_origin === 'legacy:NEEDS CATEGORY') return 'It was parked in NEEDS CATEGORY in your sheet and never resolved.';
+    if (t.legacy_origin === 'legacy:(blank)') return 'It had no category in your sheet.';
+    if (t.decided_rule_id) return 'A rule matches this, but it is set to suggest or ask, so it needs your yes.';
+    return 'No rule or merchant history matches this description yet, so nothing could categorize it.';
+  }
+  if (reason === 'flagged') {
+    const r = String(t.flag_reason ?? '').trim();
+    if (/^\?+$/.test(r)) return `Your note in the sheet was "${r}", which the import treats as "look at this later".`;
+    return `Flagged for follow-up${r ? `: ${r}` : ''}.`;
+  }
+  if (reason === 'needs_note') return t.note_state === 'ambiguous' ? 'Several Amazon/Venmo/PayPal notes could belong to this charge; pick the right one.' : t.note_state === 'awaiting_note' ? 'This is a wrapper payment (Amazon, Venmo, PayPal…); waiting for the matching note.' : 'The note is too vague to categorize from; add what it was for.';
+  const days = Math.max(0, Math.round((Date.parse(today) - Date.parse(t.occurred_on)) / 86400000));
+  return `This pending charge has not posted after ${days} days; it may have been dropped by the bank.`;
+}
+
+export function inbox(db: DB, today = new Date().toISOString().slice(0, 10)) {
+  const cols = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, a.name account,
+    (SELECT s.origin FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
+  const base = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;
+  const W = {
+    needs_category: "t.kind NOT IN ('ignored','internal_transfer') AND (t.review_state='needs_category')",
+    needs_note: "t.note_state IN ('needs_note','ambiguous','awaiting_note')",
+    stale: "t.status='stale'",
+    flagged: 't.flagged=1',
+  } as const;
+  const rows = (reason: InboxReason) => (db.prepare(`SELECT ${cols} ${base(W[reason])} ORDER BY t.occurred_on DESC LIMIT 200`).all() as any[]).map((t) => ({ ...t, reason, why: whyNeedsYou(t, reason, today) }));
+  const count = (w: string) => (db.prepare(`SELECT COUNT(*) c ${base(w)}`).get() as { c: number }).c;
+  const unique = (db.prepare(`SELECT COUNT(*) c ${base(`(${Object.values(W).map((w) => `(${w})`).join(' OR ')})`)}`).get() as { c: number }).c;
   return {
-    needsCategory: (rows("t.kind NOT IN ('ignored','internal_transfer') AND (t.review_state='needs_category')") as any[]).map((t) => ({ ...t, suggestions: suggestionsFor(db, t) })),
-    needsNote: rows("t.note_state IN ('needs_note','ambiguous','awaiting_note')"),
-    staleProvisionals: rows("t.status='stale'"),
-    flagged: rows('t.flagged=1'),
+    counts: { total: unique, needsCategory: count(W.needs_category), needsNote: count(W.needs_note), stale: count(W.stale), flagged: count(W.flagged) },
+    needsCategory: rows('needs_category').map((t) => ({ ...t, suggestions: suggestionsFor(db, t) })),
+    needsNote: rows('needs_note'),
+    staleProvisionals: rows('stale'),
+    flagged: rows('flagged'),
     greenlightRequests: db.prepare("SELECT r.*, p.display_name FROM greenlight_requests r JOIN greenlight_profiles p ON p.id=r.profile_id WHERE r.status='pending'").all(),
     unrecognized: db.prepare("SELECT id, source, received_at, payload, error FROM raw_events WHERE parse_status IN ('unrecognized','error') ORDER BY id DESC LIMIT 100").all(),
   };
+}
+
+/** What is still sitting without a category: the "Needs category" envelope. Categorizing moves money out of it into a real category. */
+export function uncategorized(db: DB) {
+  const r = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(t.amount_cents),0) net, COALESCE(SUM(CASE WHEN t.amount_cents<0 THEN t.amount_cents END),0) spend, COALESCE(SUM(CASE WHEN t.amount_cents>0 THEN t.amount_cents END),0) income
+    FROM transactions t WHERE t.review_state='needs_category' AND t.status!='void' AND t.kind NOT IN ('ignored','internal_transfer','greenlight_reclass')`).get() as any;
+  return { count: r.n as number, netCents: r.net as number, spendCents: r.spend as number, incomeCents: r.income as number };
+}
+
+/** Log-style context: the transactions around one, on the same account, so you can see what it sits between. */
+export function transactionContext(db: DB, id: number, before = 6, after = 6) {
+  const t = db.prepare('SELECT id, account_id, occurred_on FROM transactions WHERE id=?').get(id) as { id: number; account_id: number; occurred_on: string } | undefined;
+  if (!t) return null;
+  const sel = `SELECT t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, a.name account,
+    (SELECT GROUP_CONCAT(COALESCE(c.name,'(none)'), ', ') FROM transaction_splits s LEFT JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=t.id) categories
+    FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.account_id=? AND t.status!='void'`;
+  const prev = db.prepare(`${sel} AND (t.occurred_on<? OR (t.occurred_on=? AND t.id<?)) ORDER BY t.occurred_on DESC, t.id DESC LIMIT ?`).all(t.account_id, t.occurred_on, t.occurred_on, t.id, before) as any[];
+  const next = db.prepare(`${sel} AND (t.occurred_on>? OR (t.occurred_on=? AND t.id>?)) ORDER BY t.occurred_on, t.id LIMIT ?`).all(t.account_id, t.occurred_on, t.occurred_on, t.id, after) as any[];
+  const self = db.prepare(`${sel} AND t.id=?`).get(t.account_id, t.id) as any;
+  return { id, rows: [...prev.reverse(), self, ...next].map((r) => ({ ...r, isTarget: r.id === id })) };
 }

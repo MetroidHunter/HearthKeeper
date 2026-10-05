@@ -2,8 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { DB } from '../core/db.js';
 import { audit } from '../core/db.js';
 import { registerAuth, type AuthConfig } from './auth.js';
-import { addCategory, budgetHistory, retireCategory, setBudget } from '../core/categories.js';
-import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod } from '../core/reports.js';
+import { addCategory, budgetHistory, retireCategory, unretireCategory, setBudget } from '../core/categories.js';
+import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod, transactionContext } from '../core/reports.js';
 import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust } from '../core/plans.js';
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
@@ -115,7 +115,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/digest', async () => (opts.notifier ?? new Notifier(db, { send: async () => 'ok' })).digest());
 
   /* ---------- reports ---------- */
-  app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now()));
+  app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now(), undefined, userIdOf(req) ?? undefined));
   app.get('/api/budget/pie', async (req: any) => budgetPie(db, req.query.today ?? now(), req.query.mode === 'spent' ? 'spent' : 'allocated'));
   app.get('/api/reports/spend-by', async (req: any) => spendBy(db, req.query.dim ?? 'category', { from: req.query.from ?? monthPeriod(now().slice(0, 7)).from, to: req.query.to ?? now() }));
   const q = (req: any) => req.query as Record<string, string>;
@@ -128,7 +128,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/analytics/year-pivot', async (req) => yearPivot(db, Number(q(req).from ?? Number(mon().slice(0, 4)) - 4), Number(q(req).to ?? mon().slice(0, 4))));
   app.get('/api/analytics/budget-vs-actual', async (req) => budgetVsActual(db, q(req).month ?? mon()));
   app.get('/api/explore', async (req: any) => explore(db, String(req.query.q ?? ''), { from: req.query.from ?? '2020-01-01', to: req.query.to ?? now() }));
-  app.get('/api/inbox', async () => inbox(db));
+  app.get('/api/inbox', async () => inbox(db, now()));
   app.get('/api/inbox/grouped', async () => groupedInbox(db));
   app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { makeRule: b.makeRule, actor: actor(req) }); });
   app.get('/api/dashboard', async () => {
@@ -158,7 +158,9 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
       transactions: db.prepare('SELECT t.* FROM transactions t JOIN transaction_splits s ON s.transaction_id=t.id WHERE s.category_id=? ORDER BY t.occurred_on DESC LIMIT 100').all(id) };
   });
   app.post('/api/categories/:id/retire', async (req: any) => { const b = rec(req.body); return retireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { moveBalanceTo: b.moveBalanceTo, actor: actor(req) }); });
-  app.post('/api/favorites', async (req: any) => { const b = rec(req.body); db.prepare('INSERT OR IGNORE INTO favorites(user_id, category_id) VALUES (?,?)').run(b.userId ?? 1, b.categoryId); return { ok: true }; });
+  app.post('/api/categories/:id/unretire', async (req: any) => { const b = rec(req.body); return unretireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { monthlyCents: b.monthlyCents, actor: actor(req) }); });
+  app.post('/api/favorites', async (req: any) => { const b = rec(req.body); db.prepare('INSERT OR IGNORE INTO favorites(user_id, category_id) VALUES (?,?)').run(userIdOf(req) ?? 1, b.categoryId); return { ok: true }; });
+  app.delete('/api/favorites/:categoryId', async (req: any) => { db.prepare('DELETE FROM favorites WHERE user_id=? AND category_id=?').run(userIdOf(req) ?? 1, Number(req.params.categoryId)); return { ok: true }; });
 
   /* ---------- earnings & plans ---------- */
   app.get('/api/scenarios', async () => (db.prepare('SELECT * FROM earning_scenarios ORDER BY id DESC').all() as any[]).map((s) => ({ ...s, lines: scenarioLines(db, s.id).map((l) => ({ ...l, ...lineMetrics(l) })), monthlyNetCents: scenarioMonthlyNet(db, s.id) })));
@@ -176,14 +178,19 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/plans/:id/make-live', async (req: any) => { const b = rec(req.body); return makeLive(db, Number(req.params.id), { effectiveMonth: b.effectiveMonth ?? now().slice(0, 7), actor: actor(req), today: now(), confirmRestate: b.confirmRestate }); });
 
   /* ---------- transactions ---------- */
-  app.get('/api/transactions', async (req: any) => {
-    const q = req.query; const where: string[] = ["t.status!='void'"]; const args: unknown[] = [];
+  const txnFilter = (q: any) => {
+    const where: string[] = ["t.status!='void'"]; const args: unknown[] = [];
     if (q.from) { where.push('t.occurred_on>=?'); args.push(q.from); } if (q.to) { where.push('t.occurred_on<=?'); args.push(q.to); }
     if (q.account) { where.push('t.account_id=?'); args.push(q.account); }
     if (q.category) { where.push('EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id=?)'); args.push(q.category); }
     if (q.kind) { where.push('t.kind=?'); args.push(q.kind); }
     if (q.hidden !== '1') where.push("t.kind NOT IN ('ignored','internal_transfer')");
     if (q.q) { where.push('(LOWER(t.descriptor_raw) LIKE ? OR LOWER(COALESCE(t.note,\'\')) LIKE ?)'); args.push(`%${String(q.q).toLowerCase()}%`, `%${String(q.q).toLowerCase()}%`); }
+    return { where, args };
+  };
+  app.get('/api/transactions/count', async (req: any) => { const { where, args } = txnFilter(req.query); return { total: (db.prepare(`SELECT COUNT(*) c FROM transactions t WHERE ${where.join(' AND ')}`).get(...args) as { c: number }).c }; });
+  app.get('/api/transactions', async (req: any) => {
+    const q = req.query; const { where, args } = txnFilter(q);
     const rows = db.prepare(`SELECT t.*, a.name account FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE ${where.join(' AND ')} ORDER BY t.occurred_on DESC, t.id DESC LIMIT ? OFFSET ?`).all(...args, Number(q.limit ?? 100), Number(q.offset ?? 0)) as any[];
     const sp = db.prepare('SELECT s.*, c.name category FROM transaction_splits s LEFT JOIN categories c ON c.id=s.category_id WHERE transaction_id=?');
     return rows.map((r) => ({ ...r, splits: sp.all(r.id) }));
@@ -214,6 +221,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     return { ok: true };
   });
   /* ---------- notes: confirm a match, assign items (design §10, §15.4) ---------- */
+  app.get('/api/transactions/:id/context', async (req: any, reply) => transactionContext(db, Number(req.params.id), Number(req.query.before ?? 6), Number(req.query.after ?? 6)) ?? reply.code(404).send({ error: 'not found' }));
   app.get('/api/transactions/:id/note-candidates', async (req: any) => noteCandidates(db, Number(req.params.id)));
   app.post('/api/transactions/:id/note', async (req: any) => { const b = rec(req.body); const id = Number(req.params.id); if (b.noteId) pickNote(db, id, b.noteId); else db.prepare("UPDATE transactions SET note=?, note_state='user_provided', note_source='manual', version=version+1 WHERE id=?").run(String(b.note ?? ''), id); audit(db, 'transaction', id, 'note', undefined, b, actor(req)); return { ok: true }; });
   app.get('/api/transactions/:id/item-splits', async (req: any) => proposeItemSplits(db, Number(req.params.id)));
@@ -226,7 +234,17 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/rules', async (req) => { const b = rec(req.body); return { id: addRule(db, b as any), backtest: backtest(db, { match: b.match }) }; });
   app.patch('/api/rules/:id', async (req: any) => { const b = rec(req.body); if (b.mode) db.prepare('UPDATE rules SET mode=? WHERE id=?').run(b.mode, req.params.id); if (b.enabled !== undefined) db.prepare('UPDATE rules SET enabled=? WHERE id=?').run(Number(b.enabled), req.params.id); return { ok: true }; });
   app.get('/api/rules/promotable', async () => promotable(db));
-  app.get('/api/merchants', async () => db.prepare("SELECT m.*, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ORDER BY review_state, name").all());
+  app.get('/api/merchants', async (req: any) => { // paged and searchable: the household has thousands, and the page must never render them all
+    const q = req.query; const where: string[] = []; const args: unknown[] = [];
+    if (q.q) { where.push('LOWER(m.name) LIKE ?'); args.push(`%${String(q.q).toLowerCase()}%`); }
+    if (q.review === 'unreviewed') where.push("m.review_state='unreviewed'");
+    const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limit = Math.min(200, Number(q.limit ?? 50)), offset = Number(q.offset ?? 0);
+    const rows = db.prepare(`SELECT m.*, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ${w} ORDER BY (m.review_state='unreviewed') DESC, txns DESC, m.name LIMIT ? OFFSET ?`).all(...args, limit, offset);
+    const total = (db.prepare(`SELECT COUNT(*) c FROM merchants m ${w}`).get(...args) as { c: number }).c;
+    const unreviewed = (db.prepare("SELECT COUNT(*) c FROM merchants WHERE review_state='unreviewed'").get() as { c: number }).c;
+    return { rows, total, unreviewed, limit, offset };
+  });
   app.post('/api/merchants/:id/merge', async (req: any) => {
     const into = rec(req.body).intoId; const id = Number(req.params.id);
     db.transaction(() => { db.prepare('UPDATE transactions SET merchant_id=? WHERE merchant_id=?').run(into, id); db.prepare('UPDATE merchant_aliases SET merchant_id=? WHERE merchant_id=?').run(into, id);
