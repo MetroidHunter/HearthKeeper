@@ -16,7 +16,7 @@ echo "==> static address: make sure the VM's external IP does not change"
 IP=$("${G[@]}" compute instances describe "$HK_VM" --zone "$HK_ZONE" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
 "${G[@]}" compute addresses describe hearthkeeper-ip --region "$REGION" >/dev/null 2>&1 || \
   "${G[@]}" compute addresses create hearthkeeper-ip --region "$REGION" --addresses "$IP"
-echo "    $IP (point hearthkeeper.com's A record here)"
+echo "    $IP (point hearthkeeper.net's A record here)"
 
 echo "Done. Backups: attach a snapshot schedule to the VM disk, e.g."
 echo "  gcloud compute resource-policies create snapshot-schedule hearthkeeper-daily --region $REGION --max-retention-days 14 --daily-schedule --start-time 11:00"

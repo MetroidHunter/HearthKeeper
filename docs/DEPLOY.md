@@ -17,14 +17,14 @@ Everything here is a script in `deploy/`; nothing needs hand-typed commands on t
 2. **Code and host:**
    ```
    HK_VM=<instance> HK_ZONE=<zone> \
-   HK_DOMAIN=hearthkeeper.com \
+   HK_DOMAIN=hearthkeeper.net \
    HK_GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com \
    HK_ALLOWED_EMAILS=you@gmail.com,partner@gmail.com \
    bash deploy/push-code.sh
    ```
    Any of the three settings you leave out are asked for interactively and saved on the VM in `/etc/hearthkeeper.env`, so on the first run `HK_VM=... HK_ZONE=... bash deploy/push-code.sh` is enough. No gcloud? Use `HK_HOST=user@ip` and plain ssh. At the end the script reports service health, and whether the public HTTPS URL answers (TLS certificate issued).
 3. **Data**: see below. Until you load data the app starts with an empty database.
-4. Open `https://hearthkeeper.com`, sign in with an allowlisted Google account.
+4. Open `https://hearthkeeper.net`, sign in with an allowlisted Google account.
 
 ## Data migration
 

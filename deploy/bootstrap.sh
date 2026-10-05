@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # HearthKeeper host bootstrap: idempotent, re-run it for every code update. Debian/Ubuntu, run as root on the VM.
 #
-#   sudo HK_DOMAIN=hearthkeeper.com \
+#   sudo HK_DOMAIN=hearthkeeper.net \
 #        HK_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com \
 #        HK_ALLOWED_EMAILS=you@gmail.com,partner@gmail.com \
 #        [HK_INIT_USERS="Brys:you@gmail.com;Miracle:partner@gmail.com"] \
@@ -32,7 +32,7 @@ ask() { # ask VAR "question": keep the stored/exported value, else prompt when a
   fi
   printf -v "$var" '%s' "$cur"
 }
-ask HK_DOMAIN "Domain (e.g. hearthkeeper.com)"
+ask HK_DOMAIN "Domain (e.g. hearthkeeper.net)"
 ask HK_GOOGLE_CLIENT_ID "Google OAuth client ID (…apps.googleusercontent.com)"
 ask HK_ALLOWED_EMAILS "Allowed sign-in emails, comma separated"
 set_kv HK_DOMAIN "$HK_DOMAIN"

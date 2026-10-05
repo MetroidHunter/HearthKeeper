@@ -3,7 +3,7 @@
 # No git credentials are needed on the VM: the tree travels as a tarball over ssh.
 #
 #   HK_VM=hearthkeeper HK_ZONE=us-west1-b \
-#   HK_DOMAIN=hearthkeeper.com HK_GOOGLE_CLIENT_ID=... HK_ALLOWED_EMAILS=a@x.com,b@x.com bash deploy/push-code.sh
+#   HK_DOMAIN=hearthkeeper.net HK_GOOGLE_CLIENT_ID=... HK_ALLOWED_EMAILS=a@x.com,b@x.com bash deploy/push-code.sh
 # Without gcloud, use plain ssh instead:  HK_HOST=you@1.2.3.4 ...
 # First run: any missing bootstrap setting is asked for interactively and saved on the VM (/etc/hearthkeeper.env); later runs ask nothing.
 set -euo pipefail
