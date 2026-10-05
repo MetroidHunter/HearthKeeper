@@ -65,6 +65,7 @@ const TXNS = `Date,Name,Category,Amount,Notes,Split Total
 const idx = (m: string) => { const [y, mo] = m.split('-').map(Number); return y * 12 + mo - 1; };
 const mo = (d: string) => { const [m, , y] = d.split('/'); return `${y}-${m.padStart(2, '0')}`; };
 function refAccrued(start: string, rows: { stop: string; amt: number }[], current: number | null, asOfMonth: string) {
+  // like the real sheet: only categories present in Budget (current !== null) get the final segment through today
   let prev = start, total = 0, months = 0;
   for (const r of [...rows].sort((a, b) => idx(a.stop) - idx(b.stop))) {
     const diff = idx(r.stop) - idx(prev);
@@ -72,7 +73,7 @@ function refAccrued(start: string, rows: { stop: string; amt: number }[], curren
     total += diff * r.amt; months += diff; prev = r.stop;
   }
   const last = idx(asOfMonth) - idx(prev) + 1;
-  if (last > 0) { total += last * (current ?? 0); months += last; }
+  if (current !== null && last > 0) { total += last * (current ?? 0); months += last; }
   return { total, months };
 }
 
@@ -104,15 +105,16 @@ describe('legacy migration + parity (synthetic sheet export)', () => {
     const hist = (name: string) => HISTORY.split('\n').slice(1).filter((l) => l.startsWith(name + ',') && l.split(',')[2]).map((l) => { const c = l.split(','); return { stop: mo(c[2]), amt: Number(c[1].replace('$', '')) * 100 }; });
     const spec: [string, string, number | null][] = [['Groceries', '2020-01', 80000], ['Eating Out', '2021-03', 30000], ['Manicure', '2022-01', 12500], ['Rent', '2020-01', null], ['Gig Income', '2020-01', 0], ['Salary', '2020-01', 0], ['Lovesac Couch', '2023-06', null], ['Goods', '2020-01', 0], ['NEEDS CATEGORY', '2020-01', 0], ['Hats', '2025-06', null], ['Boiling Point', '2022-01', null]];
     const hj: string[] = [], ab: string[] = [], cur: string[] = [];
-    const txnSum: Record<string, number> = { Groceries: 100000 - 12050 - 3050 - 7500 + 500, 'Eating Out': -3050 + 7500 - 4000 + 1000, Manicure: -12201 - 50000, Rent: -150000, 'Gig Income': 25000, Salary: 650000, Hats: -2000, 'NEEDS CATEGORY': 30000 - 1234 };
+    const txnSum: Record<string, number> = { Groceries: 100000 - 12050 - 3050 - 7500 + 500, 'Eating Out': -3050 + 7500 - 4000 + 1000, Manicure: -12201 - 50000, Rent: -150000, 'Gig Income': 25000, Salary: 650000, Hats: -2000, 'NEEDS CATEGORY': 30000 };
     for (const [name, start, now] of spec) {
       const { total, months } = refAccrued(start, hist(name), now, asOfMonth);
-      hj.push(`${name},${months},${(total / 100).toFixed(2)}`);
+      if (months > 0) hj.push(`${name},${months},${(total / 100).toFixed(2)}`); // the sheet emits no row for a category with no Budget row and no History
       ab.push(`${name},${((txnSum[name] ?? 0) / 100).toFixed(2)}`);
       if (name !== 'Salary') cur.push(`${name},${(((txnSum[name] ?? 0) + total) / 100).toFixed(2)}`);
     }
+    ab.push('(blank),-12.34');
     const n = TXNS.trim().split('\n').length - 1;
-    const total = Object.values(txnSum).reduce((a, b) => a + b, 0) - 1234 + 1234; // NEEDS includes blank row (-12.34)
+    const total = Object.values(txnSum).reduce((a, b) => a + b, 0) - 1234; // plus the blank-category row (-12.34)
     const rpt = runParity(db, ASOF, {
       internalHJ: hj.join('\n'), internalAB: ab.join('\n'), budgetCurrent: cur.join('\n'),
       txnCount: n, txnTotal: (total / 100).toFixed(2), allocated: '1225.00',
