@@ -26,9 +26,12 @@ export function getOrCreateProfile(db: DB, institution: string, rows: string[][]
  * Overlap-safe de-dup as a multiset difference (design §8.3): if the DB already holds N rows with a fingerprint and the file has M >= N, import M - N.
  * Scope is the institution, not the account (D35).
  */
-export function diffAgainstDb(db: DB, institution: string, rows: ParsedRow[]): { fresh: ParsedRow[]; already: number } {
+export function importScope(institution: string, accountId?: number): string { return accountId ? `${institution}#${accountId}` : institution; }
+
+/** `scope` is the institution (default, D35) or `institution#accountId` when the caller names the account, so an identical fee on a second account is not mistaken for a re-import. */
+export function diffAgainstDb(db: DB, scope: string, rows: ParsedRow[]): { fresh: ParsedRow[]; already: number } {
   const fileCounts = new Map<string, ParsedRow[]>();
-  for (const r of rows) { const k = rowFingerprint(institution, r.date, r.amountCents, r.description); (fileCounts.get(k) ?? fileCounts.set(k, []).get(k)!).push(r); }
+  for (const r of rows) { const k = rowFingerprint(scope, r.date, r.amountCents, r.description); (fileCounts.get(k) ?? fileCounts.set(k, []).get(k)!).push(r); }
   const fresh: ParsedRow[] = []; let already = 0;
   for (const [k, list] of fileCounts) {
     const have = (db.prepare("SELECT COUNT(*) c FROM transactions WHERE fingerprint=? AND status!='void'").get(k) as { c: number }).c;
@@ -40,14 +43,14 @@ export function diffAgainstDb(db: DB, institution: string, rows: ParsedRow[]): {
   return { fresh, already };
 }
 
-export function previewImport(db: DB, institution: string, csv: string, spec?: ProfileSpec): ImportPreview {
+export function previewImport(db: DB, institution: string, csv: string, spec?: ProfileSpec, opts: { accountId?: number } = {}): ImportPreview {
   const rows = parseCsv(csv);
   const prof = getOrCreateProfile(db, institution, rows, spec);
   if (prof.id === null) return { profileId: null, signature: prof.signature, suggested: prof.suggested, total: rows.length, new: 0, alreadyImported: 0, matchesProvisional: 0, errors: [], willAutoCategorize: 0, needsAttention: 0 };
   const parsed = applyProfile(rows, prof.spec);
-  const { fresh, already } = diffAgainstDb(db, institution, parsed.rows);
-  const accountId = defaultAccount(db, institution);
-  const provMatches = fresh.filter((r) => findProvisionalMatch(db, accountId, r)).length;
+  const { fresh, already } = diffAgainstDb(db, importScope(institution, opts.accountId), parsed.rows);
+  const accountId = defaultAccount(db, institution, opts.accountId);
+  const provMatches = assignProvisionals(db, accountId, fresh).size;
   return { profileId: prof.id, signature: prof.signature, total: parsed.rows.length, new: fresh.length, alreadyImported: already, matchesProvisional: provMatches, errors: parsed.errors, willAutoCategorize: 0, needsAttention: fresh.length - provMatches };
 }
 
@@ -68,12 +71,14 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
   const accountId = defaultAccount(db, institution, opts.accountId);
   const ev = captureEvent(db, { source: institution.toLowerCase().includes('chase') ? 'chase_csv' : 'wf_csv', channel: 'upload', payload: csv, headers: { filename: opts.filename ?? '' } });
   return db.transaction(() => {
-    const { fresh, already } = diffAgainstDb(db, institution, parsed.rows);
+    const scope = importScope(institution, opts.accountId);
+    const { fresh, already } = diffAgainstDb(db, scope, parsed.rows);
+    const provFor = assignProvisionals(db, accountId, fresh); // exact matches first, then unique tolerance matches over what is left
     let superseded = 0, categorized = 0, needs = 0;
     for (const r of fresh) {
       const kind = r.amountCents >= 0 ? 'income' : 'spending';
-      const prov = findProvisionalMatch(db, accountId, r);
-      const id = createTransaction(db, { accountId, kind, occurredOn: r.date, postedOn: r.postedOn ?? r.date, amountCents: r.amountCents, descriptor: r.description, fingerprint: rowFingerprint(institution, r.date, r.amountCents, r.description), sourceEventIds: [ev.id] });
+      const prov = provFor.get(r) ?? null;
+      const id = createTransaction(db, { accountId, kind, occurredOn: r.date, postedOn: r.postedOn ?? r.date, amountCents: r.amountCents, descriptor: r.description, fingerprint: rowFingerprint(scope, r.date, r.amountCents, r.description), sourceEventIds: [ev.id] });
       if (prov) { supersedeProvisional(db, prov, id); superseded++; }
       const c = classify(db, id);
       if (c.outcome === 'categorized' || c.outcome === 'internal_transfer' || c.outcome === 'ignored') categorized++; else needs++;
@@ -96,17 +101,37 @@ function similarity(a: string, b: string): number {
 export interface MatchOpts { tolerancePct: number; windowDays: number; minSimilarity: number }
 export const DEFAULT_MATCH: MatchOpts = { tolerancePct: 0.25, windowDays: 5, minSimilarity: 0.5 };
 
+interface Cand { id: number; exact: boolean; within: boolean; sim: number; days: number }
+function candidatesFor(provs: any[], r: { date: string; amountCents: number; description: string }, o: MatchOpts, taken: Set<number>): Cand[] {
+  return provs.filter((c) => !taken.has(c.id) && Math.abs(daysBetween(c.occurred_on, r.date)) <= o.windowDays && Math.sign(c.amount_cents) === Math.sign(r.amountCents))
+    .map((c) => ({ id: c.id as number, exact: c.amount_cents === r.amountCents, within: Math.abs(r.amountCents - c.amount_cents) <= Math.abs(c.amount_cents) * o.tolerancePct, sim: similarity(c.descriptor_raw, r.description), days: Math.abs(daysBetween(c.occurred_on, r.date)) }))
+    .filter((c) => c.sim >= o.minSimilarity && (c.exact || c.within));
+}
+/** Pending (provisional) and stale rows are both candidates: a posted row that arrives after the stale threshold must still supersede its alert, or the spend counts twice. */
+const openProvisionals = (db: DB, accountId: number) => db.prepare("SELECT id, occurred_on, amount_cents, descriptor_raw FROM transactions WHERE account_id=? AND status IN ('provisional','stale') AND superseded_by IS NULL AND greenlight_ref IS NULL").all(accountId) as any[];
+
+/**
+ * Assign posted rows to provisionals one-to-one (design §8.6). Pass 1: exact amounts only, so a tolerance match can never steal the provisional an exact row
+ * further down the file should get. Pass 2: tolerance matches, only when the candidate is unique. Ambiguous ties stay unmatched.
+ */
+export function assignProvisionals(db: DB, accountId: number, rows: ParsedRow[], o: MatchOpts = DEFAULT_MATCH): Map<ParsedRow, number> {
+  const provs = openProvisionals(db, accountId); const taken = new Set<number>(); const out = new Map<ParsedRow, number>();
+  if (!provs.length) return out;
+  for (const r of rows) { // pass 1
+    const ex = candidatesFor(provs, r, o, taken).filter((c) => c.exact).sort((a, b) => b.sim - a.sim || a.days - b.days);
+    if (!ex.length || (ex.length > 1 && ex[0].sim === ex[1].sim && ex[0].days === ex[1].days)) continue;
+    out.set(r, ex[0].id); taken.add(ex[0].id);
+  }
+  for (const r of rows) { // pass 2
+    if (out.has(r)) continue;
+    const cs = candidatesFor(provs, r, o, taken);
+    if (cs.length === 1) { out.set(r, cs[0].id); taken.add(cs[0].id); }
+  }
+  return out;
+}
+
 export function findProvisionalMatch(db: DB, accountId: number, r: { date: string; amountCents: number; description: string }, o: MatchOpts = DEFAULT_MATCH): number | null {
-  const cands = db.prepare("SELECT id, occurred_on, amount_cents, descriptor_raw, descriptor_clean FROM transactions WHERE account_id=? AND status='provisional' AND superseded_by IS NULL").all(accountId) as any[];
-  const scored = cands.filter((c) => Math.abs(daysBetween(c.occurred_on, r.date)) <= o.windowDays && Math.sign(c.amount_cents) === Math.sign(r.amountCents))
-    .map((c) => {
-      const exact = c.amount_cents === r.amountCents;
-      const within = Math.abs(r.amountCents - c.amount_cents) <= Math.abs(c.amount_cents) * o.tolerancePct;
-      return { id: c.id as number, exact, within, sim: similarity(c.descriptor_raw, r.description), days: Math.abs(daysBetween(c.occurred_on, r.date)) };
-    }).filter((c) => c.sim >= o.minSimilarity && (c.exact || c.within));
-  const exacts = scored.filter((s) => s.exact).sort((a, b) => b.sim - a.sim || a.days - b.days);
-  if (exacts.length) { if (exacts.length > 1 && exacts[0].sim === exacts[1].sim && exacts[0].days === exacts[1].days) return null; return exacts[0].id; }
-  return scored.length === 1 ? scored[0].id : null; // tolerance matches only when exactly one candidate
+  return assignProvisionals(db, accountId, [r as ParsedRow], o).get(r as ParsedRow) ?? null;
 }
 
 /** The posted record supersedes the provisional one and inherits category, note and flags (phone answers are never lost). */
@@ -114,8 +139,12 @@ export function supersedeProvisional(db: DB, provId: number, postedId: number): 
   const p = db.prepare('SELECT * FROM transactions WHERE id=?').get(provId) as any;
   const posted = db.prepare('SELECT amount_cents FROM transactions WHERE id=?').get(postedId) as any;
   const splits = db.prepare('SELECT category_id, amount_cents, memo, origin FROM transaction_splits WHERE transaction_id=?').all(provId) as any[];
-  if (splits.length && p.review_state !== 'needs_category') {
-    // Rescale to the posted amount, remainder to the largest split.
+  if (p.kind === 'internal_transfer' || p.kind === 'ignored') {
+    // the alert was already a paired transfer / hidden row: the posted row must be the same thing, in the same pairing group
+    db.prepare("UPDATE transactions SET kind=?, ignored_reason=?, transfer_group=?, review_state='not_needed', decided_by=?, decided_rule_id=? WHERE id=?").run(p.kind, p.ignored_reason, p.transfer_group, p.decided_by, p.decided_rule_id, postedId);
+    db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(postedId);
+  } else if (splits.length && p.review_state !== 'needs_category') {
+    // rescale to the posted amount (tips), remainder to the last split
     let rest = posted.amount_cents;
     const scaled = splits.map((s, i) => { const v = i === splits.length - 1 ? rest : Math.round((s.amount_cents / p.amount_cents) * posted.amount_cents); rest -= v; return { ...s, amount_cents: v }; });
     db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(postedId);
@@ -123,7 +152,9 @@ export function supersedeProvisional(db: DB, provId: number, postedId: number): 
     for (const s of scaled) ins.run(postedId, s.category_id, s.amount_cents, s.memo, s.origin);
     db.prepare("UPDATE transactions SET review_state=?, decided_by=?, decided_rule_id=? WHERE id=?").run(p.review_state, p.decided_by, p.decided_rule_id, postedId);
   }
-  db.prepare('UPDATE transactions SET note=COALESCE(note, ?), note_state=CASE WHEN note IS NULL THEN ? ELSE note_state END, flagged=?, flag_reason=? WHERE id=?').run(p.note, p.note_state, p.flagged, p.flag_reason, postedId);
+  db.prepare('UPDATE transactions SET owner_user_id=COALESCE(owner_user_id, ?), note=COALESCE(note, ?), note_state=CASE WHEN note IS NULL THEN ? ELSE note_state END, note_source=COALESCE(note_source, ?), flagged=?, flag_reason=? WHERE id=?')
+    .run(p.owner_user_id, p.note, p.note_state, p.note_source, p.flagged, p.flag_reason, postedId);
+  db.prepare('UPDATE external_notes SET matched_txn_id=? WHERE matched_txn_id=?').run(postedId, provId); // the note found for the alert now belongs to the posted row
   db.prepare("UPDATE transactions SET status='void', superseded_by=? WHERE id=?").run(postedId, provId);
   db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(provId);
 }

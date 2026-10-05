@@ -251,7 +251,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/close', async (req) => ({ id: closePeriod(db, rec(req.body).through ?? now(), actor(req)) }));
 
   /* ---------- imports ---------- */
-  app.post('/api/imports/preview', BIG, async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec); });
+  app.post('/api/imports/preview', BIG, async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId }); });
   app.post('/api/imports/suggest-mapping', BIG, async (req) => suggestMapping(parseCsv(rec(req.body).csv)));
   app.post('/api/imports/commit', BIG, async (req) => { const b = rec(req.body); return commitImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId, filename: b.filename }); });
   app.post('/api/imports/notes', BIG, async (req) => { const b = rec(req.body); const n = importNotesCsv(db, b.csv, b.source ?? 'amazon'); return { ...n, ...runNoteMatcher(db) }; });
