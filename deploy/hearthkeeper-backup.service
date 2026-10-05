@@ -1,0 +1,6 @@
+[Unit]
+Description=HearthKeeper SQLite backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hearthkeeper/deploy/backup.sh

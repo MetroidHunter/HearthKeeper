@@ -1,6 +1,7 @@
 [Unit]
 Description=HearthKeeper
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=hearthkeeper
@@ -11,6 +12,8 @@ Restart=always
 RestartSec=3
 NoNewPrivileges=true
 ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 ReadWritePaths=/var/lib/hearthkeeper
 
 [Install]
