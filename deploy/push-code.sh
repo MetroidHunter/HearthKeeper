@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 git diff --quiet HEAD -- || echo "warning: uncommitted changes are NOT deployed (only HEAD is)"
 REMOTE_ENV=""
-for v in HK_DOMAIN HK_GOOGLE_CLIENT_ID HK_ALLOWED_EMAILS HK_BACKUP_BUCKET HK_INIT_USERS; do [ -n "${!v:-}" ] && REMOTE_ENV+=" $v=$(printf '%q' "${!v}")"; done
+for v in HK_DOMAIN HK_GOOGLE_CLIENT_ID HK_ALLOWED_EMAILS HK_INIT_USERS; do [ -n "${!v:-}" ] && REMOTE_ENV+=" $v=$(printf '%q' "${!v}")"; done
 if [ -n "${HK_HOST:-}" ]; then SSH=(ssh "$HK_HOST"); else : "${HK_VM:?set HK_VM (instance name) or HK_HOST}"; SSH=(gcloud compute ssh "$HK_VM" ${HK_ZONE:+--zone "$HK_ZONE"} --); fi
 git archive --format=tar HEAD | "${SSH[@]}" 'rm -rf /tmp/hk-src && mkdir -p /tmp/hk-src && tar -x -C /tmp/hk-src'
 "${SSH[@]}" "sudo env$REMOTE_ENV HK_SRC_DIR=/tmp/hk-src bash /tmp/hk-src/deploy/bootstrap.sh && rm -rf /tmp/hk-src"

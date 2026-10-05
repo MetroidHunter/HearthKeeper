@@ -4,7 +4,7 @@
 #   sudo HK_DOMAIN=hearthkeeper.com \
 #        HK_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com \
 #        HK_ALLOWED_EMAILS=you@gmail.com,partner@gmail.com \
-#        [HK_BACKUP_BUCKET=gs://bucket/hearthkeeper] [HK_INIT_USERS="Brys:you@gmail.com;Miracle:partner@gmail.com"] \
+#        [HK_INIT_USERS="Brys:you@gmail.com;Miracle:partner@gmail.com"] \
 #        bash deploy/bootstrap.sh
 #
 # Settings are stored in /etc/hearthkeeper.env, so later runs need no variables. The session secret is generated once and kept.
@@ -33,7 +33,6 @@ set_kv HK_GOOGLE_CLIENT_ID "$HK_GOOGLE_CLIENT_ID"
 set_kv HK_ALLOWED_EMAILS "$HK_ALLOWED_EMAILS"
 set_kv HK_DATA_DIR "$DATA"
 set_kv PORT 8080
-[ -n "${HK_BACKUP_BUCKET:-}" ] && set_kv HK_BACKUP_BUCKET "$HK_BACKUP_BUCKET"
 grep -q '^HK_SESSION_SECRET=' "$ENVF" || set_kv HK_SESSION_SECRET "$(openssl rand -hex 32)"
 chmod 600 "$ENVF"
 
@@ -79,7 +78,7 @@ else
 fi
 cd "$APP"
 
-# safety net before anything that may migrate the schema
+# rollback copy before anything that may migrate the schema (offsite backup is your GCP disk snapshots)
 if [ -f "$DATA/hearthkeeper.sqlite" ]; then
   STAMP=$(date -u +%Y%m%dT%H%M%SZ)
   sqlite3 "$DATA/hearthkeeper.sqlite" ".backup '$BACKUPS/pre-deploy-$STAMP.sqlite'" && gzip -f "$BACKUPS/pre-deploy-$STAMP.sqlite"
@@ -104,10 +103,9 @@ log "caddy + systemd"
 sed "s/hearth\.example\.com/$HK_DOMAIN/g" deploy/Caddyfile > /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 install -m 0644 deploy/hearthkeeper.service /etc/systemd/system/hearthkeeper.service
-install -m 0644 deploy/hearthkeeper-backup.service deploy/hearthkeeper-backup.timer /etc/systemd/system/
 chmod +x deploy/*.sh
 systemctl daemon-reload
-systemctl enable --now hearthkeeper.service hearthkeeper-backup.timer >/dev/null
+systemctl enable --now hearthkeeper.service >/dev/null
 systemctl restart hearthkeeper.service
 systemctl reload-or-restart caddy
 
@@ -118,9 +116,5 @@ curl -fsS "http://127.0.0.1:8080/healthz" >/dev/null || { journalctl -u hearthke
 echo "service: healthy on 127.0.0.1:8080"
 if curl -fsS -m 20 "https://$HK_DOMAIN/healthz" >/dev/null 2>&1; then echo "public:  https://$HK_DOMAIN/healthz OK (TLS certificate issued)"
 else echo "public:  https://$HK_DOMAIN not reachable yet. Check DNS points here and GCP firewall allows tcp:80,443 (journalctl -u caddy)."; fi
-if [ -n "${HK_BACKUP_BUCKET:-}" ]; then
-  echo ok | gsutil -q cp - "$HK_BACKUP_BUCKET/.bootstrap-check" 2>/dev/null && gsutil -q rm "$HK_BACKUP_BUCKET/.bootstrap-check" \
-    && echo "backup:  bucket writable" || echo "backup:  CANNOT write $HK_BACKUP_BUCKET (VM needs the devstorage.read_write scope; see deploy/gcp-setup.sh --fix-scopes). Local backups still run."
-fi
 [ -s "$DATA/hearthkeeper.sqlite" ] || echo "data:    empty database. Load yours with deploy/push-data.sh (see docs/DEPLOY.md)."
 echo; echo "Done. Logs: journalctl -u hearthkeeper -f"

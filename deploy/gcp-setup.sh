@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run on your computer with gcloud logged in. Idempotent: creates what is missing, leaves the rest alone.
-#   HK_PROJECT=budgetapp-1202 HK_VM=hearthkeeper HK_ZONE=us-west1-b HK_BUCKET=budgetapp-1202-hearthkeeper-backups bash deploy/gcp-setup.sh [--fix-scopes]
+# Run on your computer with gcloud logged in. Idempotent: firewall and static IP. (Backups = GCP disk snapshots; the closing lines print the commands.)
+#   HK_PROJECT=budgetapp-1202 HK_VM=hearthkeeper HK_ZONE=us-west1-b bash deploy/gcp-setup.sh
 # UNTESTED against a real project (written without gcloud credentials); read the commands before the first run.
 set -euo pipefail
-: "${HK_PROJECT:?}"; : "${HK_VM:?}"; : "${HK_ZONE:?}"; : "${HK_BUCKET:?}"
+: "${HK_PROJECT:?}"; : "${HK_VM:?}"; : "${HK_ZONE:?}"
 G=(gcloud --project "$HK_PROJECT")
 REGION=${HK_ZONE%-*}
 
@@ -18,21 +18,6 @@ IP=$("${G[@]}" compute instances describe "$HK_VM" --zone "$HK_ZONE" --format='g
   "${G[@]}" compute addresses create hearthkeeper-ip --region "$REGION" --addresses "$IP"
 echo "    $IP (point hearthkeeper.com's A record here)"
 
-echo "==> backup bucket gs://$HK_BUCKET (30-day lifecycle, uniform access, private)"
-gcloud storage buckets describe "gs://$HK_BUCKET" --project "$HK_PROJECT" >/dev/null 2>&1 || \
-  gcloud storage buckets create "gs://$HK_BUCKET" --project "$HK_PROJECT" --location "$REGION" --uniform-bucket-level-access --public-access-prevention
-LC=$(mktemp); echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > "$LC"
-gcloud storage buckets update "gs://$HK_BUCKET" --lifecycle-file="$LC" --project "$HK_PROJECT"; rm -f "$LC"
-
-SCOPES=$("${G[@]}" compute instances describe "$HK_VM" --zone "$HK_ZONE" --format='value(serviceAccounts[0].scopes)')
-if echo "$SCOPES" | grep -qE 'devstorage.read_write|cloud-platform'; then echo "==> VM scopes allow writing to the bucket"
-elif [ "${1:-}" = --fix-scopes ]; then
-  echo "==> VM scopes are read-only for storage; stopping the VM to widen them (a minute of downtime)"
-  SA=$("${G[@]}" compute instances describe "$HK_VM" --zone "$HK_ZONE" --format='get(serviceAccounts[0].email)')
-  "${G[@]}" compute instances stop "$HK_VM" --zone "$HK_ZONE"
-  "${G[@]}" compute instances set-service-account "$HK_VM" --zone "$HK_ZONE" --service-account "$SA" --scopes=storage-rw,logging-write,monitoring-write
-  "${G[@]}" compute instances start "$HK_VM" --zone "$HK_ZONE"
-else echo "==> VM scopes are read-only for storage: backups to the bucket will fail. Re-run with --fix-scopes (stops the VM briefly)."; fi
-SA=$("${G[@]}" compute instances describe "$HK_VM" --zone "$HK_ZONE" --format='get(serviceAccounts[0].email)')
-gcloud storage buckets add-iam-policy-binding "gs://$HK_BUCKET" --project "$HK_PROJECT" --member "serviceAccount:$SA" --role roles/storage.objectAdmin >/dev/null
-echo "Done. HK_BACKUP_BUCKET=gs://$HK_BUCKET/hearthkeeper"
+echo "Done. Backups: attach a snapshot schedule to the VM disk, e.g."
+echo "  gcloud compute resource-policies create snapshot-schedule hearthkeeper-daily --region $REGION --max-retention-days 14 --daily-schedule --start-time 11:00"
+echo "  gcloud compute disks add-resource-policies <disk-name> --zone $HK_ZONE --resource-policies hearthkeeper-daily"

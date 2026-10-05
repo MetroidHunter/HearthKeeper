@@ -69,3 +69,6 @@ An alert whose charge already posted via CSV (same account, amount, date within 
 
 ## D53. Deployment is scripts, not instructions
 `deploy/bootstrap.sh` is idempotent and is also the update path; it keeps its settings in `/etc/hearthkeeper.env`. Code reaches the VM as a `git archive` tarball over ssh, so the VM needs no git credentials. Data moves as a verified snapshot (`hk snapshot` / `hk verify`: checksums, row counts, SQLite integrity, money invariants, schema-version check) rather than by re-running the migration on the server, so the server never needs the spreadsheets. Rebuilding from the sheets stays a laptop-side, repeatable script (`build-prod-db.sh`).
+
+## D54. No app-level backups
+Backups are GCP disk snapshots (daily schedule, `gcp-setup.sh` prints the commands). The nightly job, bucket and its permissions were removed. Only the on-disk rollback copies taken before an update or a data install remain.
