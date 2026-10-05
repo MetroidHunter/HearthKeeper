@@ -48,7 +48,7 @@ chmod 600 "$ENVF"
 log "system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg openssl sqlite3 rsync git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+apt-get install -y -qq ca-certificates curl gnupg openssh-client openssl sqlite3 rsync git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https >/dev/null
 install -d -m 0755 /etc/apt/keyrings
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
   log "node 22 (NodeSource apt repo)"
@@ -82,7 +82,7 @@ if [ -n "${HK_REPO_URL:-}" ]; then
   git -C "$APP" fetch -q origin "${HK_REF:-main}" && git -C "$APP" checkout -q -B "${HK_REF:-main}" "origin/${HK_REF:-main}"
 else
   [ -f "$SRC_DIR/package.json" ] || { echo "no package.json in $SRC_DIR (set HK_SRC_DIR or HK_REPO_URL)"; exit 1; }
-  [ "$SRC_DIR" = "$APP" ] || rsync -a --delete --exclude node_modules --exclude data --exclude private --exclude dist --exclude .git "$SRC_DIR"/ "$APP"/
+  [ "$SRC_DIR" = "$APP" ] || rsync -a --delete --exclude node_modules --exclude data --exclude private --exclude dist --exclude .git --exclude .deployed-commit "$SRC_DIR"/ "$APP"/
 fi
 cd "$APP"
 

@@ -7,6 +7,7 @@ Everything here is a script in `deploy/`; nothing needs hand-typed commands on t
 | `gcp-setup.sh` | laptop | Firewall (80/443) and static IP; prints the commands for a daily disk-snapshot schedule. *Untested against a real project.* |
 | `push-code.sh` | laptop | Ships the current git commit to the VM as a tarball and runs `bootstrap.sh`. First install and every update. |
 | `bootstrap.sh` | vm | Idempotent host setup: Node 22, Caddy (auto TLS), swap, service user, `npm ci` + build, systemd service, health checks. Remembers its settings in `/etc/hearthkeeper.env`. |
+| `update.sh` | vm | Pull and deploy the latest `main` from GitHub, from the box itself (`--setup` once for a read-only deploy key, `--check` to preview, `--ref` to deploy or roll back to another commit). |
 | `build-prod-db.sh` | laptop | Rebuilds the production database from your two spreadsheets, proves parity (exit 1 on mismatch), writes a verified snapshot. |
 | `push-data.sh` / `install-data.sh` | laptop / vm | Uploads a snapshot and installs it: verified before and after copying, refuses to overwrite live data without `--force`, keeps the old database. |
 
@@ -53,4 +54,6 @@ What the verifier proves (`npm run hk -- verify --file x.sqlite.gz`): gzip and S
 - **Not tested here:** `bootstrap.sh`, `gcp-setup.sh`, `push-*.sh` and `install-data.sh` need a real VM and gcloud, which this build environment does not have. The data path they wrap (`build-prod-db.sh`, `snapshot`, `verify`) was run end to end on your real sheets: parity PASS, 16,691 transactions, and the snapshot verified. Expect to fix a small thing or two on the first real run; the scripts stop on the first error and say where.
 
 ## Updating later
+From the box: `sudo bash /opt/hearthkeeper/deploy/update.sh` (run `--setup` once first and add the printed key as a read-only deploy key on the GitHub repo). Or from your computer:
+
 Commit, then `HK_VM=... HK_ZONE=... bash deploy/push-code.sh` (no other variables). It takes a pre-deploy rollback copy, rebuilds, restarts and health-checks.
