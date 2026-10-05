@@ -63,7 +63,7 @@ export interface GoLiveDiff {
 /** Diff a draft against the budget as it stands now (not as it was when the draft was created: staleness guard). */
 export function diffPlan(db: DB, planId: number, effectiveMonth: string, today = new Date().toISOString().slice(0, 10)): GoLiveDiff {
   const p = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as any;
-  const items = db.prepare('SELECT i.category_id, i.monthly_cents, c.name, c.kind FROM budget_plan_items i JOIN categories c ON c.id=i.category_id WHERE i.plan_id=?').all(planId) as any[];
+  const items = db.prepare('SELECT i.category_id, i.monthly_cents, c.name, c.kind FROM budget_plan_items i JOIN categories c ON c.id=i.category_id WHERE i.plan_id=? AND c.status=\'active\'').all(planId) as any[];
   const retro = effectiveMonth < monthOf(today);
   const rows: DiffRow[] = [];
   let allocatedOld = 0, allocatedNew = 0;
@@ -71,7 +71,8 @@ export function diffPlan(db: DB, planId: number, effectiveMonth: string, today =
     const v = getVersions(db, it.category_id);
     const old = monthlyAmount(v, effectiveMonth);
     if (it.kind === 'expense') { allocatedOld += old; allocatedNew += it.monthly_cents; }
-    if (old === it.monthly_cents) continue;
+    const laterDiffers = v.some((x) => x.effective_month > effectiveMonth && x.monthly_cents !== it.monthly_cents);
+    if (old === it.monthly_cents && !laterDiffers) continue;
     const row: DiffRow = { categoryId: it.category_id, name: it.name, oldCents: old, newCents: it.monthly_cents, deltaCents: it.monthly_cents - old };
     if (retro) {
       // Restated balance change = the accrual difference as of today.
@@ -88,7 +89,7 @@ export function diffPlan(db: DB, planId: number, effectiveMonth: string, today =
 }
 function simulateAccrued(db: DB, categoryId: number, month: string, cents: number, today: string): number {
   const cat = db.prepare('SELECT start_month FROM categories WHERE id=?').get(categoryId) as { start_month: string };
-  const vs = getVersions(db, categoryId).filter((v) => v.effective_month !== month);
+  const vs = getVersions(db, categoryId).filter((v) => v.effective_month < month);
   vs.push({ effective_month: month, monthly_cents: cents });
   let total = 0;
   for (let m = cat.start_month; m <= monthOf(today); m = nextMonth(m)) total += monthlyAmount(vs, m);
@@ -104,6 +105,10 @@ export function makeLive(db: DB, planId: number, opts: { effectiveMonth: string;
   db.transaction(() => {
     const p = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as any;
     if (p.status === 'live') throw new Error('Plan is already live');
+    for (const r of diff.rows) {
+      const later = db.prepare('DELETE FROM category_budget_versions WHERE category_id=? AND effective_month>?').run(r.categoryId, opts.effectiveMonth).changes;
+      if (later) audit(db, 'budget_version', r.categoryId, 'drop_later', undefined, { dropped: later, after: opts.effectiveMonth }, opts.actor);
+    }
     for (const r of diff.rows) setBudget(db, r.categoryId, r.newCents, opts.effectiveMonth, { planId, reason: `plan: ${p.name}`, actor: opts.actor });
     db.prepare("UPDATE budget_plans SET status='archived' WHERE status='live'").run();
     // Going live from an archived snapshot is a fresh live row: clone it so the archive stays immutable.

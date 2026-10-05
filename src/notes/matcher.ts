@@ -103,7 +103,7 @@ export interface MatchSummary { matched: number; ambiguous: number; needsNote: n
 /** Replaces matchExternalNotes(): source/owner-aware, same sign+amount, per-source windows, global assignment, margin-based confidence. Never overwrites user_provided notes. */
 export function runNoteMatcher(db: DB): MatchSummary {
   markWrapperNotes(db);
-  const txns = db.prepare("SELECT id, occurred_on, amount_cents, descriptor_raw FROM transactions WHERE note_state IN ('awaiting_note','ambiguous','needs_note') AND status!='void'").all() as any[];
+  const txns = db.prepare("SELECT id, occurred_on, amount_cents, descriptor_raw FROM transactions WHERE note_state IN ('awaiting_note','ambiguous') AND status!='void'").all() as any[];
   const pool = db.prepare('SELECT n.*, a.name account_name FROM external_notes n LEFT JOIN accounts a ON a.id=n.account_id WHERE matched_txn_id IS NULL').all() as any[];
   const feasible = (t: any, n: any): number => {
     const src = wrapperSourceOf(t.descriptor_raw);

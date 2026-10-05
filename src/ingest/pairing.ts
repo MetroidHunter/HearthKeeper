@@ -20,7 +20,7 @@ export function pairTransfers(db: DB, windowDays = 3): PairResult {
     if (o.account_id === i.account_id || o.amount_cents !== -i.amount_cents) continue;
     const d = Math.abs(daysBetween(o.occurred_on, i.occurred_on));
     if (d > windowDays) continue;
-    if (!(TRANSFER_LIKE.test(o.descriptor_raw) || TRANSFER_LIKE.test(i.descriptor_raw))) continue;
+    if (!(TRANSFER_LIKE.test(o.descriptor_raw) && TRANSFER_LIKE.test(i.descriptor_raw))) continue;
     cands.push({ o, i, dist: d });
   }
   cands.sort((a, b) => a.dist - b.dist || a.o.id - b.o.id);
