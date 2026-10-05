@@ -94,4 +94,11 @@ ALTER TABLE notification_log ADD COLUMN tag TEXT;
 ALTER TABLE notification_log ADD COLUMN status TEXT NOT NULL DEFAULT 'sent';
 CREATE INDEX notification_log_tag ON notification_log(tag);
 `,
+`
+CREATE INDEX split_txn ON transaction_splits(transaction_id);
+CREATE INDEX txn_review ON transactions(review_state, status);
+CREATE INDEX txn_account_date ON transactions(account_id, occurred_on);
+CREATE INDEX txn_note_state ON transactions(note_state);
+CREATE INDEX txn_merchant ON transactions(merchant_id);
+`,
 ];

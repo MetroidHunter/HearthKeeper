@@ -1,6 +1,6 @@
 import { audit, type DB } from './db.js';
 import { cleanDescriptor } from './descriptor.js';
-import { decide, loadRules, type Candidate } from './rules.js';
+import { decide, loadRules, type Candidate, type Rule } from './rules.js';
 
 export type Kind = 'spending' | 'income' | 'internal_transfer' | 'greenlight_allowance' | 'greenlight_return' | 'greenlight_reclass' | 'ignored';
 export interface NewTxn {
@@ -60,9 +60,10 @@ export function restoreTransaction(db: DB, txnId: number, kind: 'spending' | 'in
   audit(db, 'transaction', txnId, 'restore', undefined, undefined, 'user');
 }
 
-export function resolveMerchant(db: DB, clean: string, raw: string): number | null {
+export interface ResolveOpts { readOnly?: boolean; rules?: Rule[]; aliases?: any[]; merchantsByName?: Map<string, number> }
+export function resolveMerchant(db: DB, clean: string, raw: string, opts: ResolveOpts = {}): number | null {
   if (!clean) return null;
-  const aliases = db.prepare('SELECT merchant_id, match_type, pattern, priority FROM merchant_aliases ORDER BY priority, id').all() as any[];
+  const aliases = opts.aliases ?? (db.prepare('SELECT merchant_id, match_type, pattern, priority FROM merchant_aliases ORDER BY priority, id').all() as any[]);
   const hay = raw.toLowerCase();
   for (const a of aliases) {
     const p = String(a.pattern).toLowerCase();
@@ -72,8 +73,9 @@ export function resolveMerchant(db: DB, clean: string, raw: string): number | nu
       : new RegExp(a.pattern, 'i').test(raw);
     if (ok) return a.merchant_id;
   }
-  const ex = db.prepare('SELECT id FROM merchants WHERE name=? COLLATE NOCASE').get(clean) as { id: number } | undefined;
-  if (ex) return ex.id;
+  const ex = opts.merchantsByName ? { id: opts.merchantsByName.get(clean.toLowerCase()) } : (db.prepare('SELECT id FROM merchants WHERE name=? COLLATE NOCASE').get(clean) as { id: number } | undefined);
+  if (ex?.id) return ex.id;
+  if (opts.readOnly) return null; // backtests must not create merchants
   return Number(db.prepare("INSERT INTO merchants(name, review_state) VALUES (?, 'unreviewed')").run(clean).lastInsertRowid); // unknown descriptors auto-create an unreviewed merchant
 }
 
@@ -126,14 +128,14 @@ function applyCategory(db: DB, t: any, txnId: number, cid: number, mode: string,
 
 export interface CategorySuggestion { categoryId: number | null; mode: 'auto' | 'suggest' | 'ask'; ruleId?: number; conflict?: boolean; outcome?: 'ignore' | 'internal_transfer' }
 /** Merchant + rules resolution without needing a stored transaction (used by the Greenlight reclass path, §11.4). */
-export function suggestCategory(db: DB, descriptorRaw: string, amountCents: number, accountName: string, source?: string): CategorySuggestion {
+export function suggestCategory(db: DB, descriptorRaw: string, amountCents: number, accountName: string, source?: string, opts: ResolveOpts = {}): CategorySuggestion {
   const clean = cleanDescriptor(descriptorRaw);
-  const merchantId = resolveMerchant(db, clean.clean, descriptorRaw);
+  const merchantId = resolveMerchant(db, clean.clean, descriptorRaw, opts);
   const merchant = merchantId ? (db.prepare('SELECT name, default_category_id, default_mode FROM merchants WHERE id=?').get(merchantId) as any) : null;
   const groups = merchantId ? (db.prepare('SELECT g.name FROM merchant_group_members m JOIN merchant_groups g ON g.id=m.group_id WHERE m.merchant_id=?').all(merchantId) as any[]).map((g) => g.name) : [];
-  const d = decide(loadRules(db), { descriptor: `${descriptorRaw} ${clean.clean}`, merchant: merchant?.name, merchant_group: groups, account: accountName, amount_cents: amountCents, direction: amountCents < 0 ? 'out' : 'in', source });
+  const d = decide(opts.rules ?? loadRules(db), { descriptor: `${descriptorRaw} ${clean.clean}`, merchant: merchant?.name, merchant_group: groups, account: accountName, amount_cents: amountCents, direction: amountCents < 0 ? 'out' : 'in', source });
   if (d.rule) {
-    db.prepare("UPDATE rules SET hit_count=hit_count+1, last_hit_at=datetime('now') WHERE id=?").run(d.rule.id);
+    if (!opts.readOnly) db.prepare("UPDATE rules SET hit_count=hit_count+1, last_hit_at=datetime('now') WHERE id=?").run(d.rule.id);
     const a = d.rule.action;
     if (a.type === 'ignore' || a.type === 'internal_transfer') return { categoryId: null, mode: d.rule.mode, ruleId: d.rule.id, outcome: a.type };
     const cid = a.category ? getCategoryId(db, a.category) : null;

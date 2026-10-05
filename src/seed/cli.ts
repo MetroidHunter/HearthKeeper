@@ -2,6 +2,7 @@
  *   init [--user "Name:email" ...]      create accounts + ingest tokens (prints secrets once)
  *   migrate --dir <exports> --asof YYYY-MM-DD [--oracle <dir>]   import sheet CSVs, then run parity if oracle files exist
  *   seed-rules --guesser <IFTTT_guess.gs>   convert the old categorizer into rules
+ *   backtest-rules                        compare the seeded rules with every categorized historical transaction
  *   demo                                  load fictional data to try the UI
  *   profiles                              create Greenlight profiles (needs categories)
  */
@@ -12,6 +13,7 @@ import { seedHousehold, seedGreenlightProfiles, seedCoreRules } from './househol
 import { importSheets } from '../migration/sheet.js';
 import { runParity, formatParity } from '../migration/parity.js';
 import { seedFromGuesser } from './guesser.js';
+import { backtestHistory } from './backtest.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n: string) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -36,6 +38,9 @@ if (cmd === 'init') {
   process.exitCode = parity.passed ? 0 : 1;
 } else if (cmd === 'seed-rules') {
   console.log(JSON.stringify(seedFromGuesser(db, read(flag('guesser')!)), null, 2));
+} else if (cmd === 'backtest-rules') {
+  const r = backtestHistory(db);
+  console.log(JSON.stringify({ ...r, byDisagreement: r.byDisagreement.slice(0, 40), byUnmatchedActual: r.byUnmatchedActual.slice(0, 40) }, null, 2));
 } else if (cmd === 'demo') {
   const { seedDemo } = await import('./demo.js');
   seedDemo(db, new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
