@@ -12,7 +12,9 @@ export type GreenlightEvent =
   | { type: 'allowance'; profile: string; amountCents: number }
   | { type: 'allowance_reminder'; profile: string; amountCents: number }
   | { type: 'return'; profile: string; amountCents: number }
-  | { type: 'declined'; profile: string; amountCents: number; vendor: string; control: string }
+  | { type: 'declined'; profile: string; amountCents: number; vendor: string; control: string; reason: string }
+  | { type: 'withdraw'; profile: string; amountCents: number; vendor: string }
+  | { type: 'request'; profile: string; amountCents: number; detail: string }
   | { type: 'savings_reward'; amountCents: number }
   | { type: 'noise'; reason: string }
   | { type: 'unrecognized'; reason: string };
@@ -49,9 +51,21 @@ export function parseGreenlight(raw: string): ParsedGreenlight {
   const mk = (event: GreenlightEvent): ParsedGreenlight => ({ event, occurredAtUtc: utc, pacificDate, body });
   let m: RegExpExecArray | null;
 
-  // "Marion's $33.79 purchase at WAL-MART #5393 GREENSBORO NC was declined due to insufficient funds in their GROCERY Spend Control."
-  if ((m = new RegExp(`^${NAME}[’']s ${AMT} purchase at (.+?) was declined(?: due to [^.]*? in their (.+?) Spend Control)?\\.?(?:\\s|$)`, 'i').exec(body)))
-    return mk({ type: 'declined', profile: m[1], amountCents: c(m[2]), vendor: m[3].trim(), control: (m[4] ?? '').trim() });
+  // "Marion's $33.79 purchase at WAL-MART #5393 GREENSBORO NC was declined due to insufficient funds in their GROCERY Spend Control. Tap ..."
+  // also: "... was declined." / "... was declined due to insufficient funds on their card. Tap here ..." / "... was declined as they exceeded the number of incorrect PIN attempts."
+  if ((m = new RegExp(`^${NAME}[’']s ${AMT} purchase at (.+?) was declined\\b(.*)$`, 'is').exec(body))) {
+    const rest = m[4].replace(/\s*Tap here.*$/is, '').replace(/^\s*/, '').replace(/\.\s*$/, '');
+    const ctl = /in their (.+?) Spend Control/i.exec(rest);
+    return mk({ type: 'declined', profile: m[1], amountCents: c(m[2]), vendor: m[3].trim(), control: (ctl?.[1] ?? '').trim(), reason: rest });
+  }
+  // "Marion withdrew $23.00 from Fairway Food Mart Greensboro NC." / "Miracle withdrew $20.00 at SOME ATM"
+  if ((m = new RegExp(`^${NAME} withdrew ${AMT} (?:at|from) (.+?)\\.?$`, 'i').exec(body)))
+    return mk({ type: 'withdraw', profile: m[1], amountCents: c(m[2]), vendor: m[3].trim() });
+  // "Marion requests $50.00 to <purpose>" (shape from IFTTT_Code.gs; approval message is still unseen, D23)
+  if ((m = new RegExp(`^${NAME} requests ${AMT} to (.+)$`, 'i').exec(body)))
+    return mk({ type: 'request', profile: m[1], amountCents: c(m[2]), detail: m[3].trim() });
+  // "Marion entered an incorrect PIN. Have them try again ..." (no money moves)
+  if (new RegExp(`^${NAME} entered an incorrect PIN`, 'i').test(body)) return mk({ type: 'noise', reason: 'incorrect_pin' });
   // "Miracle's final purchase amount of $25.78 at El Rinconsito Seattle has posted."
   if ((m = new RegExp(`^${NAME}[’']s final purchase amount of ${AMT} at (.+?) has posted\\.?`, 'i').exec(body)))
     return mk({ type: 'final_amount', profile: m[1], amountCents: c(m[2]), vendor: m[3].trim() });

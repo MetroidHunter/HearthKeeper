@@ -16,7 +16,8 @@ import { authenticate, captureEvent, shapes, decideShape, replay, parseEvent, si
 import { previewImport, commitImport, coverage, markStale } from '../ingest/import.js';
 import { suggestMapping, parseCsv } from '../ingest/csv.js';
 import { processGreenlightMessage, createRequest, fundRequest, walletBalance, missingAllowances } from '../greenlight/engine.js';
-import { registerGreenlightParser, extractText } from '../greenlight/parser.js';
+import { extractText } from '../greenlight/parser.js';
+import { registerAllParsers } from '../ingest/parsers.js';
 import { importNotesCsv, runNoteMatcher } from '../notes/matcher.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
@@ -26,7 +27,7 @@ export interface AppOptions { auth: AuthConfig; staticDir?: string; now?: () => 
 export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
   const now = opts.now ?? today;
-  registerGreenlightParser();
+  registerAllParsers();
   registerAuth(app, opts.auth);
   app.get('/healthz', async () => ({ ok: true }));
   const actor = (req: { user?: string }) => req.user ?? 'unknown';

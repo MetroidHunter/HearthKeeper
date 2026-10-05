@@ -85,4 +85,7 @@ CREATE TABLE greenlight_processed(raw_event_id INTEGER PRIMARY KEY, outcome TEXT
 CREATE TABLE shape_decisions(fingerprint TEXT NOT NULL, source TEXT NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('parser','noise','needs_look')), decided_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(fingerprint, source));
 CREATE TABLE ingest_nonces(token_id INTEGER NOT NULL, nonce TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(token_id, nonce));
 `,
+`
+CREATE TABLE event_results(raw_event_id INTEGER NOT NULL, parser TEXT NOT NULL, outcome TEXT NOT NULL, txn_id INTEGER, PRIMARY KEY(raw_event_id, parser));
+`,
 ];

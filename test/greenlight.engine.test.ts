@@ -100,4 +100,52 @@ describe('greenlight engine', () => {
     send(h, '$50.00 allowance transferred to Miracle', 'October 4, 2026');
     expect(missingAllowances(h.db, '2026-10-10')).toHaveLength(0);
   });
+
+  it('withdrawals follow the profile policy and never silently double-charge', () => {
+    const h = seedHousehold();
+    const r = send(h, 'Marion withdrew $23.00 from Fairway Food Mart Greensboro NC.');
+    expect(r.outcome).toBe('withdraw_flagged'); // default policy: ask
+    expect(bal(h, 'Family Support').splits).toBe(0);
+    const t = h.db.prepare("SELECT flagged, flag_reason r FROM transactions WHERE greenlight_ref LIKE 'withdraw:%'").get() as any;
+    expect(t.flagged).toBe(1); expect(t.r).toContain('Fairway');
+    h.db.prepare("UPDATE greenlight_profiles SET withdraw_policy='ignore' WHERE display_name='Marion'").run();
+    expect(send(h, 'Marion withdrew $5.00 from Some Store.').outcome).toBe('withdraw_ignored');
+    h.db.prepare("UPDATE greenlight_profiles SET withdraw_policy='debit_category' WHERE display_name='Miracle'").run();
+    expect(send(h, 'Miracle withdrew $20.00 at AN ATM').outcome).toBe('withdraw_debited');
+    expect(bal(h, 'Miracle Spending').splits).toBe(-2000);
+  });
+
+  it('request messages create a pending request and no charge', () => {
+    const h = seedHousehold();
+    const r = send(h, 'Marion requests $50.00 to buy groceries');
+    expect(r.outcome).toBe('request');
+    expect(h.db.prepare("SELECT COUNT(*) c FROM greenlight_requests WHERE status='pending'").get()).toEqual({ c: 1 });
+    expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 0 });
+  });
+});
+
+import { existsSync, readFileSync } from 'node:fs';
+import { captureEvent, replay, clearParsers } from '../src/ingest/events.js';
+import { registerGreenlightParser } from '../src/greenlight/parser.js';
+const corpusUrl = new URL('../private/export/ifttt_messages.jsonl', import.meta.url);
+describe.skipIf(!existsSync(corpusUrl))('real IFTTT corpus through capture -> replay -> engine (private)', () => {
+  it('replays cleanly, attributes correctly, and a second replay changes nothing', () => {
+    clearParsers(); registerGreenlightParser();
+    const h = seedHousehold();
+    const msgs = readFileSync(corpusUrl, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as string);
+    for (const m of msgs) captureEvent(h.db, { source: 'greenlight_msg', channel: 'device', payload: m });
+    const first = replay(h.db);
+    expect(first.byStatus.error ?? 0).toBe(0);
+    expect(first.byStatus.unrecognized ?? 0).toBe(0);
+    expect(attributionViolations(h.db)).toEqual([]);
+    expect(checkInvariants(h.db)).toEqual([]);
+    // no allowance ever lands on the wrong profile's category
+    const marion = h.db.prepare("SELECT COUNT(*) c FROM transactions t JOIN transaction_splits s ON s.transaction_id=t.id WHERE t.descriptor_raw LIKE 'GREENLIGHT ALLOWANCE MARION' AND s.category_id != ?").get(h.cats['Family Support']) as any;
+    expect(marion.c).toBe(0);
+    const snap = () => JSON.stringify(h.db.prepare('SELECT id, kind, amount_cents, status, occurred_on FROM transactions ORDER BY id').all());
+    const before = snap();
+    replay(h.db, { includeOk: true });
+    expect(snap()).toBe(before);
+    expect((h.db.prepare("SELECT COUNT(*) c FROM transactions WHERE kind='greenlight_allowance'").get() as any).c).toBeGreaterThan(10);
+  });
 });

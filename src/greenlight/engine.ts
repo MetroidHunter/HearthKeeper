@@ -11,6 +11,8 @@ export type GreenlightOutcome =
   | { outcome: 'noise'; reason: string }
   | { outcome: 'inform'; message: string }
   | { outcome: 'expected_allowance'; id: number }
+  | { outcome: 'request'; requestId: number }
+  | { outcome: 'withdraw_ignored' | 'withdraw_flagged' | 'withdraw_debited'; txnId: number }
   | { outcome: 'allowance' | 'return' | 'spend_ignored' | 'spend_reclassified' | 'spend_updated' | 'savings_reward'; txnId: number | null };
 
 /** Profile always comes from the message text; no match => null => Unrecognized (design §11.8 #1). Never guessed. */
@@ -64,9 +66,24 @@ export function processGreenlightMessage(db: DB, rawEventId: number, text: strin
         return done({ outcome: 'return', txnId: id }, id);
       }
       case 'declined': {
-        const message = `${profile.display_name}'s ${(ev.amountCents / 100).toFixed(2)} at ${ev.vendor} was declined${ev.control ? `: ${ev.control} control` : ''}`;
+        const message = `${profile.display_name}'s ${(ev.amountCents / 100).toFixed(2)} at ${ev.vendor} was declined${ev.control ? `: ${ev.control} control` : ev.reason ? `: ${ev.reason}` : ''}`;
         db.prepare("INSERT INTO notification_log(kind, ref_id) VALUES ('greenlight_declined', ?)").run(rawEventId);
         return done({ outcome: 'inform', message });
+      }
+      case 'request': {
+        // never posts a charge by itself (§11.5); the approval message is unseen so the pending request asks you (D23)
+        const requestId = createRequest(db, profile.id, ev.amountCents, date, rawEventId);
+        return done({ outcome: 'request', requestId });
+      }
+      case 'withdraw': {
+        // Under option A the allowance already charged the profile's category, so a withdrawal never re-charges unless the policy says so.
+        const policy = profile.withdraw_policy;
+        const flagged = policy === 'ask';
+        const id = createTransaction(db, { accountId: profile.wallet_account_id, kind: policy === 'debit_category' ? 'greenlight_allowance' : 'ignored', occurredOn: date, authorizedAt: at, amountCents: -ev.amountCents,
+          descriptor: `GREENLIGHT ATM WITHDRAW ${ev.vendor}`, sourceEventIds: [rawEventId], greenlightRef: `withdraw:${profile.id}:${rawEventId}`,
+          ignoredReason: policy === 'debit_category' ? null : 'greenlight_withdraw', flagged, flagReason: flagged ? `${profile.display_name} withdrew ${(ev.amountCents / 100).toFixed(2)} at ${ev.vendor}: categorize or ignore` : null });
+        if (policy === 'debit_category') setSplits(db, id, [{ categoryId: profile.category_id, amountCents: -ev.amountCents, origin: 'rule' }], 'rule');
+        return done({ outcome: policy === 'debit_category' ? 'withdraw_debited' : flagged ? 'withdraw_flagged' : 'withdraw_ignored', txnId: id }, id);
       }
       case 'spend': return done(handleSpend(db, profile, ev, rawEventId, date, at));
       case 'final_amount': return done(handleFinal(db, profile, ev, rawEventId, date));

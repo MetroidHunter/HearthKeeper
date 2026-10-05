@@ -14,6 +14,13 @@ describe('greenlight parsers (design §11.1 samples)', () => {
     ['Miracle received a $0.07 Greenlight Savings Reward!', { type: 'savings_reward', amountCents: 7 }],
     ["Marion's Greenlight card is on the way! 📫 Track it", { type: 'noise', reason: 'card_shipped' }],
     ['they can no longer use their debit card with payment apps', { type: 'noise', reason: 'restriction_notice' }],
+    ["Marion's $110.94 purchase at FOOD LION #2266 3501 N GREENSBORO NC was declined as they exceeded the number of incorrect PIN attempts.", { type: 'declined', profile: 'Marion', amountCents: 11094, reason: 'as they exceeded the number of incorrect PIN attempts' }],
+    ["Marion's $141.17 purchase at FOOD LION #2266 GREENSBORO NC was declined due to insufficient funds on their card. Tap here to send them money.", { type: 'declined', profile: 'Marion', amountCents: 14117, reason: 'due to insufficient funds on their card' }],
+    ["Marion's $26.06 purchase at WM SUPERCENTER #3658 GREENSBORO NC was declined.", { type: 'declined', profile: 'Marion', amountCents: 2606, vendor: 'WM SUPERCENTER #3658 GREENSBORO NC' }],
+    ['Marion withdrew $23.00 from Fairway Food Mart Greensboro NC.', { type: 'withdraw', profile: 'Marion', amountCents: 2300, vendor: 'Fairway Food Mart Greensboro NC' }],
+    ['Miracle withdrew $20.00 at SOME ATM', { type: 'withdraw', profile: 'Miracle', amountCents: 2000 }],
+    ['Marion requests $50.00 to buy groceries', { type: 'request', profile: 'Marion', amountCents: 5000 }],
+    ['Marion entered an incorrect PIN. Have them try again with the correct PIN. If needed, tap here to change their PIN.', { type: 'noise', reason: 'incorrect_pin' }],
     ['Something brand new happened', { type: 'unrecognized' }],
   ];
   for (const [text, want] of cases) {
@@ -28,5 +35,16 @@ describe('greenlight parsers (design §11.1 samples)', () => {
     const p = parseGreenlight('$50.00 allowance transferred to Marion');
     expect(p.occurredAtUtc).toBeNull();
     expect(p.event.type).toBe('allowance');
+  });
+});
+
+import { existsSync, readFileSync } from 'node:fs';
+const corpus = new URL('../private/export/ifttt_messages.jsonl', import.meta.url);
+describe.skipIf(!existsSync(corpus))('real IFTTT corpus (private)', () => {
+  const msgs = readFileSync(corpus, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as string);
+  it('every captured message parses to a known shape with a Pacific timestamp', () => {
+    const bad = msgs.map(parseGreenlight).filter((p) => p.event.type === 'unrecognized' || !p.pacificDate);
+    expect(bad.map((b) => b.body)).toEqual([]);
+    expect(msgs.length).toBeGreaterThan(100);
   });
 });
