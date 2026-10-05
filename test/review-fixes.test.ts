@@ -27,3 +27,26 @@ describe('review fixes: plan go-live', () => {
     expect(diffPlan(h.db, p, '2026-10', '2026-10-04').rows.map((r) => r.categoryId)).not.toContain(c);
   });
 });
+
+import { retireCategory } from '../src/core/categories.js';
+import { proposeRebalance } from '../src/core/transfers.js';
+import { createTransaction, setSplits } from '../src/core/transactions.js';
+describe('review fixes: rounding and retire', () => {
+  it('retire moves the balance as of the real month end (31-day month spend counts)', () => {
+    const h = seedHousehold();
+    const c = h.cats['Groceries'], to = h.cats['Eating Out'];
+    setBudget(h.db, c, 10000, '2026-01', { reason: 'legacy' });
+    const id = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-01-31', amountCents: -2000, descriptor: 'LATE' });
+    setSplits(h.db, id, [{ categoryId: c, amountCents: -2000 }]);
+    const r = retireCategory(h.db, c, '2026-01', { moveBalanceTo: to, actor: 'test' });
+    expect(r.remainingCents).toBe(-2000); // the Jan-31 spend is included (old asOf was the 28th)
+    expect(categoryBalanceAt(h, c)).toBe(0);
+  });
+  it('rebalance never proposes a fractional-cent move', () => {
+    const h = seedHousehold();
+    const p = proposeRebalance(h.db, '2026-10-04');
+    for (const m of [...p.donorMoves, ...p.poolPayments]) expect(Number.isInteger(m.cents)).toBe(true);
+  });
+});
+import { categoryBalance as cb } from '../src/core/balance.js';
+function categoryBalanceAt(h: any, c: number) { return cb(h.db, c, '2026-01-31').total ?? 0; }

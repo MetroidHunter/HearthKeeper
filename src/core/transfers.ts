@@ -39,13 +39,15 @@ function loadBalances(db: DB, asOf: string): CatInfo[] {
   return cats.map((c) => ({ ...c, balance: categoryBalance(db, c.id, asOf).total ?? 0 }));
 }
 
+const EPS = 0.5; // sub-cent legacy drift is not an overage (parity tolerance)
+
 /** Auto-proposal in priority order: Gig Income pool first, then discretionary donors, then non-discretionary above cushion (design §13.1). */
 export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
   const cats = loadBalances(db, asOf);
   const bal = new Map(cats.map((c) => [c.id, c.balance]));
-  const over = cats.filter((c) => c.kind === 'expense' && c.balance < 0)
+  const over = cats.filter((c) => c.kind === 'expense' && c.balance < -EPS)
     .sort((a, b) => (a.overage_priority ?? 1e9) - (b.overage_priority ?? 1e9) || a.balance - b.balance); // most overspent first among equals
-  const pools = cats.filter((c) => c.kind === 'income_pool' && c.balance > 0);
+  const pools = cats.filter((c) => c.kind === 'income_pool' && c.balance > EPS);
   const poolPayments: RebalanceProposal['poolPayments'] = [], donorMoves: RebalanceProposal['donorMoves'] = [];
   const need = new Map(over.map((c) => [c.id, -c.balance]));
 
@@ -65,7 +67,7 @@ export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
     if (c.kind !== 'expense') return 0;
     const cushion = c.discretionary ? (c.cushion_cents ?? 0) : c.cushion_cents;
     if (cushion === null) return 0; // non-discretionary, no cushion: immune
-    return Math.max(0, (bal.get(c.id) ?? 0) - cushion);
+    return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - cushion + EPS));
   };
   const tiers = [cats.filter((c) => c.discretionary), cats.filter((c) => !c.discretionary)];
   for (const o of over) {

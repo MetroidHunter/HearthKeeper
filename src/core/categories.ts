@@ -46,10 +46,11 @@ export function retireCategory(db: DB, categoryId: number, month: string, opts: 
   return db.transaction(() => {
     setBudget(db, categoryId, 0, month, { reason: 'retired', actor: opts.actor });
     db.prepare("UPDATE categories SET status='retired', retired_month=?, version=version+1 WHERE id=?").run(month, categoryId);
-    const asOf = opts.asOf ?? `${month}-28`;
+    const endOfMonth = new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 0)).toISOString().slice(0, 10);
+    const asOf = opts.asOf ?? endOfMonth;
     const bal = categoryBalance(db, categoryId, asOf).total ?? 0;
     if (opts.moveBalanceTo && bal !== 0) {
-      const t = Number(db.prepare("INSERT INTO envelope_transfers(occurred_on, kind, memo, created_by) VALUES (?, 'manual', 'retire: move remaining balance', ?)").run(`${month}-01`, opts.actor ?? 'system').lastInsertRowid);
+      const t = Number(db.prepare("INSERT INTO envelope_transfers(occurred_on, kind, memo, created_by) VALUES (?, 'manual', 'retire: move remaining balance', ?)").run(asOf, opts.actor ?? 'system').lastInsertRowid);
       db.prepare('INSERT INTO envelope_transfer_legs(transfer_id, category_id, amount_cents) VALUES (?,?,?)').run(t, categoryId, -bal);
       db.prepare('INSERT INTO envelope_transfer_legs(transfer_id, category_id, amount_cents) VALUES (?,?,?)').run(t, opts.moveBalanceTo, bal);
     }

@@ -26,9 +26,9 @@ export function closeChecklist(db: DB, throughDate: string, opts: { walletTyped?
   add('Greenlight', gl);
   add('Unrecognized', n("SELECT COUNT(*) c FROM raw_events WHERE parse_status IN ('unrecognized','error')") + unpairedLegs(db).length);
   const month = throughDate;
-  const overs = (db.prepare("SELECT id FROM categories WHERE kind='expense' AND status='active'").all() as any[]).filter((c) => (categoryBalance(db, c.id, month).total ?? 0) < 0).length;
+  const overs = (db.prepare("SELECT id FROM categories WHERE kind='expense' AND status='active'").all() as any[]).filter((c) => (categoryBalance(db, c.id, month).total ?? 0) < -0.5).length;
   add('Overages', overs);
-  const pool = (db.prepare("SELECT id FROM categories WHERE kind='income_pool'").all() as any[]).filter((c) => (categoryBalance(db, c.id, month).total ?? 0) !== 0).length;
+  const pool = (db.prepare("SELECT id FROM categories WHERE kind='income_pool'").all() as any[]).filter((c) => Math.abs(categoryBalance(db, c.id, month).total ?? 0) > 0.5).length;
   add('Pool', pool);
   steps.push({ step: steps.length + 1, name: 'Review', pass: true, count: 0, detail: 'manual scan of biggest and newest transactions' });
   return steps;
