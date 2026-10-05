@@ -82,7 +82,7 @@ if [ -n "${HK_REPO_URL:-}" ]; then
   git -C "$APP" fetch -q origin "${HK_REF:-main}" && git -C "$APP" checkout -q -B "${HK_REF:-main}" "origin/${HK_REF:-main}"
 else
   [ -f "$SRC_DIR/package.json" ] || { echo "no package.json in $SRC_DIR (set HK_SRC_DIR or HK_REPO_URL)"; exit 1; }
-  [ "$SRC_DIR" = "$APP" ] || rsync -a --delete --exclude node_modules --exclude data --exclude private --exclude dist --exclude .git --exclude .deployed-commit "$SRC_DIR"/ "$APP"/
+  [ "$SRC_DIR" = "$APP" ] || rsync -a --delete --exclude node_modules --exclude data --exclude private --exclude dist --exclude .git "$SRC_DIR"/ "$APP"/
 fi
 cd "$APP"
 
@@ -96,7 +96,8 @@ fi
 log "npm ci + build (a few minutes on an e2-micro)"
 npm ci --no-audit --no-fund --loglevel=error          # dev dependencies stay: the service runs TypeScript through tsx
 npm run build --silent
-chown -R root:root "$APP"; chmod -R go-w "$APP"
+[ "$SRC_DIR" = "$APP" ] || chown -R root:root "$APP"   # an in-place checkout keeps its owner so `git pull` keeps working
+chmod -R go-w "$APP"
 
 # ---- first-run data (only when no data was pushed and users were given) ---------------------------
 if [ -n "${HK_INIT_USERS:-}" ] && [ ! -s "$DATA/hearthkeeper.sqlite" ]; then
