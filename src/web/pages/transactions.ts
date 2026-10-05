@@ -6,7 +6,7 @@ import { catOptions, amt, type Cat } from '../shared.js';
 
 @customElement('hk-transactions')
 export class Transactions extends Page {
-  @state() rows: any[] = []; @state() cats: Cat[] = []; @state() q = ''; @state() category = ''; @state() hidden = false; @state() open: any = null; @state() sel = new Set<number>();
+  @state() rows: any[] = []; @state() cats: Cat[] = []; @state() q = ''; @state() category = ''; @state() hidden = false; @state() open: any = null; @state() rows_: { categoryId: number | null; cents: number }[] = []; @state() sel = new Set<number>();
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { this.cats = await api.get('/api/categories'); this.rows = await api.get(`/api/transactions?limit=200&hidden=${this.hidden ? 1 : 0}${this.q ? `&q=${encodeURIComponent(this.q)}` : ''}${this.category ? `&category=${this.category}` : ''}`); }); }
   async bulk(categoryId: number) { await this.run(async () => { for (const id of this.sel) await api.post(`/api/transactions/${id}/categorize`, { categoryId }); }); this.sel = new Set(); this.load(); }
@@ -17,14 +17,20 @@ export class Transactions extends Page {
         <label><input type="checkbox" .checked=${this.hidden} @change=${(e: any) => { this.hidden = e.target.checked; this.load(); }} /> Show hidden</label></div>
       ${this.sel.size ? html`<div class="card row"><b>${this.sel.size} selected</b><select @change=${(e: any) => e.target.value && this.bulk(Number(e.target.value))}>${catOptions(this.cats, null, { blank: 'Set category…' })}</select></div>` : ''}
       <div class="card" style="overflow-x:auto"><table><thead><tr><th></th><th>Date</th><th>Description</th><th class="hide-sm">Account</th><th>Category</th><th class="num">Amount</th></tr></thead><tbody>
-        ${this.rows.map((t) => html`<tr style="cursor:pointer" @click=${() => (this.open = t)}>
+        ${this.rows.map((t) => html`<tr style="cursor:pointer" @click=${() => this.openTxn(t)}>
           <td @click=${(e: Event) => e.stopPropagation()}><input type="checkbox" .checked=${this.sel.has(t.id)} @change=${(e: any) => { e.target.checked ? this.sel.add(t.id) : this.sel.delete(t.id); this.requestUpdate(); }} /></td>
           <td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? html`<span class="badge warn">pending</span>` : ''}${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<span class="badge">${t.ignored_reason ?? t.kind}</span>` : ''}${t.flagged ? html`<span class="badge bad">flag</span>` : ''}</td>
           <td class="hide-sm muted">${t.account}</td><td>${t.splits.length > 1 ? `${t.splits.length} splits` : t.splits[0]?.category ?? html`<span class="badge warn">needs category</span>`}</td><td class="num">${amt(t.amount_cents)}</td></tr>`)}
       </tbody></table></div>${this.open ? this.detail() : ''}`;
   }
+  /** Draft splits live in component state so re-renders (adding a row, typing an amount) never discard edits. */
+  openTxn(t: any) {
+    this.err = '';
+    this.rows_ = t.splits.length ? t.splits.map((s: any) => ({ categoryId: s.category_id, cents: s.amount_cents })) : [{ categoryId: null, cents: t.amount_cents }];
+    this.open = t;
+  }
   detail() {
-    const t = this.open; let rows = t.splits.map((s: any) => ({ categoryId: s.category_id, cents: s.amount_cents })); if (!rows.length) rows = [{ categoryId: null, cents: t.amount_cents }];
+    const t = this.open; const rows = this.rows_;
     const sum = () => rows.reduce((a: number, r: any) => a + r.cents, 0);
     return html`<dialog open><h2 style="margin-top:0">${t.descriptor_raw}</h2><div class="muted">${t.occurred_on} · ${t.account} · ${money(t.amount_cents)} ${t.decided_by ? `· decided by ${t.decided_by}${t.decided_rule_id ? ` (rule #${t.decided_rule_id})` : ''}` : ''}</div>
       ${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<p>Hidden: ${t.ignored_reason}. <button @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/restore`)); this.open = null; this.load(); }}>Restore</button></p>` : html`
