@@ -125,5 +125,5 @@ curl -fsS "http://127.0.0.1:8080/healthz" >/dev/null || { journalctl -u hearthke
 echo "service: healthy on 127.0.0.1:8080"
 if curl -fsS -m 20 "https://$HK_DOMAIN/healthz" >/dev/null 2>&1; then echo "public:  https://$HK_DOMAIN/healthz OK (TLS certificate issued)"
 else echo "public:  https://$HK_DOMAIN not reachable yet. Check DNS points here and GCP firewall allows tcp:80,443 (journalctl -u caddy)."; fi
-[ -s "$DATA/hearthkeeper.sqlite" ] || echo "data:    empty database. Load yours with deploy/push-data.sh (see docs/DEPLOY.md)."
+[ "$(sqlite3 "$DATA/hearthkeeper.sqlite" 'SELECT COUNT(*) FROM transactions' 2>/dev/null || echo 0)" -gt 0 ] || echo "data:    no transactions yet. Load your data with deploy/push-data.sh (see docs/DEPLOY.md)."
 echo; echo "Done. Logs: journalctl -u hearthkeeper -f"
