@@ -49,3 +49,20 @@ Split editor lost edits on re-render; buttons stayed disabled after typing becau
 
 ## D48. Notifications
 Real-time pushes only for the fast lane (Chase alerts, Greenlight); CSV-derived items wait for the morning digest. Unknown purchaser -> both phones; the first answer sends a `close` push to the other. Replay of stored events is silenced. Push transport is pluggable (`memoryTransport` in tests; nothing leaves the process). VAPID keys are generated once into `settings`.
+
+## D49. Auth is enforced by matched route, not raw URL
+A request to `/%61pi/...` bypassed a prefix check on the raw URL. Protection now keys off `req.routeOptions.url`, so whatever Fastify routes to `/api/*` is protected. Logout requires the CSRF header.
+
+## D50. Review fixes to money paths
+- Go-live deletes later budget versions of the changed categories (audited) so an old future version cannot silently override the plan; plan items for non-active categories are ignored.
+- Sub-cent legacy drift (< 0.5 cent) is not an overage or a nonzero pool; rebalance donor capacity is floored to whole cents.
+- Retire uses the real month end (the 28th dropped 29-31 spend).
+- Pairing needs transfer-like descriptors on both legs; the notes matcher treats `needs_note` rows as terminal; notes CSV dedupe is multiset-based.
+- Greenlight final-amount: containment beats a shared token, closest amount then date wins, a token-only match is refused when ambiguous; a user-split reclass is flagged, never collapsed. Unrecognized/noise outcomes are not recorded as processed so replay can reprocess them after a parser fix.
+- Item splits with unknown order total: subset search tolerates up to ~15% tax/shipping (5% under, for promos).
+
+## D51. Reconcile semantics
+Provisional rows match posted rows exact-first, then by unique tolerance; stale provisionals still match; superseding carries kind, pairing, owner, note state and repoints matched notes; de-dup is scoped to the account; import profile signatures are institution-prefixed.
+
+## D52. Late Chase alerts
+An alert whose charge already posted via CSV (same account, amount, date within 2 days, shared descriptor token) attaches to the posted row (`late_alert`) instead of creating a duplicate provisional.

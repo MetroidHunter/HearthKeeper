@@ -67,3 +67,16 @@ describe('chase alert -> provisional txn -> posted', () => {
     expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 0 });
   });
 });
+
+describe('late alert after posted row', () => {
+  it('does not create a second transaction when the CSV already posted the charge', async () => {
+    const { seedHousehold } = await import('./helpers.js');
+    const { createTransaction } = await import('../src/core/transactions.js');
+    const { captureEvent, parseEvent, clearParsers } = await import('../src/ingest/events.js');
+    const { registerAllParsers } = await import('../src/ingest/parsers.js');
+    const h = seedHousehold(); clearParsers(); registerAllParsers();
+    createTransaction(h.db, { accountId: h.chase, status: 'posted', occurredOn: '2026-10-03', amountCents: -940, descriptor: 'SQ *LATE CAFE #123' });
+    parseEvent(h.db, captureEvent(h.db, { source: 'chase_alert', channel: 'device', payload: 'Prime Visa: You made a $9.40 transaction with SQ *LATE CAFE on Oct 3, 2026 at 4:11 PM ET.' }).id);
+    expect(h.db.prepare("SELECT COUNT(*) c FROM transactions WHERE amount_cents=-940").get()).toEqual({ c: 1 });
+  });
+});

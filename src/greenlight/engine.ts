@@ -153,11 +153,16 @@ function handleFinal(db: DB, profile: Profile, ev: Extract<GreenlightEvent, { ty
   const t = db.prepare('SELECT kind, source_event_ids FROM transactions WHERE id=?').get(match.id) as any;
   const before = db.prepare('SELECT category_id, amount_cents FROM transaction_splits WHERE transaction_id=?').all(match.id);
   if (t.kind === 'greenlight_reclass') {
-    const real = db.prepare("SELECT category_id FROM transaction_splits WHERE transaction_id=? AND amount_cents<0").get(match.id) as any;
-    db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(match.id);
-    const ins = db.prepare('INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,origin) VALUES (?,?,?,?)');
-    ins.run(match.id, real?.category_id ?? null, -ev.amountCents, 'greenlight_reclass');
-    ins.run(match.id, profile.category_id, ev.amountCents, 'greenlight_reclass');
+    const reals = db.prepare("SELECT category_id FROM transaction_splits WHERE transaction_id=? AND amount_cents<0").all(match.id) as any[];
+    if (reals.length > 1) {
+      // the user split the real spend across categories: never collapse their work; flag the amount change for review instead
+      db.prepare("UPDATE transactions SET flag_reason=? WHERE id=?").run(`final amount $${(ev.amountCents / 100).toFixed(2)} differs from your split; re-check`, match.id);
+    } else {
+      db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(match.id);
+      const ins = db.prepare('INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,origin) VALUES (?,?,?,?)');
+      ins.run(match.id, reals[0]?.category_id ?? null, -ev.amountCents, 'greenlight_reclass');
+      ins.run(match.id, profile.category_id, ev.amountCents, 'greenlight_reclass');
+    }
   } else {
     db.prepare('UPDATE transactions SET amount_cents=? WHERE id=?').run(-ev.amountCents, match.id);
   }

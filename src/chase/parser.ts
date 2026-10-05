@@ -51,13 +51,17 @@ export function registerChaseParser() {
       if (!accountId) return { status: 'error', error: 'no Chase credit_card account configured' };
       // two phones can receive the same alert: the raw layer de-dupes identical text; this also guards near-identical re-sends
       const dup = db.prepare("SELECT id FROM transactions WHERE account_id=? AND status='provisional' AND authorized_at=? AND amount_cents=? AND descriptor_raw=?").get(accountId, alert.authorizedAtUtc, alert.amountCents, alert.vendor) as { id: number } | undefined;
-      let txnId = dup?.id;
+      // alert arriving after the bank CSV already posted the same charge: attach, don't create a second row
+      const tokens = alert.vendor.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 3);
+      const late = dup ? undefined : (db.prepare("SELECT id, descriptor_raw FROM transactions WHERE account_id=? AND status='posted' AND amount_cents=? AND ABS(julianday(occurred_on)-julianday(?))<=2 AND id NOT IN (SELECT txn_id FROM event_results WHERE parser='chase' AND txn_id IS NOT NULL)").all(accountId, alert.amountCents, alert.occurredOn) as { id: number; descriptor_raw: string }[])
+        .find((r) => tokens.some((t) => r.descriptor_raw.toLowerCase().includes(t)));
+      let txnId = dup?.id ?? late?.id;
       if (!txnId) {
         txnId = createTransaction(db, { accountId, kind: 'spending', status: 'provisional', occurredOn: alert.occurredOn, authorizedAt: alert.authorizedAtUtc, amountCents: alert.amountCents, descriptor: alert.vendor, sourceEventIds: [ev.id] });
         classify(db, txnId);
         if ((db.prepare('SELECT review_state r FROM transactions WHERE id=?').get(txnId) as { r: string }).r === 'needs_category') emitNotify({ type: 'needs_you', txnId, lane: 'fast' });
       }
-      db.prepare('INSERT INTO event_results(raw_event_id, parser, outcome, txn_id) VALUES (?,?,?,?)').run(ev.id, 'chase', dup ? 'duplicate' : 'created', txnId);
+      db.prepare('INSERT INTO event_results(raw_event_id, parser, outcome, txn_id) VALUES (?,?,?,?)').run(ev.id, 'chase', dup ? 'duplicate' : late ? 'late_alert' : 'created', txnId);
       return { status: 'ok' };
     },
   });
