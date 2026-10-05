@@ -9,7 +9,7 @@ Everything here is a script in `deploy/`; nothing needs hand-typed commands on t
 | `bootstrap.sh` | vm | Idempotent host setup: Node 22, Caddy (auto TLS), swap, service user, `npm ci` + build, systemd service, health checks. Remembers its settings in `/etc/hearthkeeper.env`. |
 | `update.sh` | vm | `git pull` the checkout it lives in, then rebuild, restart and health-check via `bootstrap.sh`. `--check` previews. |
 | `build-prod-db.sh` | laptop | Rebuilds the production database from your two spreadsheets, proves parity (exit 1 on mismatch), writes a verified snapshot. |
-| `push-data.sh` / `install-data.sh` | laptop / vm | Uploads a snapshot and installs it: verified before and after copying, refuses to overwrite live data without `--force`, keeps the old database. |
+| `push-data.sh` (or `push-data.ps1` on Windows) / `install-data.sh` | laptop / vm | Uploads a snapshot and installs it: verified before and after copying, refuses to overwrite live data without `--force`, keeps the old database. |
 
 ## First deployment
 
