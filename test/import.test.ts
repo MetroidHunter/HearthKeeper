@@ -57,6 +57,19 @@ describe('CSV import', () => {
     expect(coverage(h.db, '2026-10-05')[0].stale).toBe(false);
   });
 
+  it('card-payment legs pair in either import order, and an unpaired leg is flagged only once the other side has caught up', () => {
+    const h = seedHousehold();
+    addRule(h.db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'payment thank you' }] }, action: { type: 'internal_transfer', reason: 'card_payment' }, mode: 'auto' });
+    addRule(h.db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'chase credit crd' }] }, action: { type: 'internal_transfer', reason: 'card_payment' }, mode: 'auto' });
+    const sw = suggestMapping(parseCsv(WF)), sc = suggestMapping(parseCsv(CHASE));
+    const r1 = commitImport(h.db, 'Wells Fargo', WF, { columnMap: sw.columnMap, dateFormat: sw.dateFormat, signRule: sw.signRule, skipRows: 0 }); // WF leg first
+    expect(r1.transferPairs).toBe(0);
+    expect(h.db.prepare("SELECT COUNT(*) c FROM transactions WHERE kind='internal_transfer'").get()).toEqual({ c: 1 }); // classified by descriptor even before its partner arrives
+    const r2 = commitImport(h.db, 'Chase', CHASE, { columnMap: sc.columnMap, dateFormat: sc.dateFormat, signRule: sc.signRule, skipRows: 0 });
+    expect(r2.transferPairs).toBe(1);
+    expect(h.db.prepare("SELECT COUNT(DISTINCT transfer_group) c FROM transactions WHERE transfer_group IS NOT NULL").get()).toEqual({ c: 1 });
+  });
+
   it('a refund matching a purchase is not paired without descriptor evidence', () => {
     const h = seedHousehold();
     createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-10-01', amountCents: -2500, descriptor: 'PURCHASE AUTHORIZED ON 09/30 ACME HARDWARE' });
