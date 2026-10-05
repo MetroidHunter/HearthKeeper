@@ -30,6 +30,8 @@ export function processGreenlightMessage(db: DB, rawEventId: number, text: strin
   const seen = db.prepare('SELECT outcome FROM greenlight_processed WHERE raw_event_id=?').get(rawEventId);
   if (seen) return { outcome: 'duplicate' };
   const done = (o: GreenlightOutcome, txnId?: number | null): GreenlightOutcome => {
+    // unrecognized/noise are not terminal: a parser improvement + replay must be able to reprocess them
+    if (o.outcome === 'unrecognized' || o.outcome === 'noise') return o;
     db.prepare('INSERT INTO greenlight_processed(raw_event_id, outcome, txn_id, detail_json) VALUES (?,?,?,?)').run(rawEventId, o.outcome, txnId ?? null, JSON.stringify(o));
     return o;
   };
@@ -130,9 +132,18 @@ function writeReclass(db: DB, id: number, profile: Profile, cents: number, realC
 function handleFinal(db: DB, profile: Profile, ev: Extract<GreenlightEvent, { type: 'final_amount' }>, rawEventId: number, date: string): GreenlightOutcome {
   // Match the earlier spend: same profile, similar vendor, within 10 days, not yet finalized.
   const prefix = `spend:${profile.id}:`;
-  const cands = db.prepare(`SELECT id, greenlight_ref, occurred_on, descriptor_raw, status FROM transactions WHERE greenlight_ref LIKE ? AND status='provisional' ORDER BY occurred_on DESC`).all(prefix + '%') as any[];
+  const cands = db.prepare(`SELECT id, greenlight_ref, occurred_on, descriptor_raw, status, CASE WHEN amount_cents=0 THEN COALESCE((SELECT -SUM(amount_cents) FROM transaction_splits WHERE transaction_id=transactions.id AND amount_cents>0),0) ELSE -amount_cents END AS spend_cents FROM transactions WHERE greenlight_ref LIKE ? AND status='provisional' ORDER BY occurred_on DESC`).all(prefix + '%') as any[];
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const match = cands.find((c) => Math.abs(daysBetween(c.occurred_on, date)) <= 10 && (norm(c.descriptor_raw).includes(norm(ev.vendor)) || norm(ev.vendor).includes(norm(c.descriptor_raw)) || sharedTokens(c.descriptor_raw, ev.vendor)));
+  // Score every candidate: vendor containment beats a lone shared token; then closest amount, then closest date.
+  // A token-only match is accepted only when it is the single plausible candidate (never guess between two).
+  const scored = cands.filter((c) => Math.abs(daysBetween(c.occurred_on, date)) <= 10).map((c) => {
+    const a = norm(c.descriptor_raw), b = norm(ev.vendor);
+    const tier = a && b && (a.includes(b) || b.includes(a)) ? 2 : sharedTokens(c.descriptor_raw, ev.vendor) ? 1 : 0;
+    return { c, tier, amt: Math.abs(Math.abs(c.spend_cents) - ev.amountCents), dd: Math.abs(daysBetween(c.occurred_on, date)) };
+  }).filter((x) => x.tier > 0).sort((x, y) => y.tier - x.tier || x.amt - y.amt || x.dd - y.dd);
+  const best = scored[0];
+  const ambiguousToken = best && best.tier === 1 && scored.length > 1;
+  const match = best && !ambiguousToken ? best.c : undefined;
   if (!match) {
     // Finalization with no earlier spend seen: treat it as a fresh (already final) spend.
     const out = handleSpend(db, profile, { type: 'spend', profile: ev.profile, amountCents: ev.amountCents, vendor: ev.vendor }, rawEventId, date, date + 'T12:00:00Z');

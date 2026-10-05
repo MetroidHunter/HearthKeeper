@@ -148,4 +148,25 @@ describe.skipIf(!existsSync(corpusUrl))('real IFTTT corpus through capture -> re
     expect(snap()).toBe(before);
     expect((h.db.prepare("SELECT COUNT(*) c FROM transactions WHERE kind='greenlight_allowance'").get() as any).c).toBeGreaterThan(10);
   });
+
+  it('final amount picks the closest-amount candidate, and refuses to guess between token-only matches', () => {
+    const h = seedHousehold();
+    send(h, '$100.00 allowance transferred to Miracle', 'September 27, 2026');
+    send(h, 'Miracle spent $10.00 at Blue Bottle Coffee Seattle', 'September 28, 2026');
+    send(h, 'Miracle spent $30.00 at Blue Bottle Coffee Seattle', 'September 28, 2026');
+    const r = send(h, "Miracle's final purchase amount of $29.50 at Blue Bottle Coffee Seattle has posted.", 'September 30, 2026');
+    expect(r.outcome).toBe('spend_updated');
+    const amts = (h.db.prepare("SELECT SUM(CASE WHEN s.amount_cents>0 THEN s.amount_cents END) a FROM transactions t JOIN transaction_splits s ON s.transaction_id=t.id WHERE t.descriptor_raw LIKE '%Blue Bottle%' GROUP BY t.id ORDER BY a").all() as any[]).map((x) => x.a);
+    expect(amts).toEqual([1000, 2950]);
+    // token-only ("Seattle Cafe" vs two different "... Seattle ..." rows) must not be attached to either
+    send(h, 'Miracle spent $5.00 at Pike Seattle', 'October 1, 2026');
+    send(h, 'Miracle spent $6.00 at Ballard Seattle', 'October 1, 2026');
+    const r2 = send(h, "Miracle's final purchase amount of $5.50 at Fremont Seattle has posted.", 'October 2, 2026');
+    expect((r2 as any).outcome).not.toBe('spend_updated');
+  });
+  it('unrecognized messages are not terminal: they can be reprocessed', () => {
+    const h = seedHousehold();
+    processGreenlightMessage(h.db, 9001, 'totally unparseable gibberish', '2026-10-04T00:00:00Z');
+    expect(h.db.prepare('SELECT COUNT(*) c FROM greenlight_processed WHERE raw_event_id=9001').get()).toEqual({ c: 0 });
+  });
 });
