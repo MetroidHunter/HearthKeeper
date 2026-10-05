@@ -1,28 +1,22 @@
 import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import * as echarts from 'echarts/core';
-import { PieChart } from 'echarts/charts';
-import { TooltipComponent, LegendComponent } from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
 import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { pace } from '../shared.js';
-echarts.use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer]);
+import { draw } from '../charts.js';
 
 @customElement('hk-budget')
 export class Budget extends Page {
   @state() data: any = null; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null;
-  private chart?: echarts.ECharts;
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { this.data = await api.get('/api/budget'); this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }); }
   updated() { if (this.view === 'pie' && this.pie) this.drawPie(); }
   drawPie() {
     const el = this.querySelector('.chart') as HTMLElement; if (!el) return;
-    this.chart ??= echarts.init(el);
     const g = this.drill ? this.pie.groups.find((x: any) => x.name === this.drill) : null;
     const data = g ? g.categories.map((c: any) => ({ name: c.name, value: c.cents })) : this.pie.groups.map((x: any) => ({ name: x.name, value: x.cents }));
-    this.chart.setOption({ tooltip: { formatter: (p: any) => `${p.name}: ${money(p.value)} (${p.percent}%)` }, series: [{ type: 'pie', radius: ['35%', '70%'], data, label: { formatter: '{b}\n{d}%' } }] }, true);
-    this.chart.off('click'); this.chart.on('click', (p: any) => { if (!this.drill) { this.drill = p.name; } });
+    void draw(el, { tooltip: { formatter: (p: any) => `${p.name}: ${money(p.value)} (${p.percent}%)` }, series: [{ type: 'pie', radius: ['35%', '70%'], data, label: { formatter: '{b}\n{d}%' } }] },
+      (p: any) => { if (!this.drill) this.drill = p.name; });
   }
   async saveBudget(r: any, v: string, month: string) { await this.run(() => api.post(`/api/categories/${r.id}/budget`, { monthlyCents: parseMoney(v), effectiveMonth: month })); this.editing = null; this.load(); }
   render() {

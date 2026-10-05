@@ -17,6 +17,7 @@ import './pages/dashboard.js';
 import './pages/categories.js';
 import './pages/signin.js';
 import './pages/settings.js';
+import './pages/analytics.js';
 
 const ROUTES: [string, string, () => TemplateResult][] = [
   ['/', 'Home', () => html`<hk-home></hk-home>`],
@@ -30,6 +31,7 @@ const ROUTES: [string, string, () => TemplateResult][] = [
   ['/imports', 'Imports', () => html`<hk-imports></hk-imports>`],
   ['/rules', 'Rules & merchants', () => html`<hk-rules></hk-rules>`],
   ['/greenlight', 'Greenlight', () => html`<hk-greenlight></hk-greenlight>`],
+  ['/analytics', 'Analytics', () => html`<hk-analytics></hk-analytics>`],
   ['/explore', 'Explore', () => html`<hk-explore></hk-explore>`],
   ['/categories', 'Categories', () => html`<hk-categories></hk-categories>`],
   ['/ingest', 'Ingest health', () => html`<hk-ingest></hk-ingest>`],
@@ -56,7 +58,7 @@ export class HkApp extends LitElement {
   render() {
     if (!this.auth) return html`<p class="muted" style="padding:16px">Loading…</p>`;
     if (this.auth.mode === 'google' && !this.auth.user) return html`<hk-signin .clientId=${this.auth.googleClientId} @signed-in=${() => this.loadAuth()}></hk-signin>`;
-    const base = '/' + (this.path.split('/')[1] ?? '');
+    const base = '/' + ((this.path.split('?')[0]).split('/')[1] ?? '');
     const hit = ROUTES.find(([p]) => p === base) ?? ROUTES[0];
     return html`<nav class="top">${ROUTES.map(([p, label]) => html`<a href="#${p}" class=${p === hit[0] ? 'on' : ''}>${label}</a>`)}
       ${this.auth.mode === 'google' ? html`<a href="#" style="margin-left:auto" @click=${async (e: Event) => { e.preventDefault(); await fetch('/auth/logout', { method: 'POST', headers: { 'x-requested-with': 'hearthkeeper' }, credentials: 'same-origin' }); await this.loadAuth(); }}>Sign out (${this.auth.user})</a>` : ''}</nav>

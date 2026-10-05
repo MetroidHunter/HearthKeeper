@@ -51,7 +51,7 @@ export function periodTotals(db: DB, categoryId: number, from: string, to: strin
     // Refunds and Greenlight offsets reduce Spent (D13): spent is net outflow.
     let net = 0;
     for (const r of rows) net += r.a;
-    spent = -net;
+    spent = 0 - net; // `0 - x`, not `-x`: never produce negative zero
   }
   if (opts.sheetCompatible) {
     // The sheet's [rR]eingest exclusion misses some legacy names; reproduce that leak (design §18.2).

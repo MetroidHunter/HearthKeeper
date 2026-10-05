@@ -7,11 +7,18 @@ import { catOptions, amt, type Cat } from '../shared.js';
 @customElement('hk-transactions')
 export class Transactions extends Page {
   @state() rows: any[] = []; @state() cats: Cat[] = []; @state() q = ''; @state() category = ''; @state() hidden = false; @state() open: any = null; @state() rows_: { categoryId: number | null; cents: number }[] = []; @state() sel = new Set<number>();
-  connectedCallback() { super.connectedCallback(); this.load(); }
-  async load() { await this.run(async () => { this.cats = await api.get('/api/categories'); this.rows = await api.get(`/api/transactions?limit=200&hidden=${this.hidden ? 1 : 0}${this.q ? `&q=${encodeURIComponent(this.q)}` : ''}${this.category ? `&category=${this.category}` : ''}`); }); }
+  @state() from = ''; @state() to = '';
+  connectedCallback() {
+    super.connectedCallback();
+    const qs = new URLSearchParams(location.hash.split('?')[1] ?? ''); // drill-down from a chart: #/transactions?category=3&from=2026-07-01&to=2026-07-31
+    this.category = qs.get('category') ?? ''; this.from = qs.get('from') ?? ''; this.to = qs.get('to') ?? ''; this.q = qs.get('q') ?? '';
+    this.load();
+  }
+  async load() { await this.run(async () => { this.cats = await api.get('/api/categories'); this.rows = await api.get(`/api/transactions?limit=200&hidden=${this.hidden ? 1 : 0}${this.q ? `&q=${encodeURIComponent(this.q)}` : ''}${this.category ? `&category=${this.category}` : ''}${this.from ? `&from=${this.from}` : ''}${this.to ? `&to=${this.to}` : ''}`); }); }
   async bulk(categoryId: number) { await this.run(async () => { for (const id of this.sel) await api.post(`/api/transactions/${id}/categorize`, { categoryId }); }); this.sel = new Set(); this.load(); }
   render() {
     return html`<h1>Transactions</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+      ${this.from || this.to ? html`<div class="card row"><span>Showing ${this.from} → ${this.to}${this.category ? ' for one category' : ''}</span><button @click=${() => { this.from = ''; this.to = ''; this.load(); }}>Clear dates</button></div>` : ''}
       <div class="row" style="margin-bottom:10px"><input class="grow" type="search" placeholder="Search" .value=${this.q} @change=${(e: any) => { this.q = e.target.value; this.load(); }} />
         <select @change=${(e: any) => { this.category = e.target.value; this.load(); }}>${catOptions(this.cats, null, { blank: 'All categories', includeRetired: true })}</select>
         <label><input type="checkbox" .checked=${this.hidden} @change=${(e: any) => { this.hidden = e.target.checked; this.load(); }} /> Show hidden</label></div>

@@ -7,6 +7,7 @@ import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod } from '../
 import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust } from '../core/plans.js';
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
+import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetVsActual } from '../core/analytics.js';
 import { closeChecklist, closePeriod } from '../core/close.js';
 import { answerCategory, promotable } from '../core/answers.js';
 import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
@@ -93,6 +94,15 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now()));
   app.get('/api/budget/pie', async (req: any) => budgetPie(db, req.query.today ?? now(), req.query.mode === 'spent' ? 'spent' : 'allocated'));
   app.get('/api/reports/spend-by', async (req: any) => spendBy(db, req.query.dim ?? 'category', { from: req.query.from ?? monthPeriod(now().slice(0, 7)).from, to: req.query.to ?? now() }));
+  const q = (req: any) => req.query as Record<string, string>;
+  const mon = () => now().slice(0, 7);
+  const back = (n: number) => { const [y, m] = mon().split('-').map(Number); const i = y * 12 + m - 1 - n; return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`; };
+  app.get('/api/analytics/monthly', async (req) => monthlySpend(db, q(req).from ?? back(11), q(req).to ?? mon(), q(req).by === 'group' ? 'group' : 'category'));
+  app.get('/api/analytics/trend/:id', async (req: any) => categoryTrend(db, Number(req.params.id), q(req).from ?? back(23), q(req).to ?? mon()));
+  app.get('/api/analytics/income-vs-spend', async (req) => incomeVsSpend(db, q(req).from ?? back(11), q(req).to ?? mon()));
+  app.get('/api/analytics/treemap', async (req) => treemap(db, q(req).from ?? back(11), q(req).to ?? mon()));
+  app.get('/api/analytics/year-pivot', async (req) => yearPivot(db, Number(q(req).from ?? Number(mon().slice(0, 4)) - 4), Number(q(req).to ?? mon().slice(0, 4))));
+  app.get('/api/analytics/budget-vs-actual', async (req) => budgetVsActual(db, q(req).month ?? mon()));
   app.get('/api/explore', async (req: any) => explore(db, String(req.query.q ?? ''), { from: req.query.from ?? '2020-01-01', to: req.query.to ?? now() }));
   app.get('/api/inbox', async () => inbox(db));
   app.get('/api/dashboard', async () => {
