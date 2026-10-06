@@ -70,4 +70,34 @@ describe('seed history is valid as it stands (D58)', () => {
     const cats = (await app.inject({ url: '/api/categories' })).json();
     expect(cats.find((c: any) => c.name === SEED_LABEL).system).toBe(1); // exposed with the flag so the UI can hide it
   });
+
+  it('touches only rows from the initial sheet import: bank CSV and live rows with no category are left for you', () => {
+    const h = seedHousehold();
+    legacy(h, 'FROM THE SHEET', -100, null, 'legacy:(blank)');
+    const csv = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-06', amountCents: -250, descriptor: 'FROM A BANK CSV' });
+    h.db.prepare("INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,memo,origin) VALUES (?,NULL,-250,NULL,'user')").run(csv);
+    const amzCsv = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-06', amountCents: -990, descriptor: 'AMAZON MKTPLACE PMTS' });
+    grandfatherSeed(h.db);
+    const t = h.db.prepare('SELECT review_state, note, note_source FROM transactions WHERE id=?');
+    expect(t.get(csv)).toMatchObject({ review_state: 'needs_category', note: null, note_source: null });
+    expect(t.get(amzCsv)).toMatchObject({ note: null, note_source: null });
+    expect((h.db.prepare('SELECT category_id FROM transaction_splits WHERE transaction_id=? AND origin=?').get(csv, 'user') as any).category_id).toBeNull();
+  });
+  it('clears bare "???" flags with the same note, keeps real remarks, and still runs when the first step was done earlier', () => {
+    const h = seedHousehold();
+    const q = legacy(h, 'WEIRD ONE', -100, h.cats['Groceries']);
+    const real = legacy(h, 'ODD ONE', -200, h.cats['Groceries']);
+    const live = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-06', amountCents: -300, descriptor: 'LIVE FLAGGED' });
+    h.db.prepare("UPDATE transactions SET flagged=1, flag_reason='???', note='???' WHERE id=?").run(q);
+    h.db.prepare("UPDATE transactions SET flagged=1, flag_reason='FLAG: needs follow-up - reason was an emoji combo' WHERE id=?").run(real);
+    h.db.prepare("UPDATE transactions SET flagged=1, flag_reason='???' WHERE id=?").run(live);
+    h.db.prepare("INSERT INTO settings(key,value) VALUES ('seed_grandfathered','earlier')").run(); // a database that already ran the first version
+    expect(grandfatherSeed(h.db)).toMatchObject({ flagsCleared: 1, categorized: 0 });
+    const t = (id: number) => h.db.prepare('SELECT flagged, flag_reason, note FROM transactions WHERE id=?').get(id) as any;
+    expect(t(q)).toEqual({ flagged: 0, flag_reason: null, note: SEED_LABEL });
+    expect(t(real).flagged).toBe(1);
+    expect(t(live).flagged).toBe(1); // not from the seed
+    expect(inbox(h.db).counts.flagged).toBe(2);
+    expect(grandfatherSeed(h.db)).toMatchObject({ skipped: 'already_done' });
+  });
 });

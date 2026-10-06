@@ -12,7 +12,7 @@ mkdirSync(dataDir, { recursive: true });
 const db = openDb(`${dataDir}/hearthkeeper.sqlite`);
 import { grandfatherSeed } from '../migration/grandfather.js';
 const gf = grandfatherSeed(db); // imported history is valid as it stands; idempotent, instant when already done
-if (!gf.skipped) console.log(`seed history grandfathered: ${gf.categorized} uncategorized, ${gf.noted} notes added, ${gf.marked} marked`);
+if (!gf.skipped) console.log(`seed history grandfathered: ${gf.categorized} uncategorized, ${gf.noted} notes added, ${gf.flagsCleared} ??? flags cleared, ${gf.marked} marked`);
 const mode = (process.env.HK_AUTH ?? 'google') as 'dev' | 'google';
 if (mode === 'google' && !process.env.HK_GOOGLE_CLIENT_ID) console.warn('HK_GOOGLE_CLIENT_ID is not set; sign-in will fail. Use HK_AUTH=dev for local development.');
 const staticDir = process.env.HK_STATIC_DIR ?? (existsSync('./dist/web') ? './dist/web' : './src/web/public');
