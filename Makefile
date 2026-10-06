@@ -168,11 +168,13 @@ update: ## [box, sudo] git pull, rebuild, restart, health check (CHECK=1 to prev
 # Installs a snapshot as the live database: verified first, refuses to replace live data without FORCE=1, keeps the old one.
 install-data: ## [box, sudo] install an uploaded snapshot (SNAPSHOT=..., FORCE=1)
 	[ "$$(id -u)" = 0 ] || { echo "run as root: sudo make install-data SNAPSHOT=..."; exit 1; }
-	GZ=$${SNAPSHOT:?pass SNAPSHOT=/path/to/hk-xxx.sqlite.gz}; FORCE=$${FORCE:+--force}
+	GZ=$$(readlink -f "$${SNAPSHOT:?pass SNAPSHOT=/path/to/hk-xxx.sqlite.gz}"); FORCE=$${FORCE:+--force}
 	MAN=$${GZ%.sqlite.gz}.manifest.json
-	source /etc/hearthkeeper.env
+	set -a; source /etc/hearthkeeper.env; set +a   # exported, so the CLI below finds the real data directory
 	DB="$$HK_DATA_DIR/hearthkeeper.sqlite"
-	HK() { node --import tsx src/seed/cli.ts "$$@"; }
+	# run the CLI from the deployed app (its node_modules live in /opt/hearthkeeper), whichever checkout make was started from
+	APP=/opt/hearthkeeper; [ -d "$$APP/node_modules" ] || APP=$$PWD
+	HK() { (cd "$$APP" && node --import tsx src/seed/cli.ts "$$@"); }
 
 	echo "==> verifying the uploaded snapshot (checksums, row counts, integrity, invariants)"
 	HK verify --file "$$GZ" --manifest "$$MAN"
