@@ -42,7 +42,7 @@ export function registerChaseParser() {
     source: 'chase_alert', version: CHASE_PARSER_VERSION,
     parse(db: DB, ev: RawEvent) {
       if (db.prepare('SELECT 1 FROM event_results WHERE raw_event_id=? AND parser=?').get(ev.id, 'chase')) return { status: 'ok' };
-      const from = (() => { try { return String(JSON.parse(ev.headers_json ?? '{}').From ?? ''); } catch { return ''; } })();
+      const from = (() => { try { const h = JSON.parse(ev.headers_json ?? '{}'); return String(h['X-HK-Original-From'] ?? h.From ?? ''); } catch { return ''; } })();
       const addr = (/<([^>]+)>/.exec(from)?.[1] ?? from).trim().toLowerCase();
       if (ev.channel === 'email' && from && !/@([a-z0-9-]+\.)*chase\.com$/.test(addr)) return { status: 'unrecognized', error: `sender ${addr || '?'} is not chase.com` }; // anyone can email the receiver mailbox
       const alert = parseChaseAlert(extractText(ev.payload));

@@ -27,8 +27,8 @@ export function parseWfNotice(text: string): WfNotice | null {
   // sections: "Withdrawals <desc> $x <desc> $y Deposits <desc> $z"
   for (const sec of body.split(/\b(?=Withdrawals\b|Deposits\b)/)) {
     const sign = sec.startsWith('Withdrawals') ? -1 : sec.startsWith('Deposits') ? 1 : 0; if (!sign) continue;
-    for (const m of sec.replace(/^(Withdrawals|Deposits)\s*/, '').matchAll(/(.+?)\s*\$([\d,]+\.\d{2})/g)) {
-      const description = m[1].trim(); if (description) lines.push({ description, cents: sign * parseCents(m[2].replace(/,/g, '')) });
+    for (const m of sec.replace(/^(Withdrawals|Deposits)[\s*]*/, '').matchAll(/(.+?)\s*\$([\d,]+\.\d{2})/g)) {
+      const description = m[1].replace(/^[\s*]+|[\s*]+$/g, ''); if (description) lines.push({ description, cents: sign * parseCents(m[2].replace(/,/g, '')) });
     }
   }
   return lines.length ? { last4: acct[1], asOf: `${asOf[3]}-${asOf[1]}-${asOf[2]}`, lines } : null;
@@ -46,8 +46,9 @@ export function registerWfNoticeParser() {
   registerParser({ source: 'wf_notice', version: WF_PARSER_VERSION, parse(db: DB, ev: RawEvent) {
     if (db.prepare('SELECT 1 FROM event_results WHERE raw_event_id=? AND parser=?').get(ev.id, 'wf')) return { status: 'ok' };
     const { text, headers } = emailBody(ev);
-    const addr = (/<([^>]+)>/.exec(String(headers.From ?? ''))?.[1] ?? String(headers.From ?? '')).trim().toLowerCase();
-    if (ev.channel === 'email' && headers.From && !/@([a-z0-9-]+\.)*wellsfargo\.com$/.test(addr)) return { status: 'unrecognized', error: `sender ${addr || '?'} is not wellsfargo.com` };
+    const from = String(headers['X-HK-Original-From'] ?? headers.From ?? ''); // set by the receiver script for a trusted household member's hand-forwarded mail
+    const addr = (/<([^>]+)>/.exec(from)?.[1] ?? from).trim().toLowerCase();
+    if (ev.channel === 'email' && from && !/@([a-z0-9-]+\.)*wellsfargo\.com$/.test(addr)) return { status: 'unrecognized', error: `sender ${addr || '?'} is not wellsfargo.com` };
     const n = parseWfNotice(text);
     if (!n) return { status: 'unrecognized', error: `no Wells Fargo account update shape: ${fingerprint(ev.payload).slice(0, 80)}` };
     const acct = db.prepare("SELECT id FROM accounts WHERE institution='Wells Fargo' AND last4=? AND in_system=1").all(n.last4) as { id: number }[];

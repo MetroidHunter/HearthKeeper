@@ -3,6 +3,7 @@
  * Install ONLY in the dedicated receiver Gmail account (never in a main mailbox).
  *
  * Setup:
+ *  0. Optional, for forwarding a message by hand (testing, back-filling): script property HK_FORWARDERS = your own address(es), comma separated.
  *  1. Script properties: HK_URL (e.g. https://hearth.example.com), HK_TOKEN_LABEL (receiver-mailbox), HK_SECRET (from `npm run hk -- init`).
  *  Sender checks: only mail whose From domain AND Authentication-Results (dkim=pass or spf=pass) match are labelled with a trusted source.
  *  2. In Gmail create a label "hk/new"; add a filter in the receiver: apply "hk/new" to all incoming mail.
@@ -31,7 +32,13 @@ function forwardNewMail() {
         var mm = new RegExp('^' + h + ':\\s*(.+)$', 'mi').exec(headBlock);
         if (mm) headers[h] = mm[1].trim();
       });
-      var body = JSON.stringify({ source: guessSource(m.getFrom(), headers['Authentication-Results']), messageId: m.getId(), text: m.getPlainBody() || stripHtml(m.getBody()), headers: headers, html: m.getBody().length < 200000 ? m.getBody() : null });
+      var source = guessSource(m.getFrom(), headers['Authentication-Results']);
+      var plain = m.getPlainBody();
+      if (source === 'email_unknown') { // a household member forwarded it by hand: trust the inner sender only if the forwarder is on the list and really sent it
+        var inner = forwardedInnerSender(m.getFrom(), headers['Authentication-Results'], plain, props.getProperty('HK_FORWARDERS'));
+        if (inner) { source = inner.source; headers['X-HK-Original-From'] = inner.from; }
+      }
+      var body = JSON.stringify({ source: source, messageId: m.getId(), text: plain || stripHtml(m.getBody()), headers: headers, html: m.getBody().length < 200000 ? m.getBody() : null });
       var res = post(url, label, secret, body);
       if (res.getResponseCode() !== 200) { ok = false; console.error(res.getResponseCode() + ' ' + res.getContentText()); }
     });
@@ -65,12 +72,35 @@ function selfTest() {
   var res2 = post(props.getProperty('HK_URL') + '/ingest/email', props.getProperty('HK_TOKEN_LABEL'), props.getProperty('HK_SECRET'), JSON.stringify({ source: 'email_unknown', messageId: 'selftest2-' + Date.now(), text: 'curly \u2019 quote \u00a9 and emoji \ud83d\ude00' }));
   console.log('Non-ASCII test: ' + res2.getResponseCode() + ' ' + res2.getContentText());
 }
-function guessSource(from, authResults) {
-  var addr = (/<([^>]+)>/.exec(from) || [null, from])[1].trim().toLowerCase();
-  var verified = /dkim=pass|spf=pass/i.test(authResults || '');
-  if (!verified) return 'email_unknown';
+function addrOf(from) { return (/<([^>]+)>/.exec(from) || [null, from])[1].trim().toLowerCase(); }
+/** DKIM must pass for the SAME domain as the From address (or its parent), or DMARC must pass for it: a message signed by evil.com that says "From: chase.com" does not qualify. */
+function authenticated(addr, authResults) {
+  var domain = addr.split('@')[1] || '', ar = authResults || '', m, re = /dkim=pass[^;]*?header\.[id]=@?([a-z0-9.-]+)/ig;
+  if (!domain) return false;
+  while ((m = re.exec(ar))) { var d = m[1].toLowerCase(); if (domain === d || domain.slice(-d.length - 1) === '.' + d) return true; }
+  var dm = /dmarc=pass[^;]*?header\.from=([a-z0-9.-]+)/i.exec(ar);
+  return !!dm && (domain === dm[1].toLowerCase() || domain.slice(-dm[1].length - 1) === '.' + dm[1].toLowerCase());
+}
+function sourceOfSender(addr) {
   for (var i = 0; i < SENDERS.length; i++) if (SENDERS[i][0].test(addr)) return SENDERS[i][1];
   return 'email_unknown';
+}
+function guessSource(from, authResults) {
+  var addr = addrOf(from);
+  return authenticated(addr, authResults) ? sourceOfSender(addr) : 'email_unknown';
+}
+/**
+ * Hand-forwarded mail ("---------- Forwarded message ---------- From: Wells Fargo <...>") arrives from a person, not the bank. It is accepted only when
+ * that person's address is in the script property HK_FORWARDERS (comma separated) AND the forward itself is authenticated as theirs.
+ */
+function forwardedInnerSender(outerFrom, authResults, plain, forwarders) {
+  var outer = addrOf(outerFrom);
+  var allowed = (forwarders || '').toLowerCase().split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+  if (allowed.indexOf(outer) < 0 || !authenticated(outer, authResults)) return null;
+  var at = /-{5,}\s*Forwarded message\s*-{5,}/i.exec(plain || ''); if (!at) return null;
+  var fm = /^From:\s*(.+)$/mi.exec((plain || '').slice(at.index)); if (!fm) return null;
+  var src = sourceOfSender(addrOf(fm[1]));
+  return src === 'email_unknown' ? null : { source: src, from: fm[1].trim() };
 }
 function stripHtml(h) { return h.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
 function hex(bytes) { return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join(''); }

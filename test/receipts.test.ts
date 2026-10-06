@@ -56,6 +56,27 @@ describe('real-email parsers', () => {
     expect(parseWfNotice('Your balance is low')).toBeNull();
     expect(parseWfNotice("Here's the rundown for account ...1111 Deposits PAYROLL ACME $1,234.50 As of 10/02/2026 at 1:00 a.m.")).toMatchObject({ lines: [{ description: 'PAYROLL ACME', cents: 123450 }] });
   });
+  it('wells fargo: a hand-forwarded plain-text copy with several withdrawals (as Gmail renders it)', () => {
+    const fwd = `---------- Forwarded message ---------
+From: Wells Fargo <alerts@notify.wellsfargo.com>
+Subject: Your account update is here
+
+[image: Wells Fargo home page] <https://www.wellsfargo.com>
+Here's the rundown
+
+for account ...1111
+Go to accounts <https://connect.secure.wellsfargo.com/auth/login/ulink>
+*Withdrawals*
+GREENLIGHT APP 261004 GREENLIGHT ALEX SAMPLE $125.00
+CHASE CREDIT CRD EPAY 261002 9760590069 ALEX K SAMPLE $6,896.31
+VENMO PAYMENT 261004 1053527923194 JORDAN SAMPLE $25.00
+ROCKET MORTGAGE LOAN 261003 $2,000.00
+As of 10/06/2026 at 12:42 a.m., Central Time`; // the amount of the last line is invented (the sample was cut off there)
+    const n = parseWfNotice(fwd)!;
+    expect(n.last4).toBe('1111');
+    expect(n.lines.map((l) => [l.description.split(' ')[0], l.cents])).toEqual([['GREENLIGHT', -12500], ['CHASE', -689631], ['VENMO', -2500], ['ROCKET', -200000]]);
+    expect(n.lines[0].description).toBe('GREENLIGHT APP 261004 GREENLIGHT ALEX SAMPLE');
+  });
   it('line date: the purchase date, with the year rolled back across New Year', () => {
     expect(lineDate('PURCHASE AUTHORIZED ON 09/29 ACE PARKING', '2026-10-02')).toBe('2026-09-29');
     expect(lineDate('PURCHASE AUTHORIZED ON 12/31 X', '2027-01-02')).toBe('2026-12-31');
@@ -94,6 +115,12 @@ describe('real-email parsers', () => {
       // a posted row already in the books: the alert adds nothing
       h.db.prepare("UPDATE accounts SET last4='1111' WHERE id=?").run(h.wf);
       createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-09-25', amountCents: -662, descriptor: 'GREENLIGHT APP 260925 GREENLIGHT ALEX SAMPLE' });
+      // a hand-forwarded message: the script reports the inner sender in X-HK-Original-From; the outer sender (a person) is not checked as the bank
+      const manual = captureEvent(h.db, { source: 'wf_notice', channel: 'email', payload: JSON.stringify({ text: 'x', html: fx('wf_purchase').html }), headers: { From: 'Me <me@gmail.com>', 'X-HK-Original-From': 'Wells Fargo <alerts@notify.wellsfargo.com>' }, dedupeKey: 'manual' } as any);
+      h.db.prepare("UPDATE accounts SET last4='2222' WHERE id=?").run(h.wf);
+      expect(parseEvent(h.db, manual.id)).toEqual({ status: 'ok' });
+      const spoof = captureEvent(h.db, { source: 'wf_notice', channel: 'email', payload: JSON.stringify({ text: 'x', html: fx('wf_purchase').html }), headers: { From: 'Me <me@gmail.com>' }, dedupeKey: 'spoof' } as any);
+      expect(parseEvent(h.db, spoof.id)).toMatchObject({ status: 'unrecognized', error: expect.stringContaining('not wellsfargo.com') });
       parseEvent(h.db, cap(h, 'wf_notice', 'wf_greenlight').id);
       expect(h.db.prepare('SELECT COUNT(*) c FROM transactions WHERE account_id=?').get(h.wf)).toEqual({ c: 2 });
     });
