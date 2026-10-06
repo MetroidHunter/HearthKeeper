@@ -32,7 +32,7 @@ Chase alerts sent through the same automation are recognised by their wording ("
 1. **Create the receiver mailbox**: a new, dedicated Google account. Never install the script in a mailbox you actually use.
 2. **Make Chase send alerts by email.** In Chase: Profile & settings → Alerts → set the card's purchase alert to Email (a small threshold such as $0.01 so every purchase sends one).
 3. **Get those emails to the receiver.** In your main Gmail: Settings → Forwarding and POP/IMAP → *Add a forwarding address* (the receiver) and confirm it from the receiver; then Settings → Filters → create a filter for mail from Chase (`from:(no.reply.alerts@chase.com)` or `from:chase.com` with a subject containing "transaction") → *Forward it to* the receiver. Forwarded mail keeps its sender and its DKIM signature, which is what the script's trust check needs.
-4. **Label everything in the receiver.** In the receiver: Gmail → Settings → Labels → create `hk/new`. Settings → Filters → create a filter matching all incoming mail (for example `to:me`) → *Apply the label* `hk/new`.
+4. **Nothing to label in the receiver.** The script forwards everything in the receiver's inbox and then archives it (label `hk/sent`). Do not use a `to:me` filter: forwarded mail keeps the original recipient in `To`.
 5. **Install the forwarder.** Signed in as the receiver: script.google.com → New project → paste the contents of `tools/receiver-apps-script.gs`. Project Settings (gear) → Script properties → add:
    - `HK_URL` = `https://hearthkeeper.net`
    - `HK_TOKEN_LABEL` = `receiver-mailbox`

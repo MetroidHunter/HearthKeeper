@@ -6,7 +6,7 @@
  *  0. Optional, for forwarding a message by hand (testing, back-filling): script property HK_FORWARDERS = your own address(es), comma separated.
  *  1. Script properties: HK_URL (e.g. https://hearth.example.com), HK_TOKEN_LABEL (receiver-mailbox), HK_SECRET (from `npm run hk -- init`).
  *  Sender checks: only mail whose From domain AND Authentication-Results (dkim=pass or spf=pass) match are labelled with a trusted source.
- *  2. In Gmail create a label "hk/new"; add a filter in the receiver: apply "hk/new" to all incoming mail.
+ *  2. Nothing to set up in the receiver's Gmail: every message in its inbox is forwarded, then archived and labelled hk/sent.
  *  3. Add a time-driven trigger: run `forwardNewMail` every 5 minutes.
  *
  * It POSTs every message raw (capture first, parse later): source is only a hint from the sender domain.
@@ -16,10 +16,11 @@ function forwardNewMail() {
   var props = PropertiesService.getScriptProperties();
   var url = props.getProperty('HK_URL') + '/ingest/email';
   var label = props.getProperty('HK_TOKEN_LABEL'), secret = props.getProperty('HK_SECRET');
-  var newLabel = GmailApp.getUserLabelByName('hk/new'), doneLabel = GmailApp.getUserLabelByName('hk/sent') || GmailApp.createLabel('hk/sent');
-  if (!newLabel) throw new Error('Create label hk/new first');
+  var doneLabel = GmailApp.getUserLabelByName('hk/sent') || GmailApp.createLabel('hk/sent');
   ['HK_URL', 'HK_TOKEN_LABEL', 'HK_SECRET'].forEach(function (k) { if (!props.getProperty(k)) throw new Error('Script property ' + k + ' is not set (Project Settings → Script properties; get the values from `sudo make tokens`)'); });
-  var threads = newLabel.getThreads(0, 50);
+  // Everything in the receiver's inbox: no label or filter needed (forwarded mail keeps the ORIGINAL recipient in To, so a `to:me` filter never matches).
+  // A thread is archived only after every message in it posted; a failure stays in the inbox and is retried. The server ignores a message it already has.
+  var threads = GmailApp.getInboxThreads(0, 50);
   threads.forEach(function (thread) {
     var ok = true;
     thread.getMessages().forEach(function (m) {
@@ -42,7 +43,7 @@ function forwardNewMail() {
       var res = post(url, label, secret, body);
       if (res.getResponseCode() !== 200) { ok = false; console.error(res.getResponseCode() + ' ' + res.getContentText()); }
     });
-    if (ok) { thread.removeLabel(newLabel); thread.addLabel(doneLabel); }
+    if (ok) { thread.addLabel(doneLabel); thread.moveToArchive(); }
   });
   // heartbeat so silence alerts work even when no mail arrives (signed like ingest: no secret ever appears in a URL)
   var hts = String(Math.floor(Date.now() / 1000)), hn = Utilities.getUuid();
