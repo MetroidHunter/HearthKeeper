@@ -28,6 +28,19 @@ describe('api', () => {
     expect((await app.inject({ url: '/healthz' })).statusCode).toBe(200);
   });
 
+  it('device ingest: one automation can forward Chase alerts too (recognised by wording), and plain text bodies work', async () => {
+    const { h, app } = mk();
+    const t = createToken(h.db, 'ifttt', 'device', 24);
+    const chase = 'Prime Visa: You made a $9.40 transaction with SQ *SNIFF CAFE on Oct 3, 2026 at 4:11 PM ET.';
+    expect((await app.inject({ method: 'POST', url: `/ingest/device?token=${t.secret}`, headers: { 'content-type': 'text/plain' }, payload: chase })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: `/ingest/device?token=${t.secret}`, headers: { 'content-type': 'text/plain' }, payload: 'Miracle spent $7.07 at WAL-MART on October 3, 2026 at 09:15AM' })).statusCode).toBe(200);
+    expect(h.db.prepare('SELECT source FROM raw_events ORDER BY id').all()).toEqual([{ source: 'chase_alert' }, { source: 'greenlight_msg' }]);
+    // an explicit ?source= still wins, and a token can only ever forge the allowed sources
+    expect((await app.inject({ method: 'POST', url: `/ingest/device?token=${t.secret}&source=amazon_receipt`, payload: { text: 'x' } })).statusCode).toBe(400);
+    // the heartbeat proves a token works without capturing anything
+    expect((await app.inject({ method: 'POST', url: `/ingest/heartbeat?token=${t.secret}` })).json()).toEqual({ ok: true });
+  });
+
   it('device ingest: bearer token captures and parses a Greenlight message (IFTTT webhook shape)', async () => {
     const { h, app } = mk();
     const t = createToken(h.db, 'ifttt', 'device', 24);

@@ -7,7 +7,7 @@ import { showDialog, catSelect } from '../ui.js';
 import { txnCard, type Env } from '../txn.js';
 
 const FOLD = 'hk-home-attention-open';
-const foldOpen = () => { try { return localStorage.getItem(FOLD) !== '0'; } catch { return true; } }; // remembered per device; open by default
+const foldOpen = () => { try { return localStorage.getItem(FOLD) === '1'; } catch { return false; } }; // remembered per device; collapsed until you open it
 const saveFold = (open: boolean) => { try { localStorage.setItem(FOLD, open ? '1' : '0'); } catch { /* private mode */ } };
 
 /** Home: what needs a person first (collapsible), then favorites, then what just happened; searching and adding come last. */
@@ -42,7 +42,7 @@ export class Home extends Page {
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
 
       <details class="fold" ?open=${open} @toggle=${(e: Event) => saveFold((e.currentTarget as HTMLDetailsElement).open)}>
-        <summary><h2>Needs attention</h2><span class="badge ${c.total ? 'warn' : 'good'}">${c.total}</span><span class="fold-hint muted small">${c.total ? 'tap to collapse' : 'all caught up'}</span></summary>
+        <summary><h2>Needs attention</h2><span class="badge ${c.total ? 'warn' : 'good'}">${c.total}</span><span class="fold-hint muted small">${c.total ? (open ? 'tap to collapse' : 'tap to open') : 'all caught up'}</span></summary>
         <div class="stack" style="margin-top:12px">
           <div class="card"><div class="row"><b style="font-size:18px">${c.total} item${c.total === 1 ? '' : 's'} need${c.total === 1 ? 's' : ''} a decision</b><span class="grow"></span><a href="#/backlog"><button>Open Backlog</button></a></div>
             <div class="list" style="margin-top:8px">

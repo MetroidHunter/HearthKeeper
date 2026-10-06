@@ -70,9 +70,11 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const a = authenticate(db, { label: req.headers['x-hk-token'] as string, signature: req.headers['x-hk-signature'] as string, timestamp: req.headers['x-hk-timestamp'] as string, nonce: req.headers['x-hk-nonce'] as string, bearer, body: raw }, channel);
     if (!a.ok) return reply.code(401).send({ error: a.reason });
     const body = rec(req.body);
-    const source = (req.query?.source as Source | undefined) ?? (body.source as Source | undefined) ?? defaultSource;
-    if (!ALLOWED_SOURCES[channel].includes(source)) return reply.code(400).send({ error: `source ${source} is not accepted on the ${channel} channel` }); // a leaked token must not be able to forge arbitrary sources
     const payload = typeof req.body === 'string' ? req.body : (body.text ?? body.payload ?? raw);
+    // One phone automation can forward everything it sees: with no explicit source, a Chase card alert is recognised by its own wording.
+    const sniffed: Source | undefined = channel === 'device' && typeof payload === 'string' && /Prime Visa: You made a \$/.test(payload) ? 'chase_alert' : undefined;
+    const source = (req.query?.source as Source | undefined) ?? (body.source as Source | undefined) ?? sniffed ?? defaultSource;
+    if (!ALLOWED_SOURCES[channel].includes(source)) return reply.code(400).send({ error: `source ${source} is not accepted on the ${channel} channel` }); // a leaked token must not be able to forge arbitrary sources
     const cap = captureEvent(db, { source, channel, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), headers: channel === 'email' ? body.headers : undefined, tokenId: a.tokenId, dedupeKey: body.messageId ? `${source}:${body.messageId}` : undefined });
     if (!cap.duplicate) parseEvent(db, cap.id); // no parser => stays pending; nothing is created
     return { id: cap.id, duplicate: cap.duplicate };

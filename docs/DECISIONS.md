@@ -99,3 +99,6 @@ Home and Backlog cards show Category and Note (and Flag / Never-posted when they
 
 ## D63. Home order
 Needs attention first (collapsible, open by default, the choice remembered per device), Favorites second, Recent third; searching and Add transaction come last. No intro text on Home. On phones, favorites are 2-column tiles of three short lines (name, balance, spent of target) with the pace bar as a strip along the tile's bottom edge, and the star (pinning) moves to the Budget page, taking each tile from ~87px to ~72px tall.
+
+## D64. Needs attention starts collapsed; one phone automation can feed Chase too
+The Home "Needs attention" section is collapsed on a fresh device (the count stays visible in its heading) and remembers how you leave it. On the device channel a Chase card alert sent without an explicit `source` is recognised by its wording and stored as `chase_alert`, so a single IFTTT automation can forward both Greenlight and Chase notifications. Setup steps are in `docs/CAPTURE.md`.

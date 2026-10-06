@@ -2,7 +2,7 @@ import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, api, pi
 
 describe('Home (phone view)', () => {
   let trap;
-  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  beforeEach(async () => { await reset(); localStorage.setItem('hk-home-attention-open', '1'); trap = trapErrors(); }); // Needs attention starts collapsed; most tests need it open
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
   it('orders the page: Needs attention (collapsible) first, Favorites second, then Recent, and Add transaction last, with no intro text', async () => {
@@ -24,19 +24,20 @@ describe('Home (phone view)', () => {
     expect($('.check.missing .mark', $('details.fold'))).to.exist;
   });
 
-  it('Needs attention collapses and the choice is remembered', async () => {
-    localStorage.removeItem('hk-home-attention-open');
+  it('Needs attention starts collapsed, opens on tap, and the choice is remembered', async () => {
+    localStorage.removeItem('hk-home-attention-open'); // a fresh device
     await mount('/');
     const fold = await waitFor(() => $('details.fold'), 'the fold');
-    expect(fold.open).to.equal(true); // open by default
-    expect($('.card.txn', fold).checkVisibility()).to.equal(true);
-    $('summary', fold).click();
-    await waitFor(() => !fold.open && localStorage.getItem('hk-home-attention-open') === '0', 'collapsed and saved');
+    expect(fold.open).to.equal(false); // collapsed by default
     expect($('.card.txn', fold).checkVisibility()).to.equal(false);
+    expect(text($('summary', fold))).to.match(/Needs attention\s*\d+/); // the count is still visible while collapsed
+    $('summary', fold).click();
+    await waitFor(() => fold.open && localStorage.getItem('hk-home-attention-open') === '1', 'opened and saved');
+    expect($('.card.txn', fold).checkVisibility()).to.equal(true);
     await mount('/');
-    expect($('details.fold').open).to.equal(false); // still collapsed on the next visit
+    expect($('details.fold').open).to.equal(true); // still open on the next visit
     $('summary', $('details.fold')).click();
-    await waitFor(() => $('details.fold').open && localStorage.getItem('hk-home-attention-open') === '1', 'reopened');
+    await waitFor(() => !$('details.fold').open && localStorage.getItem('hk-home-attention-open') === '0', 'collapsed again');
   });
 
   it('favorites are compact tiles that still carry name, balance, pace bar and spent of target', async () => {
