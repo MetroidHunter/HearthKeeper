@@ -63,11 +63,14 @@ export class HkApp extends LitElement {
   private async loadAuth() {
     try { this.auth = await (await fetch('/auth/me', { credentials: 'same-origin' })).json(); } catch { this.auth = { mode: 'dev', user: 'offline', googleClientId: null }; } // offline: show the cached app
   }
+  /** Opening one menu closes the others; Escape and any outside click close them all. */
+  private oneMenu(opened: HTMLDetailsElement) { this.querySelectorAll('nav details[open]').forEach((d) => { if (d !== opened) d.removeAttribute('open'); }); } // synchronous, so it cannot race the details toggle event
   private closeMenus() { this.querySelectorAll('nav details[open]').forEach((d) => d.removeAttribute('open')); }
   connectedCallback() {
     super.connectedCallback();
     applyTheme();
     document.addEventListener('mousedown', (e) => { if (!(e.target as HTMLElement).closest?.('nav details')) this.closeMenus(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenus(); });
     this.loadAuth();
     addEventListener('hashchange', () => { this.path = this.current(); });
     addEventListener('hk-unauthorized', () => { this.auth = { mode: 'google', user: null, googleClientId: this.auth?.googleClientId ?? null }; });
@@ -81,7 +84,7 @@ export class HkApp extends LitElement {
     const hit = ALL.find((r) => r.path === base) ?? ALL[0];
     const link = (r: Route) => html`<a href="#${r.path}" class=${r.path === hit.path ? 'on' : ''} @click=${() => this.closeMenus()}>${r.label}${r.hint ? html`<small>${r.hint}</small>` : ''}</a>`;
     return html`<nav class="top">${TOP.map(link)}
-      ${MENUS.map((m) => html`<details class="menu ${m.items.some((r) => r.path === hit.path) ? 'on' : ''}"><summary>${m.label}</summary><div class="panel">${m.items.map(link)}</div></details>`)}
+      ${MENUS.map((m) => html`<details class="menu ${m.items.some((r) => r.path === hit.path) ? 'on' : ''}"><summary @click=${(e: Event) => this.oneMenu((e.currentTarget as HTMLElement).parentElement as HTMLDetailsElement)}>${m.label}</summary><div class="panel">${m.items.map(link)}</div></details>`)}
       ${this.auth.mode === 'google' ? html`<a href="#" class="spacer" @click=${async (e: Event) => { e.preventDefault(); await fetch('/auth/logout', { method: 'POST', headers: { 'x-requested-with': 'hearthkeeper' }, credentials: 'same-origin' }); navigator.serviceWorker?.controller?.postMessage('logout'); try { localStorage.removeItem('hk-offline-queue'); } catch { /* ignore */ } await this.loadAuth(); }}>Sign out (${this.auth.user})</a>` : ''}</nav>
       <main>${hit.view()}</main>${nothing}`;
   }

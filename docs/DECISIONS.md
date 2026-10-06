@@ -81,3 +81,9 @@ Top level: Home, Budget, Backlog, Transactions. Data: Categories, Transfers, Pla
 
 ## D57. Every Home/Backlog item says why it is there, and counts are true counts
 The inbox returns real totals (not the 200-row list limit) and a plain-language reason per item (no rule matches, left in NEEDS CATEGORY, your "???" note, waiting on a note, pending too long). Home's headline is the true number of distinct items; the Backlog groups uncategorized items by merchant, so its list is shorter than the count by design, and both pages say so. Greenlight reclasses are shown and booked at their real spend, not their zero total.
+
+## D58. Everything from the spreadsheet import is valid as it stands
+Nothing that predates the seed is asked for a category or a note. `grandfatherSeed` (run after parity in `hk migrate`, by `hk grandfather`, and at every server start; idempotent and instant once done) moves the imported rows that had no category to a reserved category, "Predates Oct 2026 Seed" (`categories.system = 1`, kind `income_reference`, retired). It cannot be picked, used in a rule, unretired or shown on the Categories page, but the name appears on the transactions that carry it. Imported Amazon/Venmo/PayPal rows with no note get the note "Predates Oct 2026 Seed". Every imported row is marked (`note_source = 'seed'`) so the note matcher never flags it later. New transactions after the seed still need categories and notes. The 105 rows carrying your own "???" flags are left alone: they are your follow-up marks, not missing data.
+
+## D59. Pop-ups
+Dialogs that ask for a decision (confirm, categorize, retire, add) ignore outside clicks; Esc still cancels. Informational dialogs and the transaction detail close on an outside click. The category list renders inside the dialog it opens from, because only top-layer content can sit above a modal. Hover hints are click-through, so they vanish when the pointer leaves the item. Opening one nav menu closes the others.

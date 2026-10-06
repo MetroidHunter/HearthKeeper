@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney, fmtDate } from '../api.js';
 import { amt, type Cat } from '../shared.js';
-import { pageHead, th, catSelect } from '../ui.js';
+import { pageHead, th, catSelect, clickedBackdrop } from '../ui.js';
 
 @customElement('hk-transactions')
 export class Transactions extends Page {
@@ -67,7 +67,7 @@ export class Transactions extends Page {
   detail() {
     const t = this.open; const rows = this.rows_;
     const sum = () => rows.reduce((a: number, r: any) => a + r.cents, 0);
-    return html`<dialog class="txn-detail" @close=${() => { if (this.open) this.open = null; }}><h2>${t.descriptor_raw}</h2><div class="muted">${t.occurred_on} · ${t.account} · ${money(t.amount_cents)} ${t.decided_by ? `· decided by ${t.decided_by}${t.decided_rule_id ? ` (rule #${t.decided_rule_id})` : ''}` : ''}</div>
+    return html`<dialog class="txn-detail" @close=${() => { if (this.open) this.open = null; }} @click=${(e: MouseEvent) => { if (clickedBackdrop(e.currentTarget as HTMLDialogElement, e)) this.open = null; }}><h2>${t.descriptor_raw}</h2><div class="muted">${t.occurred_on} · ${t.account} · ${money(t.amount_cents)} ${t.decided_by ? `· decided by ${t.decided_by}${t.decided_rule_id ? ` (rule #${t.decided_rule_id})` : ''}` : ''}</div>
       ${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<p>Hidden: ${t.ignored_reason}. <button @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/restore`)); this.open = null; this.load(); }}>Restore</button></p>` : html`
       <h2>Splits</h2>${rows.map((r: any, i: number) => html`<div class="row" style="margin-bottom:6px"><span class="grow">${catSelect(this.cats, r.categoryId, (id) => (r.categoryId = id), { includeRetired: true })}</span>
         <input style="width:7rem" .value=${(r.cents / 100).toFixed(2)} @change=${(e: any) => { r.cents = parseMoney(e.target.value); this.requestUpdate(); }} />${rows.length > 1 ? html`<button @click=${() => { rows.splice(i, 1); this.requestUpdate(); }}>✕</button>` : ''}</div>`)}

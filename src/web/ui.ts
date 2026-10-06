@@ -19,8 +19,16 @@ export const pageHead = (title: string, ...intro: string[]) => html`<div class="
 /** Table header with a hover explanation. */
 export const th = (label: string, tip: string, cls = '') => html`<th class=${cls} data-tip=${tip} tabindex="0">${label}</th>`;
 
+/** True when the click landed on the backdrop, not on the dialog's own padding. */
+export function clickedBackdrop(d: HTMLDialogElement, e: MouseEvent) {
+  if (e.target !== d) return false;
+  const r = d.getBoundingClientRect();
+  return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+}
+
 /* ---------- dialogs: native <dialog>, shown modally, so they always sit on top of the page ---------- */
-export function showDialog<T = undefined>(body: (close: (v?: T) => void) => TemplateResult, opts: { wide?: boolean } = {}): Promise<T | undefined> {
+/** `dismiss` (default true): a click outside closes it. Dialogs that ask for a decision pass false so a stray click never answers them (Esc still cancels). */
+export function showDialog<T = undefined>(body: (close: (v?: T) => void) => TemplateResult, opts: { wide?: boolean; dismiss?: boolean } = {}): Promise<T | undefined> {
   return new Promise((resolve) => {
     const d = document.createElement('dialog');
     if (opts.wide) d.classList.add('wide');
@@ -28,25 +36,25 @@ export function showDialog<T = undefined>(body: (close: (v?: T) => void) => Temp
     let done = false;
     const close = (v?: T) => { if (done) return; done = true; d.close(); resolve(v); };
     d.addEventListener('close', () => { if (!done) { done = true; resolve(undefined); } d.remove(); });
-    d.addEventListener('click', (e) => { if (e.target === d) close(undefined); }); // click on the backdrop
+    if (opts.dismiss !== false) d.addEventListener('click', (e) => { if (clickedBackdrop(d, e)) close(undefined); });
     render(body(close), d);
     d.showModal();
   });
 }
 export function confirmBox(o: { title: string; body: TemplateResult | string; confirm?: string; cancel?: string; danger?: boolean }): Promise<boolean> {
   return showDialog<boolean>((close) => html`<h3 class="title">${o.title}</h3><div>${o.body}</div>
-    <div class="actions"><button class="cancel" @click=${() => close(false)}>${o.cancel ?? 'Cancel'}</button><button class=${o.danger ? 'primary danger-solid confirm' : 'primary confirm'} autofocus @click=${() => close(true)}>${o.confirm ?? 'Yes'}</button></div>`).then((v) => v === true);
+    <div class="actions"><button class="cancel" @click=${() => close(false)}>${o.cancel ?? 'Cancel'}</button><button class=${o.danger ? 'primary danger-solid confirm' : 'primary confirm'} autofocus @click=${() => close(true)}>${o.confirm ?? 'Yes'}</button></div>`, { dismiss: false }).then((v) => v === true);
 }
 export function promptBox(o: { title: string; label?: string; value?: string; confirm?: string }): Promise<string | undefined> {
   return showDialog<string>((close) => {
     let v = o.value ?? '';
     return html`<h3 class="title">${o.title}</h3><label class="stack">${o.label ?? ''}<input .value=${v} @input=${(e: any) => (v = e.target.value)} @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && close(v)} /></label>
       <div class="actions"><button @click=${() => close(undefined)}>Cancel</button><button class="primary" @click=${() => close(v)}>${o.confirm ?? 'OK'}</button></div>`;
-  });
+  }, { dismiss: false });
 }
 
 /* ---------- searchable category dropdown ---------- */
-export interface PickCat { id: number; name: string; group_name?: string | null; status?: string; kind?: string }
+export interface PickCat { id: number; name: string; group_name?: string | null; status?: string; kind?: string; system?: number }
 
 /**
  * Type to filter, arrow keys + Enter or click to choose. Replaces every category <select> in the app.
@@ -66,7 +74,7 @@ export class CategorySelect extends LitElement {
   private get chosen() { return this.cats.find((c) => c.id === this.value) ?? null; }
   private options(): PickCat[] {
     const q = this.q.trim().toLowerCase(); const parts = q.split(/\s+/).filter(Boolean);
-    return this.cats.filter((c) => (c.status === undefined || c.status === 'active' || this.includeRetired) && (!parts.length || parts.every((p) => `${c.name} ${c.group_name ?? ''}`.toLowerCase().includes(p))))
+    return this.cats.filter((c) => !c.system && (c.status === undefined || c.status === 'active' || this.includeRetired) && (!parts.length || parts.every((p) => `${c.name} ${c.group_name ?? ''}`.toLowerCase().includes(p))))
       .sort((a, b) => (a.group_name ?? 'Other').localeCompare(b.group_name ?? 'Other') || a.name.localeCompare(b.name));
   }
   private choose(c: PickCat | null) {
@@ -93,7 +101,8 @@ export class CategorySelect extends LitElement {
   updated() {
     // The list lives in a fixed-position popup outside any clipping dialog/table container.
     if (this.open) {
-      if (!this.pop) { this.pop = document.createElement('div'); this.pop.className = 'cs-pop'; this.pop.setAttribute('role', 'listbox'); document.body.append(this.pop); }
+      // Inside a modal dialog the list must live in the dialog: only top-layer content can sit above a modal.
+      if (!this.pop) { this.pop = document.createElement('div'); this.pop.className = 'cs-pop'; this.pop.setAttribute('role', 'listbox'); (this.closest('dialog') ?? document.body).append(this.pop); }
       const opts = this.options(); let lastGroup = '';
       render(opts.length ? html`${opts.map((c, i) => { const g = c.group_name ?? 'Other'; const head = g !== lastGroup ? html`<div class="grp">${(lastGroup = g)}</div>` : nothing;
         return html`${head}<div class="opt ${i === this.idx ? 'active' : ''} ${c.status === 'retired' ? 'retired' : ''}" role="option" data-id=${c.id} @mousedown=${(e: Event) => { e.preventDefault(); this.choose(c); }} @mousemove=${() => { if (this.idx !== i) { this.idx = i; } }}>${c.name}${c.status === 'retired' ? ' (retired)' : ''}</div>`; })}` : html`<div class="none">No category matches “${this.q}”.</div>`, this.pop);

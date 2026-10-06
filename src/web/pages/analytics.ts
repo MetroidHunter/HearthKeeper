@@ -6,8 +6,8 @@ import { draw, theme, PALETTE } from '../charts.js';
 import { thisMonth, type Cat } from '../shared.js';
 import { pageHead, th } from '../ui.js';
 
-type Tab = 'bva' | 'time' | 'heat' | 'tree' | 'trend' | 'income' | 'merchants' | 'years';
-const TABS: [Tab, string][] = [['bva', 'Budget vs actual'], ['time', 'Spend over time'], ['heat', 'Heatmap'], ['tree', 'Treemap'], ['trend', 'Category trend'], ['income', 'Income vs spend'], ['merchants', 'Merchants'], ['years', 'Year pivot']];
+type Tab = 'bva' | 'time' | 'tree' | 'trend' | 'income' | 'merchants' | 'years';
+const TABS: [Tab, string][] = [['bva', 'Budget vs actual'], ['time', 'Spend over time'], ['tree', 'Treemap'], ['trend', 'Category trend'], ['income', 'Income vs spend'], ['merchants', 'Merchants'], ['years', 'Year pivot']];
 const $ = (n: number) => `$${Math.round(n / 100).toLocaleString('en-US')}`;
 const drillTo = (q: string) => { location.hash = `#/transactions?${q}`; }; // every chart drills down to the underlying transactions (design §14.2)
 
@@ -26,25 +26,17 @@ export class Analytics extends Page {
     const axis = { axisLabel: { color: t.muted }, axisLine: { lineStyle: { color: t.line } }, splitLine: { lineStyle: { color: t.line } } };
     await this.run(async () => {
       if (this.tab === 'bva') {
-        const rows = (await api.get(`/api/analytics/budget-vs-actual?month=${this.month}`)).slice(0, 25).reverse();
-        await draw(el, { tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: number) => money(v) }, grid: { left: 130, right: 20, top: 10, bottom: 20 }, legend: { top: 0, textStyle: { color: t.ink } },
+        const rows = (await api.get(`/api/analytics/budget-vs-actual?month=${this.month}`)).reverse(); // every category, each with room: ~40px a row
+        el.style.height = `${Math.max(360, rows.length * 40 + 90)}px`;
+        await draw(el, { tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: number) => money(v) }, grid: { left: 170, right: 24, top: 36, bottom: 24 }, legend: { top: 0, textStyle: { color: t.ink } },
           xAxis: { type: 'value', ...axis, axisLabel: { color: t.muted, formatter: (v: number) => $(v) } }, yAxis: { type: 'category', data: rows.map((r: any) => r.name), axisLabel: { color: t.ink } },
-          series: [{ name: 'Budget', type: 'bar', barWidth: 16, data: rows.map((r: any) => r.budget), itemStyle: { color: t.line }, z: 1 },
-            { name: 'Spent', type: 'bar', barGap: '-100%', barWidth: 8, z: 3, data: rows.map((r: any) => ({ value: r.spent, itemStyle: { color: r.spent > r.budget ? t.bad : t.brand } })) }] }, (p: any) => { const r = rows[p.dataIndex]; if (r) drillTo(`category=${r.id}&from=${this.month}-01&to=${this.month}-31`); });
+          series: [{ name: 'Budget', type: 'bar', barWidth: 24, data: rows.map((r: any) => r.budget), itemStyle: { color: t.line }, z: 1 },
+            { name: 'Spent', type: 'bar', barGap: '-100%', barWidth: 12, z: 3, data: rows.map((r: any) => ({ value: r.spent, itemStyle: { color: r.spent > r.budget ? t.bad : t.brand } })) }] }, (p: any) => { const r = rows[p.dataIndex]; if (r) drillTo(`category=${r.id}&from=${this.month}-01&to=${this.month}-31`); });
       } else if (this.tab === 'time') {
         const m = await api.get(`/api/analytics/monthly?by=group&from=${this.from()}`);
         await draw(el, { tooltip: { trigger: 'axis', valueFormatter: (v: number) => money(v) }, legend: { type: 'scroll', top: 0, textStyle: { color: t.ink } }, grid: { left: 60, right: 10, top: 40, bottom: 30 },
           xAxis: { type: 'category', data: m.months, ...axis }, yAxis: { type: 'value', ...axis, axisLabel: { color: t.muted, formatter: (v: number) => $(v) } },
           series: m.rows.map((r: any) => ({ name: r.key, type: 'bar', stack: 'spend', data: r.values })) });
-      } else if (this.tab === 'heat') {
-        const m = await api.get(`/api/analytics/monthly?from=${this.from()}`); const rows = m.rows.filter((r: any) => r.total > 0).slice(0, 30);
-        const data: number[][] = []; rows.forEach((r: any, y: number) => r.values.forEach((v: number, x: number) => data.push([x, y, v])));
-        const max = Math.max(1, ...data.map((d) => d[2]));
-        el.style.height = `${Math.max(340, rows.length * 22 + 80)}px`;
-        await draw(el, { tooltip: { formatter: (p: any) => `${rows[p.value[1]].key} · ${m.months[p.value[0]]}<br/>${money(p.value[2])}` }, grid: { left: 140, right: 20, top: 10, bottom: 60 },
-          xAxis: { type: 'category', data: m.months, splitArea: { show: true }, axisLabel: { color: t.muted } }, yAxis: { type: 'category', data: rows.map((r: any) => r.key), inverse: true, axisLabel: { color: t.ink } },
-          visualMap: { min: 0, max, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#f3efe6', '#e4b46a', '#c2563f'] }, textStyle: { color: t.muted }, formatter: (v: number) => $(v) },
-          series: [{ type: 'heatmap', data, label: { show: false } }] }, (p: any) => { const r = rows[p.value[1]]; if (r?.id) drillTo(`category=${r.id}&from=${m.months[p.value[0]]}-01&to=${m.months[p.value[0]]}-31`); });
       } else if (this.tab === 'tree') {
         const tm = await api.get(`/api/analytics/treemap?from=${this.from()}`);
         el.style.height = '420px';

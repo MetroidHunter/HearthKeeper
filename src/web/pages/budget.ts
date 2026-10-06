@@ -4,7 +4,7 @@ import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { pace } from '../shared.js';
 import { pageHead, th } from '../ui.js';
-import { draw } from '../charts.js';
+import { draw, theme } from '../charts.js';
 
 @customElement('hk-budget')
 export class Budget extends Page {
@@ -16,7 +16,7 @@ export class Budget extends Page {
     const el = this.querySelector('.chart') as HTMLElement; if (!el) return;
     const g = this.drill ? this.pie.groups.find((x: any) => x.name === this.drill) : null;
     const data = g ? g.categories.map((c: any) => ({ name: c.name, value: c.cents })) : this.pie.groups.map((x: any) => ({ name: x.name, value: x.cents }));
-    void draw(el, { tooltip: { formatter: (p: any) => `${p.name}: ${money(p.value)} (${p.percent}%)` }, series: [{ type: 'pie', radius: ['35%', '70%'], data, label: { formatter: '{b}\n{d}%' } }] },
+    void draw(el, { tooltip: { formatter: (p: any) => `${p.name}: ${money(p.value)} (${p.percent}%)` }, series: [{ type: 'pie', radius: ['35%', '70%'], data, label: { formatter: '{b}\n{d}%', color: theme().ink }, labelLine: { lineStyle: { color: theme().muted } } }] },
       (p: any) => { if (!this.drill) this.drill = p.name; });
   }
   async saveBudget(r: any, v: string, month: string) { await this.run(() => api.post(`/api/categories/${r.id}/budget`, { monthlyCents: parseMoney(v), effectiveMonth: month })); this.editing = null; this.load(); }
@@ -40,15 +40,12 @@ export class Budget extends Page {
       ${this.editing ? this.editDialog() : ''}`;
   }
   group(name: string, rows: any[]) {
-    const exp = rows.filter((r) => r.kind === 'expense');
-    const target = exp.reduce((a, r) => a + r.targetCents, 0), spent = exp.reduce((a, r) => a + r.spent[0], 0), cur = rows.reduce((a, r) => a + (r.currentCents ?? 0), 0);
-    return html`<section class="card flush group" data-group=${name}><div class="row" style="padding:16px 16px 8px"><h3 class="grow" style="font-size:19px">${name}</h3>
-        <span class="muted small">Target <b class="mono">${money(target)}</b></span><span class="muted small">Spent <b class="mono">${money(spent)}</b></span><span class="muted small">Left <b class="mono ${cur < 0 ? 'neg' : ''}">${money(cur)}</b></span></div>
-      <div style="overflow-x:auto"><table style="font-size:15px"><thead><tr>${th('Category', 'The envelope. Click a row for its history and transactions.')}${th('Target', 'Monthly amount planned for this envelope. Use the pencil to change it.', 'num')}${th('Current', 'What is in the envelope now: everything accrued so far, minus spending, plus or minus transfers.', 'num')}${th('Spent (this)', 'Spent this period (net of refunds). For income categories this shows what came in.', 'num')}${th('Spent (last)', 'Same, for the previous period.', 'num hide-sm')}${th('Pace', 'Spent this period against the monthly target. Red means over.', 'hide-sm')}</tr></thead>
+    return html`<section class="card flush group" data-group=${name}><div class="row" style="padding:16px 16px 8px"><h3 class="grow" style="font-size:19px">${name}</h3></div>
+      <div style="overflow-x:auto"><table style="font-size:16px"><thead><tr>${th('Category', 'The envelope. Click a row for its history and transactions.')}${th('Target', 'Monthly amount planned for this envelope. Use the pencil to change it.', 'num')}${th('Current', 'What is in the envelope now: everything accrued so far, minus spending, plus or minus transfers.', 'num')}${th('Spent (this)', 'Spent this period (net of refunds). For income categories this shows what came in.', 'num')}${th('Spent (last)', 'Same, for the previous period.', 'num hide-sm')}${th('Pace', 'Spent this period against the monthly target. Red means over.', 'hide-sm')}</tr></thead>
         <tbody>${rows.map((r) => html`<tr class="clickable" @click=${() => (location.hash = `#/categories/${r.id}`)}>
           <td style="padding:12px"><span class="row" style="gap:8px"><button class="link icon fav" title=${r.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${(e: Event) => { e.stopPropagation(); this.toggleFavorite(r); }}>${r.favorite ? '★' : '☆'}</button><b style="font-weight:600">${r.name}</b></span></td>
           <td class="num"><span class="row" style="justify-content:flex-end;gap:6px">${money(r.targetCents)}<button class="icon edit" title="Change the monthly amount" aria-label="Edit monthly amount" @click=${(e: Event) => { e.stopPropagation(); this.editing = r; }}>✎</button></span></td>
-          <td class="num ${r.currentCents < 0 ? 'neg' : ''}"><b>${money(r.currentCents)}</b></td>
+          <td class="num ${r.currentCents < 0 ? 'neg' : r.currentCents > 0 ? 'pos' : ''}" style="font-size:20px;font-weight:700">${money(r.currentCents)}</td>
           <td class="num">${money(r.kind === 'expense' ? r.spent[0] : r.gained[0])}</td><td class="num hide-sm muted">${money(r.kind === 'expense' ? r.spent[1] : r.gained[1])}</td>
           <td class="hide-sm" style="width:130px"><div class="bar ${r.spent[0] > r.targetCents ? 'over' : ''}"><i style="width:${pace(r.spent[0], r.targetCents)}%"></i></div></td></tr>`)}</tbody></table></div></section>`;
   }

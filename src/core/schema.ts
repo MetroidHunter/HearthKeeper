@@ -101,4 +101,7 @@ CREATE INDEX txn_account_date ON transactions(account_id, occurred_on);
 CREATE INDEX txn_note_state ON transactions(note_state);
 CREATE INDEX txn_merchant ON transactions(merchant_id);
 `,
+`
+ALTER TABLE categories ADD COLUMN system INTEGER NOT NULL DEFAULT 0;
+`,
 ];

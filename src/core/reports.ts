@@ -113,7 +113,7 @@ export function whyNeedsYou(t: any, reason: InboxReason, today = new Date().toIS
 export function inbox(db: DB, today = new Date().toISOString().slice(0, 10)) {
   const cols = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, a.name account,
     CASE WHEN t.kind='greenlight_reclass' THEN -COALESCE((SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id=t.id AND amount_cents>0),0) ELSE t.amount_cents END effective_cents,
-    (SELECT s.origin FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
+    (SELECT s.memo FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
   const base = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;
   const W = {
     needs_category: "t.kind NOT IN ('ignored','internal_transfer') AND (t.review_state='needs_category')",

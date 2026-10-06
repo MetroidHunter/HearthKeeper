@@ -5,7 +5,7 @@ let loading: Promise<typeof Echarts> | null = null;
 export function loadCharts(): Promise<typeof Echarts> {
   loading ??= (async () => {
     const [core, charts, comps, rend] = await Promise.all([import('echarts/core'), import('echarts/charts'), import('echarts/components'), import('echarts/renderers')]);
-    core.use([charts.BarChart, charts.LineChart, charts.PieChart, charts.TreemapChart, charts.HeatmapChart,
+    core.use([charts.BarChart, charts.LineChart, charts.PieChart, charts.TreemapChart,
       comps.GridComponent, comps.TooltipComponent, comps.LegendComponent, comps.VisualMapComponent, comps.DatasetComponent, rend.CanvasRenderer]);
     return core;
   })();
@@ -18,7 +18,7 @@ export const PALETTE = ['#2f7f6c', '#d98e2b', '#4a78b8', '#b8506b', '#7c62b3', '
 export function theme() {
   const css = getComputedStyle(document.documentElement);
   const v = (n: string, d: string) => css.getPropertyValue(n).trim() || d;
-  return { ink: v('--ink', '#1d2421'), muted: v('--muted', '#6b756f'), line: v('--line', '#e1ddd2'), brand: v('--brand', '#1f6f5c'), bad: v('--bad', '#b3261e') };
+  return { card: v('--card', '#ffffff'), ink: v('--ink', '#1d2421'), muted: v('--muted', '#6b756f'), line: v('--line', '#e1ddd2'), brand: v('--brand', '#1f6f5c'), bad: v('--bad', '#b3261e') };
 }
 
 const live = new WeakMap<HTMLElement, { chart: Echarts.ECharts; ro: ResizeObserver; redraw?: () => void }>();
@@ -29,7 +29,12 @@ export async function draw(el: HTMLElement, option: Echarts.EChartsCoreOption, o
   const e = await loadCharts();
   let h = live.get(el);
   if (!h) { const chart = e.init(el); const ro = new ResizeObserver(() => chart.resize()); ro.observe(el); h = { chart, ro }; live.set(el, h); }
-  const apply = () => { const t = theme(); h!.chart.setOption({ textStyle: { color: t.ink }, color: PALETTE, ...option }, true); };
+  const apply = () => {
+    const t = theme();
+    // Dark mode: tooltips, labels and legends must inherit the theme, not ECharts' light defaults.
+    const tooltip = { backgroundColor: t.card, borderColor: t.line, textStyle: { color: t.ink }, ...((option as any).tooltip ?? {}) };
+    h!.chart.setOption({ textStyle: { color: t.ink }, color: PALETTE, ...option, tooltip }, true);
+  };
   apply();
   if (h.redraw) redraws.delete(h.redraw);
   h.redraw = () => { if (el.isConnected) apply(); else redraws.delete(h!.redraw!); }; redraws.add(h.redraw);

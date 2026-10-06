@@ -1,6 +1,7 @@
 /** Usage: tsx src/seed/cli.ts <command> [...]
  *   init [--user "Name:email" ...]      create accounts + ingest tokens (prints secrets once)
  *   migrate --dir <exports> --asof YYYY-MM-DD [--oracle <dir>] [--merchants]   import sheet CSVs, then run parity if oracle files exist
+ *   grandfather [--force]                 make everything from the spreadsheet import valid as it stands (done automatically after migrate and on server start)
  *   seed-rules --guesser <IFTTT_guess.gs>   convert the old categorizer into rules
  *   backtest-rules                        compare the seeded rules with every categorized historical transaction
  *   demo                                  load fictional data to try the UI
@@ -49,6 +50,10 @@ if (cmd === 'init') {
     txnCount: f('oracle_txn_count.txt') ? Number(f('oracle_txn_count.txt')) : undefined, txnTotal: f('oracle_txn_total.txt')?.trim() });
   console.log(formatParity(parity));
   process.exitCode = parity.passed ? 0 : 1;
+  if (parity.passed) { const { grandfatherSeed } = await import('../migration/grandfather.js'); console.log('seed history:', JSON.stringify(grandfatherSeed(db))); } // after parity: parity reads the unresolved rows
+} else if (cmd === 'grandfather') {
+  const { grandfatherSeed } = await import('../migration/grandfather.js');
+  console.log(JSON.stringify(grandfatherSeed(db, { force: rest.includes('--force') })));
 } else if (cmd === 'seed-rules') {
   console.log(JSON.stringify(seedFromGuesser(db, read(flag('guesser')!)), null, 2));
 } else if (cmd === 'backtest-rules') {

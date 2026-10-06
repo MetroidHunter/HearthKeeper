@@ -32,6 +32,8 @@ export function createTransaction(db: DB, t: NewTxn): number {
 export function setSplits(db: DB, txnId: number, splits: SplitIn[], decidedBy: 'rule' | 'user' | 'merchant_default' = 'user', ruleId?: number): void {
   const t = db.prepare('SELECT kind, amount_cents, occurred_on FROM transactions WHERE id=?').get(txnId) as { kind: Kind; amount_cents: number; occurred_on: string };
   if (decidedBy === 'user') assertOpen(db, t.occurred_on); // rules and ingest may still categorize late arrivals; people must reopen first
+  const reserved = splits.map((x) => x.categoryId).filter((id): id is number => id !== null && !!(db.prepare('SELECT system FROM categories WHERE id=?').get(id) as { system: number } | undefined)?.system);
+  for (const id of reserved) if (!db.prepare('SELECT 1 FROM transaction_splits WHERE transaction_id=? AND category_id=?').get(txnId, id)) throw new Error('That category is reserved for history imported before the seed and cannot be chosen');
   const sum = splits.reduce((a, s) => a + s.amountCents, 0);
   if (t.kind === 'greenlight_reclass') { if (sum !== 0) throw new Error('reclass splits must sum to 0'); }
   else if (t.kind === 'internal_transfer' || t.kind === 'ignored') { if (splits.length) throw new Error(`${t.kind} transactions carry no splits`); }

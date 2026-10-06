@@ -14,6 +14,7 @@ export interface Env {
   ignore?: (t: TxnLike) => Promise<void>;
 }
 
+export const NOT_A_BUDGET_ITEM = 'Use this when the transaction is not household spending or income: a transfer between your own accounts, a reimbursed or duplicate charge, a payment that belongs to someone else. It is hidden from budgets, charts and the inbox, but kept in your history. Restore it any time from Transactions with Show hidden.';
 const whyLabel: Record<string, string> = { rule: 'rule matches', merchant: 'you used it for this merchant', similar: 'similar merchant', frequent: 'often used' };
 
 /** The whole line as the bank sent it, plus everything we know, so a decision never has to be guessed. */
@@ -45,7 +46,7 @@ export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: n
     </div>${row && row.targetCents > 0 && row.kind === 'expense' ? html`<div class="bar ${row.spent[0] + spendDelta > row.targetCents ? 'over' : ''}" style="margin-top:10px"><i style="width:${pace(row.spent[0] + spendDelta, row.targetCents)}%"></i></div>` : nothing}
     ${after !== null && after < 0 && (before ?? 0) >= 0 ? html`<p class="neg" style="margin:10px 0 0">This pushes ${cat?.name} ${money(-after)} into overspending.</p>` : nothing}</div>
     <label class="row" style="margin-top:12px"><input type="checkbox" id="remember" .checked=${remember} @change=${(e: any) => (remember = e.target.checked)} /> <span>Remember this: suggest ${cat?.name} next time${opts.groupName ? ` for ${opts.groupName}` : ' for this merchant'}</span></label>
-    <div class="actions"><button class="cancel" @click=${() => close(false)}>Cancel</button><button class="primary confirm" autofocus @click=${() => close(true)}>Yes, categorize</button></div>`);
+    <div class="actions"><button class="cancel" @click=${() => close(false)}>Cancel</button><button class="primary confirm" autofocus @click=${() => close(true)}>Yes, categorize</button></div>`, { dismiss: false });
   return { ok: ok === true, remember };
 }
 
@@ -67,5 +68,5 @@ export function txnCard(env: Env, t: TxnLike & { reason?: string }, hooks: { rel
       return html`<button class="option ${i === 0 ? 'best' : ''}" @click=${() => decide(p.id, i)}><span class="name">${p.name}</span>${i === 0 ? html`<span class="tag">Best match</span>` : nothing}<span class="muted small">${whyLabel[p.why] ?? p.why}</span>
         <span class="meta">${r?.currentCents !== undefined && r?.currentCents !== null ? `${money(r.currentCents)} balance` : ''}</span></button>`; }) : html`<div class="muted small">No suggestion: nothing matches yet. Search for the right category below.</div>`}</div>
     <div class="row" style="margin-top:10px"><span class="muted small">Something else:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id, null); }, { placeholder: 'Search all categories…' })}</div>
-    <div class="row" style="margin-top:12px"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button @click=${async () => { await env.ignore!(t); hooks.reload(); }}>Not a budget item</button>` : nothing}</div></div>`;
+    <div class="row" style="margin-top:12px"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${async () => { await env.ignore!(t); hooks.reload(); }}>Not a budget item</button>` : nothing}</div></div>`;
 }

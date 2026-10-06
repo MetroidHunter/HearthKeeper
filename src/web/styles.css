@@ -99,14 +99,18 @@ input[type=checkbox], input[type=radio] { padding:0; accent-color:var(--brand); 
 table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:var(--space-2) var(--space-3); border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--muted); font-weight:600; font-size:13px; }
 td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
 tbody tr.clickable { cursor:pointer; } tbody tr.clickable:hover { background:var(--hover); } tbody tr.clickable:active { background:var(--press); }
-th[data-tip] { cursor:help; position:relative; text-decoration:underline dotted var(--muted); text-underline-offset:3px; }
-th[data-tip]:hover::after, th[data-tip]:focus::after { content:attr(data-tip); position:absolute; top:calc(100% + 2px); left:0; z-index:15; width:max-content; max-width:260px; white-space:normal; font-weight:400; font-size:12.5px; line-height:1.35; text-transform:none; letter-spacing:0; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); padding:var(--space-2) var(--space-3); box-shadow:var(--shadow); text-decoration:none; }
+[data-tip] { position:relative; }
+th[data-tip] { cursor:help; text-decoration:underline dotted var(--muted); text-underline-offset:3px; }
+[data-tip]:hover::after, [data-tip]:focus-visible::after { content:attr(data-tip); position:absolute; top:calc(100% + 2px); left:0; z-index:15; width:max-content; max-width:260px; white-space:normal; font-weight:400; font-size:12.5px; line-height:1.35; text-transform:none; letter-spacing:0; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); padding:var(--space-2) var(--space-3); box-shadow:var(--shadow); text-decoration:none; }
 th.num[data-tip]:hover::after, th.num[data-tip]:focus::after { left:auto; right:0; }
+[data-tip]::after { pointer-events:none; } /* the hint disappears the moment the pointer leaves the item, never stays for its own sake */
+button[data-tip]:hover::after { white-space:normal; width:280px; text-align:left; }
 .pager { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; }
 
 /* ---- dialogs: always centered above the page, modal or not ----------------------------------------------------------------------- */
 dialog { border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--ink); width:min(680px,94vw); max-height:90vh; overflow:auto; padding:var(--space-5); box-shadow:var(--shadow); }
 dialog::backdrop { background:#0007; }
+dialog:modal { margin:auto; } /* beats the page-stack margin reset, which would otherwise pin dialogs inside a page to the top-left */
 dialog[open]:not(:modal) { position:fixed; inset:0; margin:auto; z-index:40; height:fit-content; box-shadow:0 0 0 100vmax #0007, var(--shadow); }
 dialog h2, dialog h3.title { margin:0 0 var(--space-3); color:var(--ink); text-transform:none; letter-spacing:0; font-size:18px; }
 dialog.wide { width:min(980px,96vw); }

@@ -103,6 +103,7 @@ describe('Transactions', () => {
     expect(dlg.matches(':modal')).to.equal(true);
     const r = dlg.getBoundingClientRect();
     expect(r.top).to.be.at.least(0); expect(r.bottom).to.be.at.most(window.innerHeight + 1);
+    expect(Math.abs((r.left + r.right) / 2 - window.innerWidth / 2)).to.be.below(3); // centered, not pinned to a corner
     const mid = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(40, r.height / 2));
     expect(dlg.contains(mid)).to.equal(true); // nothing from the page is above it
     byText('button', /^Close$/, dlg).click();

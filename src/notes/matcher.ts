@@ -96,7 +96,7 @@ export const WINDOWS: Record<WrapperSource, { before: number; after: number }> =
 
 /** Mark wrapper-source charges as awaiting a note (only the three wrapper sources require one by default). */
 export function markWrapperNotes(db: DB): number {
-  const rows = db.prepare("SELECT id, descriptor_raw FROM transactions WHERE note_state='not_needed' AND status!='void' AND kind IN ('spending','income') AND amount_cents<0").all() as any[];
+  const rows = db.prepare("SELECT id, descriptor_raw FROM transactions WHERE note_state='not_needed' AND status!='void' AND kind IN ('spending','income') AND amount_cents<0 AND COALESCE(note_source,'')!='seed'").all() as any[];
   let n = 0;
   for (const r of rows) if (wrapperSourceOf(r.descriptor_raw)) { db.prepare("UPDATE transactions SET note_state='awaiting_note' WHERE id=?").run(r.id); n++; }
   return n;

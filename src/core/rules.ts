@@ -80,6 +80,7 @@ export function backtest(db: DB, rule: Pick<Rule, 'match'>): Backtest {
 }
 
 export function addRule(db: DB, r: { priority?: number; match: RuleMatch; action: RuleAction; mode?: Rule['mode']; origin?: string; notes?: string }): number {
+  if (r.action.type === 'categorize' && (db.prepare('SELECT system FROM categories WHERE name=? COLLATE NOCASE').get(r.action.category) as { system: number } | undefined)?.system) throw new Error('That category is reserved for imported history and cannot be used by a rule');
   return Number(db.prepare('INSERT INTO rules(priority, match_json, action_json, mode, origin, notes) VALUES (?,?,?,?,?,?)')
     .run(r.priority ?? 100, JSON.stringify(r.match), JSON.stringify(r.action), r.mode ?? 'suggest', r.origin ?? 'user', r.notes ?? null).lastInsertRowid);
 }

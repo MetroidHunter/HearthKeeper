@@ -68,7 +68,7 @@ export class Home extends Page {
     await showDialog<boolean>((close) => html`<h3 class="title">Add a transaction</h3>
       <div class="stack"><div class="row"><input class="grow" placeholder="What was it?" @input=${(e: any) => (desc = e.target.value)} /><input style="width:7rem" inputmode="decimal" placeholder="12.50" @input=${(e: any) => (cents = -Math.round(parseFloat(e.target.value || '0') * 100))} /></div>
       <div class="row">${catSelect(this.cats, null, (id) => (cat = id), { placeholder: 'Category (type to search)' })}<select @change=${(e: any) => (account = Number(e.target.value))}>${this.accounts.map((a: any) => html`<option value=${a.id}>${a.name}</option>`)}</select></div></div>
-      <div class="actions"><button @click=${() => close(false)}>Cancel</button><button class="primary save" @click=${async () => { await this.run(() => api.post('/api/transactions', { accountId: account, descriptor: desc || 'Manual entry', amountCents: cents, categoryId: cat || undefined })); close(true); }}>Save</button></div>`);
+      <div class="actions"><button @click=${() => close(false)}>Cancel</button><button class="primary save" @click=${async () => { await this.run(() => api.post('/api/transactions', { accountId: account, descriptor: desc || 'Manual entry', amountCents: cents, categoryId: cat || undefined })); close(true); }}>Save</button></div>`, { dismiss: false });
     this.load();
   }
 }

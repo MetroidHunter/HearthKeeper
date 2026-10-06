@@ -10,7 +10,7 @@ describe('Analytics (chart catalog)', () => {
   it('every tab draws a real chart from live data', async () => {
     await mount('/analytics');
     await waitFor(() => $('.chart canvas'), 'first chart (lazy ECharts load)');
-    for (const t of ['Spend over time', 'Heatmap', 'Treemap', 'Category trend', 'Income vs spend', 'Merchants']) { await tab(t); expect($('.chart canvas').width).to.be.greaterThan(100); }
+    for (const t of ['Spend over time', 'Treemap', 'Category trend', 'Income vs spend', 'Merchants']) { await tab(t); expect($('.chart canvas').width).to.be.greaterThan(100); }
   });
 
   it('the year pivot is a table that matches the API', async () => {
@@ -26,7 +26,7 @@ describe('Analytics (chart catalog)', () => {
     const canvas = await waitFor(() => $('.chart canvas'), 'budget-vs-actual chart');
     const echarts = await import('echarts/core');
     const chart = echarts.getInstanceByDom($('.chart'));
-    const rows = (await api('/api/analytics/budget-vs-actual')).slice(0, 25).reverse();
+    const rows = (await api('/api/analytics/budget-vs-actual')).reverse();
     const idx = rows.length - 1; // the biggest budget is drawn at the top
     const [px, py] = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [rows[idx].budget / 2, rows[idx].name]);
     const r = canvas.getBoundingClientRect();

@@ -5,6 +5,8 @@
 import { openDb, type DB } from '../src/core/db.js';
 import { buildApp } from '../src/server/app.js';
 import { seedDemo } from '../src/seed/demo.js';
+import { createTransaction } from '../src/core/transactions.js';
+import { grandfatherSeed, SEED_LABEL } from '../src/migration/grandfather.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 
@@ -24,6 +26,16 @@ const verifyIdToken = async (t: string) => (t === 'good-token' ? 'me@example.com
 const app = buildApp(db, { auth, verifyIdToken });
 app.post('/__e2e/auth-mode', async (req) => { auth.mode = (req.body as { mode: 'dev' | 'google' }).mode; return { ok: true, mode: auth.mode }; });
 app.post('/__e2e/reset', async () => { auth.mode = 'dev'; reset(db); return { ok: true }; });
+// an imported-from-the-sheet style row with no category, then the same grandfathering the real server runs at startup
+app.post('/__e2e/seed-reserved', async () => {
+  const acct = (db.prepare('SELECT id FROM accounts ORDER BY id LIMIT 1').get() as { id: number }).id;
+  const id = createTransaction(db, { accountId: acct, occurredOn: '2025-03-04', amountCents: -1234, descriptor: 'RESERVED IMPORT ROW' });
+  db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(id);
+  db.prepare("INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,memo,origin) VALUES (?,NULL,-1234,'legacy:NEEDS CATEGORY','legacy')").run(id);
+  db.prepare("DELETE FROM settings WHERE key='seed_grandfathered'").run();
+  grandfatherSeed(db);
+  return { categoryId: (db.prepare('SELECT id FROM categories WHERE name=?').get(SEED_LABEL) as { id: number }).id };
+});
 const port = Number(process.env.E2E_API_PORT ?? 8765);
 await app.listen({ port, host: '127.0.0.1' });
 console.log(`E2E_READY ${port}`);
