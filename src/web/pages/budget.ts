@@ -1,8 +1,9 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { pace } from '../shared.js';
+import { pageHead, th } from '../ui.js';
 import { draw } from '../charts.js';
 
 @customElement('hk-budget')
@@ -19,25 +20,37 @@ export class Budget extends Page {
       (p: any) => { if (!this.drill) this.drill = p.name; });
   }
   async saveBudget(r: any, v: string, month: string) { await this.run(() => api.post(`/api/categories/${r.id}/budget`, { monthlyCents: parseMoney(v), effectiveMonth: month })); this.editing = null; this.load(); }
+  async toggleFavorite(r: any) { await this.run(() => (r.favorite ? api.del(`/api/favorites/${r.id}`) : api.post('/api/favorites', { categoryId: r.id }))); this.load(); }
   render() {
     const d = this.data; if (!d) return html`<p class="muted">${this.err || 'Loading…'}</p>`;
     const h = d.header; const groups = new Map<string, any[]>();
     for (const r of d.rows) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
-    return html`<h1>Budget</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
-      <div class="card row"><div class="grow"><div class="muted">Live plan</div><b>${h.livePlan ?? 'none'}</b></div>
-        <div><div class="muted">Income</div><b>${money(h.incomeCents)}</b></div><div><div class="muted">Allocated</div><b>${money(h.allocatedCents)}</b></div>
-        <div><div class="muted">Unallocated</div><b class=${h.unallocatedCents < 0 ? 'neg' : ''}>${money(h.unallocatedCents)}</b></div></div>
-      <div class="tabs"><button class=${this.view === 'table' ? 'primary' : ''} @click=${() => (this.view = 'table')}>Table</button><button class=${this.view === 'pie' ? 'primary' : ''} @click=${() => { this.view = 'pie'; this.drill = null; }}>Pie</button>
+    const unc = d.uncategorized;
+    return html`${pageHead('Budget', 'Every envelope, grouped, with what you planned for it each month, what is left in it, and how this month is going. Money you do not spend stays in the envelope and rolls forward.', 'Click a category to see its history and transactions. Use the pencil to change a monthly amount; the old value is kept in its timeline. ☆ pins a category to Home.')}
+      ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
+      <div class="grid3">
+        <div class="stat"><span class="label">Live plan</span><span class="value" style="font-size:20px">${h.livePlan ?? 'none'}</span></div>
+        <div class="stat"><span class="label">Income per month</span><span class="value">${money(h.incomeCents)}</span></div>
+        <div class="stat"><span class="label">Allocated</span><span class="value">${money(h.allocatedCents)}</span></div>
+        <div class="stat"><span class="label">Unallocated</span><span class="value ${h.unallocatedCents < 0 ? 'neg' : ''}">${money(h.unallocatedCents)}</span><span class="sub">income minus allocated</span></div></div>
+      ${unc && unc.count ? html`<a class="stat" href="#/backlog"><span class="label">Needs category</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions have no category yet, so they are not in any envelope below. Categorize them in the Backlog and each amount moves into its category.</span></a>` : nothing}
+      <div class="tabs"><button aria-pressed=${this.view === 'table'} @click=${() => (this.view = 'table')}>Groups</button><button aria-pressed=${this.view === 'pie'} @click=${() => { this.view = 'pie'; this.drill = null; }}>Pie</button>
         ${this.view === 'pie' ? html`<button @click=${async () => { this.pieMode = this.pieMode === 'allocated' ? 'spent' : 'allocated'; this.drill = null; this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }}>Share of ${this.pieMode} ↔</button>${this.drill ? html`<button @click=${() => (this.drill = null)}>← all groups</button>` : ''}` : ''}</div>
-      ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div></div>` : html`<div class="card" style="overflow-x:auto"><table>
-        <thead><tr><th>Category</th><th class="num">Target</th><th class="num">Current</th><th class="num">Spent (this)</th><th class="num hide-sm">Spent (last)</th><th class="hide-sm">Pace</th></tr></thead>
-        ${[...groups].map(([g, rows]) => html`<tbody><tr><th colspan="6">${g}</th></tr>${rows.map((r) => html`<tr>
-          <td><a href="#/categories/${r.id}">${r.name}</a></td>
-          <td class="num"><a href="#" @click=${(e: Event) => { e.preventDefault(); this.editing = r; }}>${money(r.targetCents)}</a></td>
-          <td class="num ${r.currentCents < 0 ? 'neg' : ''}">${money(r.currentCents)}</td>
-          <td class="num">${money(r.kind === 'expense' ? r.spent[0] : r.gained[0])}</td><td class="num hide-sm">${money(r.kind === 'expense' ? r.spent[1] : r.gained[1])}</td>
-          <td class="hide-sm" style="width:120px"><div class="bar ${r.spent[0] > r.targetCents ? 'over' : ''}"><i style="width:${pace(r.spent[0], r.targetCents)}%"></i></div></td></tr>`)}</tbody>`)}</table></div>`}
+      ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div></div>` : [...groups].map(([g, rows]) => this.group(g, rows))}
       ${this.editing ? this.editDialog() : ''}`;
+  }
+  group(name: string, rows: any[]) {
+    const exp = rows.filter((r) => r.kind === 'expense');
+    const target = exp.reduce((a, r) => a + r.targetCents, 0), spent = exp.reduce((a, r) => a + r.spent[0], 0), cur = rows.reduce((a, r) => a + (r.currentCents ?? 0), 0);
+    return html`<section class="card flush group" data-group=${name}><div class="row" style="padding:16px 16px 8px"><h3 class="grow" style="font-size:19px">${name}</h3>
+        <span class="muted small">Target <b class="mono">${money(target)}</b></span><span class="muted small">Spent <b class="mono">${money(spent)}</b></span><span class="muted small">Left <b class="mono ${cur < 0 ? 'neg' : ''}">${money(cur)}</b></span></div>
+      <div style="overflow-x:auto"><table style="font-size:15px"><thead><tr>${th('Category', 'The envelope. Click a row for its history and transactions.')}${th('Target', 'Monthly amount planned for this envelope. Use the pencil to change it.', 'num')}${th('Current', 'What is in the envelope now: everything accrued so far, minus spending, plus or minus transfers.', 'num')}${th('Spent (this)', 'Spent this period (net of refunds). For income categories this shows what came in.', 'num')}${th('Spent (last)', 'Same, for the previous period.', 'num hide-sm')}${th('Pace', 'Spent this period against the monthly target. Red means over.', 'hide-sm')}</tr></thead>
+        <tbody>${rows.map((r) => html`<tr class="clickable" @click=${() => (location.hash = `#/categories/${r.id}`)}>
+          <td style="padding:12px"><span class="row" style="gap:8px"><button class="link icon fav" title=${r.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${(e: Event) => { e.stopPropagation(); this.toggleFavorite(r); }}>${r.favorite ? '★' : '☆'}</button><b style="font-weight:600">${r.name}</b></span></td>
+          <td class="num"><span class="row" style="justify-content:flex-end;gap:6px">${money(r.targetCents)}<button class="icon edit" title="Change the monthly amount" aria-label="Edit monthly amount" @click=${(e: Event) => { e.stopPropagation(); this.editing = r; }}>✎</button></span></td>
+          <td class="num ${r.currentCents < 0 ? 'neg' : ''}"><b>${money(r.currentCents)}</b></td>
+          <td class="num">${money(r.kind === 'expense' ? r.spent[0] : r.gained[0])}</td><td class="num hide-sm muted">${money(r.kind === 'expense' ? r.spent[1] : r.gained[1])}</td>
+          <td class="hide-sm" style="width:130px"><div class="bar ${r.spent[0] > r.targetCents ? 'over' : ''}"><i style="width:${pace(r.spent[0], r.targetCents)}%"></i></div></td></tr>`)}</tbody></table></div></section>`;
   }
   editDialog() {
     const r = this.editing; let v = (r.targetCents / 100).toFixed(2), m = new Date().toISOString().slice(0, 7);

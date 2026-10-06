@@ -1,7 +1,7 @@
 // Service worker (design §15.2): app shell + last Home snapshot for instant open and read-only offline; web push.
 // Security: auth endpoints are never cached; only successful API responses are kept and they are wiped on logout;
 // the shell is network-first so a deploy reaches installed phones; the cache name is versioned.
-const VERSION = 'hk-v2';
+const VERSION = 'hk-v3';
 const SHELL = ['/', '/index.html'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });

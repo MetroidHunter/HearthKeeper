@@ -1,4 +1,4 @@
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, api } from './helpers.js';
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, pickCat, api } from './helpers.js';
 
 describe('Greenlight', () => {
   let trap;
@@ -26,11 +26,11 @@ describe('Greenlight', () => {
     await waitFor(() => $$('.badge').some((b) => /pending/.test(text(b))), 'pending request');
     expect((await api('/api/transactions?hidden=1&limit=500')).length).to.equal(before); // no charge yet
     const approve = byText('button', /^Approved$/);
-    const catSel = $$('select').find((s) => /Which category pays/.test(text(s)));
+    const catSel = $$('hk-category-select').find((p) => $('input', p).placeholder === 'Which category pays?');
     expect(catSel).to.exist;
     approve.click(); // no category chosen: server refuses, the page shows the error
     await waitFor(() => /category/i.test(text($('.err') ?? document.body)), 'error about category');
-    choose(catSel, 'Eating Out');
+    await pickCat(catSel, 'Eating Out');
     byText('button', /^Approved$/).click();
     await waitFor(async () => (await api('/api/transactions?hidden=1&limit=500')).length === before + 1, 'charge posted on approval');
     const fam = (await api('/api/budget')).rows.find((r) => r.name === 'Family Support');

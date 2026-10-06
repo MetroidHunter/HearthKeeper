@@ -49,3 +49,19 @@ export function choose(select, optionText) {
   if (!opt) throw new Error(`no option "${optionText}" in [${[...select.options].map(text).join(', ')}]`);
   select.value = opt.value; select.dispatchEvent(new Event('change', { bubbles: true }));
 }
+
+/** Searchable category picker: type to filter, click the matching option (the list lives in a popup on <body>). */
+export async function pickCat(picker, name) {
+  const input = $('input', picker);
+  input.focus();
+  setInput(input, name);
+  const opt = await waitFor(() => $$('.cs-pop .opt').find((o) => text(o).toLowerCase().startsWith(name.toLowerCase())) ?? $$('.cs-pop .opt').find((o) => text(o).toLowerCase().includes(name.toLowerCase())), `category option "${name}"`);
+  opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+  await sleep(30);
+}
+/** Click the primary button of the open dialog (confirm / save). */
+export async function confirmDialog(label = /Yes|Save|Retire|Unretire|Merge|Categorize/) {
+  const dlg = await waitFor(() => $$('dialog').find((d) => d.open && $$('button.primary', d).some((b) => label.test(text(b)))), 'an open dialog');
+  $$('button.primary', dlg).find((b) => label.test(text(b))).click();
+  await sleep(30);
+}

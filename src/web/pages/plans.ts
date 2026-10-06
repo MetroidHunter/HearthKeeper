@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { thisMonth } from '../shared.js';
+import { pageHead, th } from '../ui.js';
 
 @customElement('hk-plans')
 export class Plans extends Page {
@@ -16,7 +17,7 @@ export class Plans extends Page {
   async go() { await this.run(async () => { await api.post(`/api/plans/${this.cur.plan.id}/make-live`, { effectiveMonth: this.month, confirmRestate: this.confirmText }); this.diff = null; await this.load(); }); }
   render() {
     const c = this.cur;
-    return html`<h1>Plans</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+    return html`${pageHead('Plans', 'A plan is a complete monthly budget you can draft safely and then make live. Changing a monthly amount for one category is done on the Budget page; plans are for changing many at once.', 'Before a plan goes live you see exactly which categories change and by how much. Going live starts a new budget version from the month you choose; going live for a past month restates history and asks you to confirm.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="row" style="margin-bottom:10px"><button class="primary" @click=${() => this.create('live')}>＋ New from live</button><button @click=${() => this.create('blank')}>＋ Blank</button></div>
       <div class="grid2"><div>${this.plans.map((p) => html`<div class="card row" style="cursor:pointer" @click=${() => this.open(p.id)}><div class="grow"><b>${p.name}</b> <span class="badge ${p.status === 'live' ? '' : 'warn'}">${p.status}</span>
         <div class="muted">${money(p.allocatedCents)} of ${money(p.incomeCents)} · unallocated <span class=${p.unallocatedCents < 0 ? 'neg' : ''}>${money(p.unallocatedCents)}</span></div></div>
@@ -36,7 +37,7 @@ export class Plans extends Page {
       ${d.staleBase ? html`<p class="badge warn">Live changed after this draft was created; diff is against current live.</p>` : ''}
       <p>Income ${d.incomeOld === null ? '—' : money(d.incomeOld)} → <b>${money(d.incomeNew)}</b>. Allocated ${money(d.allocatedOld)} → ${money(d.allocatedNew)} (unallocated ${money(d.unallocatedNew)}). Effective <b>${d.effectiveMonth}</b>.</p>
       <p><b>${d.historyEntries}</b> history ${d.historyEntries === 1 ? 'entry' : 'entries'} will be created.</p>
-      <table><thead><tr><th>Category</th><th class="num">Old</th><th class="num">New</th><th class="num">Δ</th>${d.retroactive ? html`<th class="num">Balance Δ</th>` : ''}</tr></thead><tbody>
+      <table><thead><tr>${th('Category', 'A category whose monthly amount changes.')}${th('Old', 'Monthly amount before this plan.', 'num')}${th('New', 'Monthly amount if you go live.', 'num')}${th('Δ', 'New minus old.', 'num')}${d.retroactive ? th('Balance Δ', 'How much this category\'s current balance changes because past months are restated.', 'num') : ''}</tr></thead><tbody>
         ${d.rows.map((r: any) => html`<tr><td>${r.name}</td><td class="num">${money(r.oldCents)}</td><td class="num">${money(r.newCents)}</td><td class="num">${money(r.deltaCents, { sign: true })}</td>${d.retroactive ? html`<td class="num">${money(r.restatedBalanceDeltaCents, { sign: true })}</td>` : ''}</tr>`)}</tbody></table>
       ${d.retroactive ? html`<p class="err"><b>This restates history.</b> Balances change as shown. Type RESTATE to confirm.</p><input .value=${this.confirmText} @input=${(e: any) => (this.confirmText = e.target.value)} />` : ''}
       <div class="row" style="margin-top:12px"><button @click=${() => (this.diff = null)}>Cancel</button><button class="primary" ?disabled=${d.retroactive && this.confirmText !== 'RESTATE'} @click=${() => this.go()}>Confirm</button></div></dialog>`;

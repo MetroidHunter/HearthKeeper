@@ -2,6 +2,7 @@ import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api } from '../api.js';
+import { pageHead, th } from '../ui.js';
 
 interface FileItem { name: string; text: string }
 
@@ -42,7 +43,7 @@ export class Imports extends Page {
     return html`<label class="muted">${label} <select @change=${(e: any) => { const v = e.target.value; m[key] = v === '' ? undefined : m.hasHeader ? v : Number(v); }}><option value="">—</option>${hdr.map((h, i) => html`<option value=${m.hasHeader ? h.trim() : i} ?selected=${m[key] === (m.hasHeader ? h.trim() : i)}>${m.hasHeader ? h.trim() : `col ${i + 1}`}</option>`)}</select></label>`;
   }
   render() {
-    return html`<h1>Imports</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+    return html`${pageHead('Imports', 'Bring in bank transactions from CSV files, and notes from Amazon, Venmo and PayPal exports.', 'The first time a file layout shows up you tell it which column is the date, amount and description; that choice is remembered. Duplicates are skipped, pending charges are matched to the posted ones when they arrive, and transfers between your own accounts are detected and hidden. Nothing is changed until you confirm the preview.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="card"><b>Coverage</b>${this.coverage.map((c) => html`<div class="row"><span class="grow">${c.institution}</span><span class="muted">last txn ${c.last_txn ?? 'never'} · last upload ${c.last_upload ?? 'never'}</span>${c.stale ? html`<span class="badge bad">stale</span>` : html`<span class="badge">ok</span>`}</div>`)}</div>
       <div class="tabs"><button class=${this.kind === 'bank' ? 'primary' : ''} @click=${() => { this.kind = 'bank'; this.preview = null; }}>Bank / card CSV</button><button class=${this.kind === 'notes' ? 'primary' : ''} @click=${() => { this.kind = 'notes'; this.preview = null; }}>Amazon / Venmo / PayPal notes CSV</button></div>
       <div class="card" style="border-style:dashed;text-align:center;padding:28px ${this.drag ? ';background:var(--chip)' : ''}" @dragover=${(e: DragEvent) => { e.preventDefault(); this.drag = true; }} @dragleave=${() => (this.drag = false)} @drop=${(e: DragEvent) => { e.preventDefault(); this.drag = false; this.take(e.dataTransfer?.files ?? null); }}>

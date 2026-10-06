@@ -21,16 +21,20 @@ export function theme() {
   return { ink: v('--ink', '#1d2421'), muted: v('--muted', '#6b756f'), line: v('--line', '#e1ddd2'), brand: v('--brand', '#1f6f5c'), bad: v('--bad', '#b3261e') };
 }
 
-const live = new WeakMap<HTMLElement, { chart: Echarts.ECharts; ro: ResizeObserver }>();
+const live = new WeakMap<HTMLElement, { chart: Echarts.ECharts; ro: ResizeObserver; redraw?: () => void }>();
+const redraws = new Set<() => void>(); // charts redraw with the new colors when the theme changes
+addEventListener('hk-theme', () => redraws.forEach((r) => r()));
 /** Draw (or redraw) an option into an element; handles resize and disposal. Returns the chart so callers can attach click handlers. */
 export async function draw(el: HTMLElement, option: Echarts.EChartsCoreOption, onClick?: (p: any) => void) {
   const e = await loadCharts();
   let h = live.get(el);
   if (!h) { const chart = e.init(el); const ro = new ResizeObserver(() => chart.resize()); ro.observe(el); h = { chart, ro }; live.set(el, h); }
-  const t = theme();
-  h.chart.setOption({ textStyle: { color: t.ink }, color: PALETTE, ...option }, true);
+  const apply = () => { const t = theme(); h!.chart.setOption({ textStyle: { color: t.ink }, color: PALETTE, ...option }, true); };
+  apply();
+  if (h.redraw) redraws.delete(h.redraw);
+  h.redraw = () => { if (el.isConnected) apply(); else redraws.delete(h!.redraw!); }; redraws.add(h.redraw);
   h.chart.off('click'); if (onClick) h.chart.on('click', onClick);
   el.dataset.drawn = '1';
   return h.chart;
 }
-export function dispose(el: HTMLElement) { const h = live.get(el); if (h) { h.ro.disconnect(); h.chart.dispose(); live.delete(el); } }
+export function dispose(el: HTMLElement) { const h = live.get(el); if (h) { if (h.redraw) redraws.delete(h.redraw); h.ro.disconnect(); h.chart.dispose(); live.delete(el); } }

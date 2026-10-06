@@ -8,21 +8,21 @@ describe('Budget', () => {
   it('shows the live plan header, groups and balances', async () => {
     await mount('/budget');
     await waitFor(() => $$('tbody tr').length > 10, 'rows');
-    const header = text($('.card'));
+    const header = text($('.grid3'));
     expect(header).to.match(/Live plan\s*Current budget/);
     expect(header).to.match(/\$12,466\.67/); // the $220k @ 32% scenario from Projection
-    expect(byText('tbody th', /^Food/)).to.exist;
-    expect(text(byText('td', /^Salary$/)?.parentElement ?? document.body)).to.match(/N\/A/); // income_reference shows N/A like the sheet
+    expect(byText('h3', /^Food/)).to.exist; // each group is a full card with its own heading
+    expect(text($$('tbody tr').find((r) => /Salary/.test(text(r))))).to.match(/N\/A/); // income_reference shows N/A like the sheet
   });
 
   it('editing a target appends a version dated this month, and the old value stays in history', async () => {
     await mount('/budget');
-    const row = await waitFor(() => $$('tbody tr').find((r) => /^Groceries/.test(text(r))), 'groceries row');
-    $('td.num a', row).click();
+    const row = await waitFor(() => $$('tbody tr').find((r) => /Groceries/.test(text(r))), 'groceries row');
+    $('button.edit', row).click();
     const dlg = await waitFor(() => $('dialog[open]'), 'edit dialog');
     setInput($('input', dlg), '900.00');
     byText('button', /^Save$/, dlg).click();
-    await waitFor(() => /\$900\.00/.test(text($$('tbody tr').find((r) => /^Groceries/.test(text(r))))), 'new target');
+    await waitFor(() => /\$900\.00/.test(text($$('tbody tr').find((r) => /Groceries/.test(text(r))))), 'new target');
     const cat = (await api('/api/categories')).find((c) => c.name === 'Groceries');
     const detail = await api(`/api/categories/${cat.id}`);
     const last = detail.history.at(-1);

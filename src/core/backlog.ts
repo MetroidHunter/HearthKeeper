@@ -7,16 +7,16 @@ import { setSplits } from './transactions.js';
  * Backlog mode (design §8.3): a large import opens a batch review grouped by merchant instead of sending a push per row.
  * One answer applies to every transaction in the group; optionally it teaches a merchant rule (with its backtest).
  */
-export interface BacklogGroup { key: string; merchantId: number | null; name: string; count: number; totalCents: number; txnIds: number[]; samples: string[]; suggestions: { id: number; name: string; why: string }[] }
+export interface BacklogGroup { key: string; merchantId: number | null; name: string; count: number; totalCents: number; txnIds: number[]; samples: string[]; txns: { id: number; occurred_on: string; amount_cents: number; descriptor_raw: string; account: string }[]; suggestions: { id: number; name: string; why: string }[] }
 
 export function groupedInbox(db: DB): BacklogGroup[] {
-  const rows = db.prepare(`SELECT t.id, t.merchant_id mid, COALESCE(m.name, t.descriptor_clean, t.descriptor_raw) name, t.amount_cents a, t.descriptor_raw d, t.decided_rule_id rule
-    FROM transactions t LEFT JOIN merchants m ON m.id=t.merchant_id WHERE t.status!='void' AND t.review_state='needs_category' AND t.kind NOT IN ('ignored','internal_transfer','greenlight_reclass') ORDER BY t.occurred_on DESC`).all() as any[];
+  const rows = db.prepare(`SELECT t.id, t.merchant_id mid, COALESCE(m.name, t.descriptor_clean, t.descriptor_raw) name, t.amount_cents a, t.descriptor_raw d, t.decided_rule_id rule, t.occurred_on od, ac.name acct
+    FROM transactions t LEFT JOIN merchants m ON m.id=t.merchant_id JOIN accounts ac ON ac.id=t.account_id WHERE t.status!='void' AND t.review_state='needs_category' AND t.kind NOT IN ('ignored','internal_transfer','greenlight_reclass') ORDER BY t.occurred_on DESC`).all() as any[];
   const groups = new Map<string, BacklogGroup & { rule: number | null; desc: string }>();
   for (const r of rows) {
     const key = r.mid ? `m${r.mid}` : `d${String(r.name).toLowerCase()}`;
-    const g: BacklogGroup & { rule: number | null; desc: string } = groups.get(key) ?? { key, merchantId: r.mid, name: r.name, count: 0, totalCents: 0, txnIds: [], samples: [], suggestions: [], rule: r.rule, desc: r.name };
-    g.count++; g.totalCents += r.a; g.txnIds.push(r.id); if (g.samples.length < 3 && !g.samples.includes(r.d)) g.samples.push(r.d);
+    const g: BacklogGroup & { rule: number | null; desc: string } = groups.get(key) ?? { key, merchantId: r.mid, name: r.name, count: 0, totalCents: 0, txnIds: [], samples: [], txns: [], suggestions: [], rule: r.rule, desc: r.name };
+    g.count++; g.totalCents += r.a; g.txnIds.push(r.id); if (g.txns.length < 200) g.txns.push({ id: r.id, occurred_on: r.od, amount_cents: r.a, descriptor_raw: r.d, account: r.acct }); if (g.samples.length < 3 && !g.samples.includes(r.d)) g.samples.push(r.d);
     groups.set(key, g);
   }
   return [...groups.values()].map(({ rule, desc, ...g }) => ({ ...g, suggestions: suggestionsFor(db, { id: g.txnIds[0], decided_rule_id: rule, descriptor_clean: desc }) })).sort((a, b) => b.count - a.count || Math.abs(b.totalCents) - Math.abs(a.totalCents));

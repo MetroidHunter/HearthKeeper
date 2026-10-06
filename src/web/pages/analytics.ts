@@ -4,6 +4,7 @@ import { Page } from '../base.js';
 import { api, money } from '../api.js';
 import { draw, theme, PALETTE } from '../charts.js';
 import { thisMonth, type Cat } from '../shared.js';
+import { pageHead, th } from '../ui.js';
 
 type Tab = 'bva' | 'time' | 'heat' | 'tree' | 'trend' | 'income' | 'merchants' | 'years';
 const TABS: [Tab, string][] = [['bva', 'Budget vs actual'], ['time', 'Spend over time'], ['heat', 'Heatmap'], ['tree', 'Treemap'], ['trend', 'Category trend'], ['income', 'Income vs spend'], ['merchants', 'Merchants'], ['years', 'Year pivot']];
@@ -70,7 +71,7 @@ export class Analytics extends Page {
     });
   }
   render() {
-    return html`<h1>Analytics</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+    return html`${pageHead('Analytics', 'Charts for how spending, income and budgets move over time.', 'Pick a chart from the tabs. Most charts let you click through to the transactions behind a bar or block.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="tabs">${TABS.map(([k, label]) => html`<button class=${this.tab === k ? 'primary' : ''} data-tab=${k} @click=${() => { this.tab = k; const el = this.el(); if (el) delete el.dataset.key; }}>${label}</button>`)}</div>
       <div class="row" style="margin-bottom:8px">
         ${['bva'].includes(this.tab) ? html`<input type="month" .value=${this.month} @change=${(e: any) => (this.month = e.target.value)} />` : this.tab !== 'years' ? html`<label class="muted">Range <select @change=${(e: any) => (this.months = Number(e.target.value))}>${[6, 12, 24, 36, 60].map((n) => html`<option value=${n} ?selected=${n === this.months}>${n} months</option>`)}</select></label>` : ''}
@@ -81,7 +82,7 @@ export class Analytics extends Page {
   }
   yearTable() {
     const y = this.years; if (!y) return html`<p class="muted">Loading…</p>`;
-    return html`<div class="card" style="overflow-x:auto"><table><thead><tr><th>Category</th>${y.years.map((yr: number) => html`<th class="num">${yr}</th>`)}<th class="num">Total</th></tr></thead><tbody>
+    return html`<div class="card" style="overflow-x:auto"><table><thead><tr>${th('Category', 'Spending category.')}${y.years.map((yr: number) => th(String(yr), `Net spending in ${yr}.`, 'num'))}${th('Total', 'All years shown.', 'num')}</tr></thead><tbody>
       ${y.rows.map((r: any) => html`<tr><td>${r.key}</td>${r.values.map((v: number) => html`<td class="num">${v ? money(v) : ''}</td>`)}<td class="num"><b>${money(r.total)}</b></td></tr>`)}</tbody></table></div>`;
   }
 }

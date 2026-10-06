@@ -1,4 +1,4 @@
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, api } from './helpers.js';
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, pickCat, api } from './helpers.js';
 
 describe('Transactions', () => {
   let trap;
@@ -25,8 +25,8 @@ describe('Transactions', () => {
     rowFor(/SAFEWAY/).click();
     const dlg = await waitFor(() => $('dialog[open]'), 'dialog');
     byText('button', /＋ split/, dlg).click();
-    await waitFor(() => $$('select', dlg).length === 2, 'second split row');
-    choose($$('select', dlg)[1], 'Eating Out');
+    await waitFor(() => $$('hk-category-select', dlg).length === 2, 'second split row');
+    await pickCat($$('hk-category-select', dlg)[1], 'Eating Out');
     // first row amount stays at the full -$84.12; second row is $0.00 -> remaining is 0 so valid; make it invalid
     const amounts = () => $$('input', dlg).filter((i) => /^-?\d/.test(i.value));
     setInput(amounts()[1], '10.00', 'change');
@@ -64,7 +64,7 @@ describe('Transactions', () => {
     expect(rows.length).to.be.greaterThan(0);
     rows.forEach((r) => { const cb = $('input[type=checkbox]', r); cb.checked = true; cb.dispatchEvent(new Event('change', { bubbles: true })); });
     const bar = await waitFor(() => $$('.card').find((c) => /selected/.test(text(c))), 'bulk bar');
-    choose($('select', bar), 'Eating Out');
+    await pickCat($('hk-category-select', bar), 'Eating Out');
     await waitFor(async () => (await api('/api/transactions?q=SEPHORA')).every((t) => t.splits[0]?.category === 'Eating Out'), 'bulk applied');
   });
 
@@ -74,9 +74,9 @@ describe('Transactions', () => {
     rowFor(/AMAZON/).click();
     const dlg = await waitFor(() => $('dialog[open]'), 'dialog');
     $('#assign-items', dlg).click();
-    await waitFor(() => $$('select', dlg).length === 2 && /Items allocated/.test(text(dlg)), 'item split rows');
-    const sels = $$('select', dlg);
-    expect(text(sels[0].selectedOptions[0])).to.equal('Pets'); // "cat litter" rule
+    await waitFor(() => $$('hk-category-select', dlg).length === 2 && /Items allocated/.test(text(dlg)), 'item split rows');
+    const sels = $$('hk-category-select', dlg);
+    expect($('input', sels[0]).value).to.equal('Pets'); // "cat litter" rule
     byText('button', /^Save$/, dlg).click(); // second item has no category yet: the save still must add up, categories can stay blank
     await waitFor(() => !$('dialog[open]') || /error/i.test(text($('dialog[open]'))), 'saved');
     const t = (await api('/api/transactions?q=AMZN'))[0];
@@ -92,5 +92,42 @@ describe('Transactions', () => {
     await waitFor(() => $$('.pick-note', dlg).length === 2, 'two candidate notes');
     $$('.pick-note', dlg)[0].click();
     await waitFor(async () => (await api('/api/transactions?q=VENMO%20PAYMENT%20261001'))[0].note_state === 'user_provided', 'note chosen');
+  });
+
+  it('the detail dialog opens on top of the page, centered in view, not at the bottom', async () => {
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr').length > 5, 'rows');
+    window.scrollTo(0, document.body.scrollHeight);
+    rowFor(/SAFEWAY/)?.click() ?? $$('tbody tr')[3].click();
+    const dlg = await waitFor(() => $('dialog.txn-detail[open]'), 'dialog');
+    expect(dlg.matches(':modal')).to.equal(true);
+    const r = dlg.getBoundingClientRect();
+    expect(r.top).to.be.at.least(0); expect(r.bottom).to.be.at.most(window.innerHeight + 1);
+    const mid = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(40, r.height / 2));
+    expect(dlg.contains(mid)).to.equal(true); // nothing from the page is above it
+    byText('button', /^Close$/, dlg).click();
+  });
+
+  it('pages through every transaction with working controls and a true total', async () => {
+    const chase = (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id;
+    for (let i = 0; i < 130; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: `PAGING TEST ${String(i).padStart(3, '0')}`, amountCents: -(100 + i) } });
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr').length > 5, 'rows');
+    const total = (await api('/api/transactions/count')).total;
+    expect(total).to.be.greaterThan(60);
+    expect(text($('.pager'))).to.match(new RegExp(`of ${total.toLocaleString()}`));
+    const first = text($$('tbody tr')[0]);
+    expect($('.pager .prev').disabled).to.equal(true);
+    $('.pager .next').click();
+    await waitFor(() => text($$('tbody tr')[0]) !== first, 'page 2');
+    expect(text($('.pager'))).to.match(/51–100/);
+    expect($('.pager .prev').disabled).to.equal(false);
+    setInput($('.pager input.jump'), '1', 'change');
+    await waitFor(() => text($$('tbody tr')[0]) === first, 'back to page 1');
+    $('.pager .last').click();
+    await waitFor(() => $('.pager .next').disabled === true, 'last page');
+    expect($$('tbody tr').length).to.equal(total % 50 || 50);
+    const size = $('.pager select.size'); size.value = '25'; size.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => $$('tbody tr').length === 25, 'page size 25');
   });
 });

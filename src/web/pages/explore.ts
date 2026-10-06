@@ -4,6 +4,7 @@ import { Page } from '../base.js';
 import { api, money } from '../api.js';
 import { today } from '../shared.js';
 import { draw } from '../charts.js';
+import { pageHead, th } from '../ui.js';
 
 @customElement('hk-explore')
 export class Explore extends Page {
@@ -16,7 +17,7 @@ export class Explore extends Page {
     void draw(el, { tooltip: {}, grid: { left: 50, right: 10, top: 10, bottom: 30 }, xAxis: { type: 'category', data: this.res.sparkline.map((s: any) => s.month) }, yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `$${v / 100}` } }, series: [{ type: 'bar', data: this.res.sparkline.map((s: any) => s.cents) }] });
   }
   render() {
-    return html`<h1>Explore</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+    return html`${pageHead('Explore', 'Search and slice your spending any way you like: by category, merchant, month or account.', 'Click any number to see the transactions behind it.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="row"><input class="grow" type="search" placeholder='Merchant, note or item, e.g. "Sephora"' .value=${this.q} @input=${(e: any) => (this.q = e.target.value)} @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && this.search()} /><input type="date" .value=${this.from} @change=${(e: any) => { this.from = e.target.value; this.top(); }} /><input type="date" .value=${this.to} @change=${(e: any) => { this.to = e.target.value; this.top(); }} /><button class="primary" @click=${() => this.search()}>Search</button></div>
       ${this.res ? html`<div class="card" style="margin-top:10px"><div class="row"><span>Total <b>${money(this.res.totalCents)}</b></span><span>Monthly avg <b>${money(this.res.monthlyAverageCents)}</b></span><span>Count <b>${this.res.count}</b></span></div><div class="chart" style="height:220px"></div></div>` : ''}
       <h2>Spend by</h2><div class="tabs">${['category', 'merchant', 'merchant_group', 'month', 'account'].map((d) => html`<button class=${this.dim === d ? 'primary' : ''} @click=${() => { this.dim = d; this.top(); }}>${d.replace('_', ' ')}</button>`)}</div>

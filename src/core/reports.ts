@@ -78,9 +78,14 @@ export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number 
     const first = t.descriptor_clean.split(' ')[0];
     if (first.length >= 4) for (const r of db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id WHERE x.descriptor_clean LIKE ? AND s.category_id IS NOT NULL AND x.id!=? GROUP BY s.category_id ORDER BY n DESC LIMIT 3`).all(`${first}%`, t.id) as any[]) add(r.id, 'similar');
   }
-  if (out.length < 3) { // still short: the categories you use most (last ~120 days), so a brand-new merchant is never a blank prompt
-    for (const r of db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN categories c ON c.id=s.category_id
-      WHERE c.status='active' AND c.kind='expense' AND x.occurred_on >= date('now','-120 day') AND x.kind IN ('spending','greenlight_reclass') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all() as any[]) add(r.id, 'frequently used');
+  if (out.length < 3) { // still short: the categories you use most for this kind of money, so a brand-new merchant is never a blank prompt
+    const amount = (db.prepare('SELECT amount_cents a FROM transactions WHERE id=?').get(t.id) as { a: number } | undefined)?.a ?? -1;
+    const rows = amount > 0
+      ? db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN categories c ON c.id=s.category_id
+          WHERE c.status='active' AND c.kind!='expense' AND s.amount_cents>0 AND x.occurred_on >= date('now','-400 day') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all()
+      : db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN categories c ON c.id=s.category_id
+          WHERE c.status='active' AND c.kind='expense' AND x.occurred_on >= date('now','-120 day') AND x.kind IN ('spending','greenlight_reclass') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all();
+    for (const r of rows as any[]) add(r.id, 'frequently used');
   }
   return out;
 }
@@ -107,6 +112,7 @@ export function whyNeedsYou(t: any, reason: InboxReason, today = new Date().toIS
 
 export function inbox(db: DB, today = new Date().toISOString().slice(0, 10)) {
   const cols = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, a.name account,
+    CASE WHEN t.kind='greenlight_reclass' THEN -COALESCE((SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id=t.id AND amount_cents>0),0) ELSE t.amount_cents END effective_cents,
     (SELECT s.origin FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
   const base = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;
   const W = {
@@ -140,7 +146,7 @@ export function uncategorized(db: DB) {
 export function transactionContext(db: DB, id: number, before = 6, after = 6) {
   const t = db.prepare('SELECT id, account_id, occurred_on FROM transactions WHERE id=?').get(id) as { id: number; account_id: number; occurred_on: string } | undefined;
   if (!t) return null;
-  const sel = `SELECT t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, a.name account,
+  const sel = `SELECT t.id, t.occurred_on, CASE WHEN t.kind='greenlight_reclass' THEN -COALESCE((SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id=t.id AND amount_cents>0),0) ELSE t.amount_cents END amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, a.name account,
     (SELECT GROUP_CONCAT(COALESCE(c.name,'(none)'), ', ') FROM transaction_splits s LEFT JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=t.id) categories
     FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.account_id=? AND t.status!='void'`;
   const prev = db.prepare(`${sel} AND (t.occurred_on<? OR (t.occurred_on=? AND t.id<?)) ORDER BY t.occurred_on DESC, t.id DESC LIMIT ?`).all(t.account_id, t.occurred_on, t.occurred_on, t.id, before) as any[];

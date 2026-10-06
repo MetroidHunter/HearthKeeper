@@ -72,3 +72,12 @@ An alert whose charge already posted via CSV (same account, amount, date within 
 
 ## D54. No app-level backups
 Backups are GCP disk snapshots (daily schedule, `gcp-setup.sh` prints the commands). The nightly job, bucket and its permissions were removed. Only the on-disk rollback copies taken before an update or a data install remain.
+
+## D55. "Needs category" is an envelope you can see
+Uncategorized transactions were already outside every envelope (they sit in the `needs_category` state), which made the sheet's NEEDS CATEGORY category look like it had zeroed out: its legacy rows net to $0.20 because reingest credits offset them. Rather than force a number, the Budget page, Home and Dashboard now show a "Needs category" total (sum of every transaction still waiting for a category, with count). Categorizing a transaction moves its amount out of it and into the chosen category, and the confirm dialog shows that category's balance before and after. The starting figure is whatever is uncategorized after the bank backlog is imported. Parity is untouched (display only).
+
+## D56. Information architecture and UI rules
+Top level: Home, Budget, Backlog, Transactions. Data: Categories, Transfers, Plans, Earnings, Imports, Close. Discover: Dashboard, Analytics, Explore. Settings: Preferences, Greenlight, Rules & merchants, Ingest health, Migration. Every page opens with an explanation block; table headers carry hover help; spacing comes from one token scale (`--gap`, `--page-x`) so every page shares margins. Lists are rows or cards, never chips. Every category dropdown is the type-to-search `hk-category-select`. Dialogs are native modal `<dialog>`s so they always sit above the page. Theme (match device / light / dark) is a per-device setting in Preferences.
+
+## D57. Every Home/Backlog item says why it is there, and counts are true counts
+The inbox returns real totals (not the 200-row list limit) and a plain-language reason per item (no rule matches, left in NEEDS CATEGORY, your "???" note, waiting on a note, pending too long). Home's headline is the true number of distinct items; the Backlog groups uncategorized items by merchant, so its list is shorter than the count by design, and both pages say so. Greenlight reclasses are shown and booked at their real spend, not their zero total.

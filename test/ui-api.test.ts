@@ -84,3 +84,31 @@ describe('API: paging, favorites, merchants search', () => {
     expect((await a.inject({ url: '/api/merchants?q=shop 11' })).json().rows.length).toBeGreaterThan(0);
   });
 });
+
+describe('inbox amounts for Greenlight reclasses', () => {
+  it('shows the real spend (not the zero total) so budget impact is right', () => {
+    const h = seedHousehold();
+    const id = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-02', amountCents: 0, descriptor: 'RECLASS', kind: 'greenlight_reclass' } as any);
+    h.db.prepare('INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,origin) VALUES (?,?,?,?)').run(id, null, -2183, 'greenlight_reclass');
+    h.db.prepare('INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,origin) VALUES (?,?,?,?)').run(id, h.cats['Groceries'], 2183, 'greenlight_reclass');
+    h.db.prepare("UPDATE transactions SET review_state='needs_category' WHERE id=?").run(id);
+    const t = inbox(h.db, '2026-10-05').needsCategory.find((x: any) => x.id === id)!;
+    expect(t.effective_cents).toBe(-2183);
+  });
+});
+
+describe('suggestions respect the direction of the money', () => {
+  it('offers income categories for a deposit and expense categories for a charge', async () => {
+    const { suggestionsFor } = await import('../src/core/reports.js');
+    const h = seedHousehold();
+    const day = new Date().toISOString().slice(0, 10);
+    const pay = createTransaction(h.db, { accountId: h.chase, occurredOn: day, amountCents: 500000, descriptor: 'PAYROLL' });
+    const inc = h.db.prepare("SELECT id FROM categories WHERE kind!='expense' AND status='active' LIMIT 1").get() as { id: number } | undefined;
+    if (inc) { const old = createTransaction(h.db, { accountId: h.chase, occurredOn: day, amountCents: 100, descriptor: 'OLD PAY' }); setSplits(h.db, old, [{ categoryId: inc.id, amountCents: 100 }]); }
+    const spend = createTransaction(h.db, { accountId: h.chase, occurredOn: day, amountCents: -900, descriptor: 'STORE' });
+    const g = createTransaction(h.db, { accountId: h.chase, occurredOn: day, amountCents: -900, descriptor: 'OLD STORE' }); setSplits(h.db, g, [{ categoryId: h.cats['Groceries'], amountCents: -900 }]);
+    const kinds = (id: number) => suggestionsFor(h.db, { id, decided_rule_id: null, descriptor_clean: null }).map((s) => (h.db.prepare('SELECT kind FROM categories WHERE id=?').get(s.id) as any).kind);
+    expect(kinds(spend).every((k) => k === 'expense')).toBe(true);
+    expect(kinds(pay).every((k) => k !== 'expense')).toBe(true);
+  });
+});

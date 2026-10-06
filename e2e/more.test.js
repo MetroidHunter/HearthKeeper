@@ -1,4 +1,4 @@
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, api, sleep } from './helpers.js';
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, pickCat, confirmDialog, api, sleep } from './helpers.js';
 
 describe('Navigation smoke: every page renders without uncaught errors', () => {
   let trap;
@@ -6,7 +6,7 @@ describe('Navigation smoke: every page renders without uncaught errors', () => {
   beforeEach(() => { trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
   for (const [route, h1] of [['/', 'Home'], ['/dashboard', 'Dashboard'], ['/budget', 'Budget'], ['/transactions', 'Transactions'], ['/plans', 'Plans'], ['/earnings', 'Earnings'], ['/transfers', 'Transfers'],
-    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Settings'], ['/analytics', 'Analytics'], ['/migration', 'Migration'], ['/backlog', 'Backlog review']]) {
+    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Preferences'], ['/analytics', 'Analytics'], ['/migration', 'Migration'], ['/backlog', 'Backlog']]) {
     it(`renders ${route}`, async () => { await mount(route); expect(text($('h1'))).to.equal(h1); await sleep(150); });
   }
 });
@@ -22,7 +22,7 @@ describe('Rules and merchants', () => {
     byText('button', /New rule/).click();
     const card = await waitFor(() => $$('.card').find((c) => /Backtest/.test(text(c))), 'rule editor');
     setInput($$('input', card).find((i) => i.placeholder === 'value'), 'chipotle');
-    choose($$('select', card)[2], 'Eating Out');
+    await pickCat($('hk-category-select', card), 'Eating Out');
     byText('button', /^Backtest$/, card).click();
     await waitFor(() => /Would have matched/.test(text(card)), 'backtest result');
     expect(text(card)).to.match(/matched \d+/);
@@ -32,8 +32,9 @@ describe('Rules and merchants', () => {
 
   it('merchants to review shows unreviewed merchants', async () => {
     await mount('/rules');
-    byText('button', /Merchants to review/).click();
+    byText('button', /^Merchants/).click();
     await waitFor(() => $$('tbody tr').length > 3 && /new/.test(text($('tbody'))), 'merchant rows');
+    expect($$('tbody tr').length).to.be.at.most(50); // paged: never the whole merchant list
   });
 });
 
@@ -51,7 +52,9 @@ describe('Close checklist and dashboard', () => {
   });
   it('dashboard shows close readiness and coverage', async () => {
     await mount('/dashboard');
-    await waitFor(() => /Close readiness/.test(text(document.body)) && /Coverage/.test(text(document.body)), 'dashboard cards');
+    await waitFor(() => /Close readiness/.test(text(document.body)) && /Health/.test(text(document.body)), 'dashboard callouts');
+    await waitFor(() => $$('.chart canvas').length >= 2, 'diagrams drawn');
+    expect($$('a.stat').length).to.be.greaterThan(4); // callouts are links to where you act on them
   });
 });
 
@@ -144,7 +147,7 @@ describe('Migration worksheet', () => {
 
   it('resolves parked leftovers with one tap per suggestion and shows the before/after balance of every category touched', async () => {
     await mount('/migration');
-    await waitFor(() => $$('tbody tr').length === 3, 'three parked rows');
+    await waitFor(() => $$('.card.ws').length === 3, 'three parked rows');
     const before = await api('/api/migration');
     byText('button', /Accept top suggestions/).click();
     await waitFor(() => !$('#apply').disabled, 'apply enabled');
@@ -169,8 +172,10 @@ describe('Backlog review (grouped by merchant)', () => {
     for (let i = 0; i < 4; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'BRAND NEW BAKERY', amountCents: -(500 + i) } });
     await mount('/backlog');
     const card = await waitFor(() => $$('.group').find((c) => /BRAND NEW BAKERY/.test(text(c))), 'merchant group');
-    expect(text(card)).to.match(/4×/);
-    const sel = $('select', card); choose(sel, 'Eating Out');
+    expect(text(card)).to.match(/4 transactions/);
+    expect($$('.txn-line', card).length).to.be.greaterThan(0); // full lines are shown
+    await pickCat($('hk-category-select', card), 'Eating Out');
+    await confirmDialog(/Yes, categorize/);
     await waitFor(() => /4 categorized/.test(text(document.body)), 'bulk result');
     const tx = await api('/api/transactions?q=BRAND%20NEW%20BAKERY');
     expect(tx).to.have.length(4); expect(tx.every((t) => t.splits[0]?.category === 'Eating Out')).to.equal(true);

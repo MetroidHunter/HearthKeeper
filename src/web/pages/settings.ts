@@ -2,6 +2,7 @@ import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api } from '../api.js';
+import { pageHead, getTheme, setTheme, type Theme } from '../ui.js';
 
 function b64ToUint8(b64: string) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
@@ -12,7 +13,7 @@ function b64ToUint8(b64: string) {
 /** Notifications settings (design §15.3): verbose by default; quiet hours and lock-screen privacy off until you want them. */
 @customElement('hk-settings')
 export class Settings extends Page {
-  @state() prefs: any = null; @state() digest: any = null; @state() status = '';
+  @state() prefs: any = null; @state() digest: any = null; @state() status = ''; @state() theme: Theme = getTheme();
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { [this.prefs, this.digest] = await Promise.all([api.get('/api/me/notify-prefs'), api.get('/api/digest')]); }); }
   async save(patch: any) { await this.run(async () => { this.prefs = { ...this.prefs, ...(await api.put('/api/me/notify-prefs', patch)) }; this.status = 'Saved'; }); }
@@ -29,8 +30,11 @@ export class Settings extends Page {
     });
   }
   render() {
-    const p = this.prefs; if (!p) return html`<h1>Settings</h1><p class="muted">${this.err || 'Loading…'}</p>`;
-    return html`<h1>Settings</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+    const p = this.prefs; if (!p) return html`${pageHead('Preferences', 'How HearthKeeper looks and when it bothers you.')}<p class="muted">${this.err || 'Loading…'}</p>`;
+    return html`${pageHead('Preferences', 'How HearthKeeper looks on this device, and when and how it notifies you.', 'Appearance is remembered on this device only, so your phone and your computer can differ. Notification settings are yours; Miracle sets her own when she signs in.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
+      <h2>Appearance</h2>
+      <div class="card"><div class="option-list" role="radiogroup" aria-label="Theme">${([['system', 'Match this device', 'Follows your phone or computer setting, including automatic night mode.'], ['light', 'Light', 'Always light.'], ['dark', 'Dark', 'Always dark.']] as [Theme, string, string][]).map(([v, label, hint]) => html`
+        <button class="option ${this.theme === v ? 'best' : ''}" role="radio" aria-checked=${this.theme === v} data-theme-choice=${v} @click=${() => { this.theme = v; setTheme(v); }}><span class="name">${label}</span><span class="muted small">${hint}</span>${this.theme === v ? html`<span class="meta">✓ selected</span>` : ''}</button>`)}</div></div>
       <h2>Notifications</h2>
       <div class="card">
         <div class="row"><label class="grow"><input type="checkbox" id="push" .checked=${p.push} @change=${(e: any) => this.save({ push: e.target.checked })} /> Send push notifications to me</label><span class="badge">${p.devices} device${p.devices === 1 ? '' : 's'}</span></div>

@@ -2,6 +2,7 @@ import { html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
+import { pageHead, th } from '../ui.js';
 
 @customElement('hk-earnings')
 export class Earnings extends Page {
@@ -12,12 +13,12 @@ export class Earnings extends Page {
   edit(s?: any) { this.draft = s ? { id: s.id, name: s.name, lines: s.lines.map((l: any) => ({ ...l })) } : { name: 'New scenario', lines: [{ person: 'Brys', label: 'Salary', annualSalaryCents: 0, workTimeBp: 10000, taxRateBp: 3200, recurring: true }] }; }
   async save() { const d = this.draft; await this.run(async () => { if (d.id) await api.put(`/api/scenarios/${d.id}/lines`, { lines: d.lines }); else await api.post('/api/scenarios', { name: d.name, lines: d.lines }); this.draft = null; await this.load(); }); }
   render() {
-    return html`<h1>Earnings</h1>${this.err ? html`<p class="err">${this.err}</p>` : ''}
+    return html`${pageHead('Earnings', 'Income scenarios: salary, work time and tax assumptions that add up to the monthly income your budget is built on.', 'Make a scenario for a raise or a job change and compare it before attaching it to a plan. One-time income (bonuses) is listed but not counted in monthly income.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="row" style="margin-bottom:10px"><button class="primary" @click=${() => this.edit()}>＋ New scenario</button></div>
       ${this.draft ? this.editor() : ''}
       ${this.scenarios.map((s) => html`<div class="card"><div class="row"><b class="grow">${s.name}</b><span>${money(s.monthlyNetCents)}/mo net</span><button @click=${() => this.edit(s)}>Edit</button>
         <button @click=${async () => { const n = prompt('Clone as', `${s.name} (copy)`); if (n) { await this.run(() => api.post(`/api/scenarios/${s.id}/clone`, { name: n })); this.load(); } }}>Clone</button></div>
-        <table><thead><tr><th>Line</th><th class="num">Gross/yr</th><th class="num">Work</th><th class="num">Tax</th><th class="num">Net/yr</th><th class="num">Net/mo</th><th class="num hide-sm">Bi-weekly</th></tr></thead><tbody>
+        <table><thead><tr>${th('Line', 'A source of income in this scenario.')}${th('Gross/yr', 'Yearly pay before tax at full time.', 'num')}${th('Work', 'Share of full time worked.', 'num')}${th('Tax', 'Effective tax rate applied.', 'num')}${th('Net/yr', 'Gross times work share, after tax.', 'num')}${th('Net/mo', 'Net per year divided by twelve: what the budget counts on.', 'num')}${th('Bi-weekly', 'Net per two-week paycheck.', 'num hide-sm')}</tr></thead><tbody>
           ${s.lines.map((l: any) => html`<tr><td>${l.person ? `${l.person}: ` : ''}${l.label}${l.recurring ? '' : html` <span class="badge">one-time</span>`}</td><td class="num">${money(l.annualSalaryCents)}</td><td class="num">${(l.workTimeBp / 100).toFixed(0)}%</td><td class="num">${(l.taxRateBp / 100).toFixed(1)}%</td><td class="num">${money(l.netAnnual)}</td><td class="num">${money(l.monthlyNet)}</td><td class="num hide-sm">${money(l.biWeekly)}</td></tr>`)}</tbody></table></div>`)}`;
   }
   editor() {

@@ -15,6 +15,7 @@ export const api = {
   post: <T = any>(u: string, b?: unknown) => queueable('POST', u, b) as Promise<T>,
   put: <T = any>(u: string, b?: unknown) => req<T>('PUT', u, b),
   patch: <T = any>(u: string, b?: unknown) => req<T>('PATCH', u, b),
+  del: <T = any>(u: string) => req<T>('DELETE', u),
 };
 
 /** Answers made offline queue and sync later (design §15.2). Only idempotent answer endpoints are queued. */
