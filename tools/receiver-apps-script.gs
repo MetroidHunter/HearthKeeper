@@ -32,10 +32,7 @@ function forwardNewMail() {
         if (mm) headers[h] = mm[1].trim();
       });
       var body = JSON.stringify({ source: guessSource(m.getFrom(), headers['Authentication-Results']), messageId: m.getId(), text: m.getPlainBody() || stripHtml(m.getBody()), headers: headers, html: m.getBody().length < 200000 ? m.getBody() : null });
-      var ts = String(Math.floor(Date.now() / 1000)), nonce = Utilities.getUuid();
-      var sig = hex(Utilities.computeHmacSha256Signature(ts + '.' + nonce + '.' + body, secret));
-      var res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: body, muteHttpExceptions: true,
-        headers: { 'x-hk-token': label, 'x-hk-timestamp': ts, 'x-hk-nonce': nonce, 'x-hk-signature': sig } });
+      var res = post(url, label, secret, body);
       if (res.getResponseCode() !== 200) { ok = false; console.error(res.getResponseCode() + ' ' + res.getContentText()); }
     });
     if (ok) { thread.removeLabel(newLabel); thread.addLabel(doneLabel); }
@@ -48,6 +45,26 @@ function forwardNewMail() {
 // Exact sender-domain match (never a substring: "purchases@" contains "chase"). The display name is ignored. DKIM/SPF must pass.
 var SENDERS = [[/@([a-z0-9-]+\.)*chase\.com$/, 'chase_alert'], [/@([a-z0-9-]+\.)*amazon\.com$/, 'amazon_receipt'], [/@([a-z0-9-]+\.)*venmo\.com$/, 'venmo_receipt'],
   [/@([a-z0-9-]+\.)*paypal\.com$/, 'paypal_receipt'], [/@([a-z0-9-]+\.)*wellsfargo\.com$/, 'wf_notice']];
+/**
+ * POST a signed body. The signature and the request both use the SAME explicit UTF-8 bytes, so non-ASCII text (curly quotes, emoji)
+ * cannot make the signed bytes differ from the sent bytes.
+ */
+function post(url, label, secret, body) {
+  var bytes = Utilities.newBlob(body).getBytes();                 // UTF-8
+  var ts = String(Math.floor(Date.now() / 1000)), nonce = Utilities.getUuid();
+  var signed = Utilities.newBlob(ts + '.' + nonce + '.').getBytes().concat(bytes);
+  var sig = hex(Utilities.computeHmacSha256Signature(signed, Utilities.newBlob(secret).getBytes()));
+  return UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', payload: bytes, muteHttpExceptions: true,
+    headers: { 'x-hk-token': label, 'x-hk-timestamp': ts, 'x-hk-nonce': nonce, 'x-hk-signature': sig } });
+}
+/** Run this once by hand: sends a tiny ASCII message. 200 = URL, label and secret are right (then any later 401 is about the message text, not your settings). */
+function selfTest() {
+  var props = PropertiesService.getScriptProperties();
+  var res = post(props.getProperty('HK_URL') + '/ingest/email', props.getProperty('HK_TOKEN_LABEL'), props.getProperty('HK_SECRET'), JSON.stringify({ source: 'email_unknown', messageId: 'selftest-' + Date.now(), text: 'hearthkeeper selftest' }));
+  console.log('ASCII test: ' + res.getResponseCode() + ' ' + res.getContentText());
+  var res2 = post(props.getProperty('HK_URL') + '/ingest/email', props.getProperty('HK_TOKEN_LABEL'), props.getProperty('HK_SECRET'), JSON.stringify({ source: 'email_unknown', messageId: 'selftest2-' + Date.now(), text: 'curly \u2019 quote \u00a9 and emoji \ud83d\ude00' }));
+  console.log('Non-ASCII test: ' + res2.getResponseCode() + ' ' + res2.getContentText());
+}
 function guessSource(from, authResults) {
   var addr = (/<([^>]+)>/.exec(from) || [null, from])[1].trim().toLowerCase();
   var verified = /dkim=pass|spf=pass/i.test(authResults || '');
