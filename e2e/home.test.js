@@ -5,21 +5,48 @@ describe('Home (phone view)', () => {
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('shows favorites first, then what needs you with a reason, then recent transactions', async () => {
+  it('orders the page: Needs attention (collapsible) first, Favorites second, then Recent, and Add transaction last, with no intro text', async () => {
     await mount('/');
     await waitFor(() => $$('.card').length > 3, 'cards');
     expect(text($('h1'))).to.equal('Home');
+    expect($('.intro')).to.not.exist; // the explanation block is gone from Home
     const heads = $$('h2').map((h) => text(h));
-    expect(heads.indexOf('Favorites')).to.be.greaterThan(-1);
-    expect(heads.indexOf('Favorites')).to.be.lessThan(heads.indexOf('Needs you')); // favorites above needs-you
-    expect(heads).to.include('Recent');
-    expect($('.intro')).to.exist;
+    expect(heads).to.deep.equal(['Needs attention', 'Favorites', 'Recent']);
+    const page = $('main').firstElementChild;
+    const kids = [...page.children];
+    const idx = (pred) => kids.findIndex(pred);
+    expect(idx((k) => k.matches('details.fold'))).to.be.lessThan(idx((k) => /^Favorites/.test(text(k))));
+    expect(idx((k) => /^Favorites/.test(text(k)))).to.be.lessThan(idx((k) => /^Recent/.test(text(k))));
+    const last = kids.at(-1);
+    expect(byText('button', /Add transaction/, last)).to.exist; // add transaction is the very last thing
     const inbox = await api('/api/inbox');
-    expect(text(byText('h2', /^Needs you/).nextElementSibling)).to.match(new RegExp(`${inbox.counts.total} item`)); // the headline count is the true count
-    expect(inbox.needsCategory[0].why).to.be.a('string');
-    const why = await waitFor(() => $('.why-text'), 'a why line under a missing item');
-    expect(text(why)).to.match(/rule|merchant|note|sheet|flag|posted|Amazon/i);
-    expect($('.check.missing .mark', why.closest('.card'))).to.exist; // the reason sits under the item with the ?
+    expect(text($('details.fold'))).to.match(new RegExp(`${inbox.counts.total} item`)); // the headline count is the true count
+    expect($('.check.missing .mark', $('details.fold'))).to.exist;
+  });
+
+  it('Needs attention collapses and the choice is remembered', async () => {
+    localStorage.removeItem('hk-home-attention-open');
+    await mount('/');
+    const fold = await waitFor(() => $('details.fold'), 'the fold');
+    expect(fold.open).to.equal(true); // open by default
+    expect($('.card.txn', fold).checkVisibility()).to.equal(true);
+    $('summary', fold).click();
+    await waitFor(() => !fold.open && localStorage.getItem('hk-home-attention-open') === '0', 'collapsed and saved');
+    expect($('.card.txn', fold).checkVisibility()).to.equal(false);
+    await mount('/');
+    expect($('details.fold').open).to.equal(false); // still collapsed on the next visit
+    $('summary', $('details.fold')).click();
+    await waitFor(() => $('details.fold').open && localStorage.getItem('hk-home-attention-open') === '1', 'reopened');
+  });
+
+  it('favorites are compact tiles that still carry name, balance, pace bar and spent of target', async () => {
+    await mount('/');
+    const tile = await waitFor(() => $('.favs .fav'), 'a favorite');
+    expect($('.fav-name', tile).textContent.length).to.be.greaterThan(1);
+    expect(text($('.fav-bal', tile))).to.match(/^-?\$[\d,]+\.\d\d$/);
+    expect($('.bar', tile)).to.exist;
+    expect(text($('.fav-sub', tile))).to.match(/\$[\d,.]+ of \$[\d,.]+/);
+    expect(tile.getBoundingClientRect().height).to.be.below(130);
   });
 
   it('shows the whole transaction line and the transactions around it', async () => {

@@ -96,3 +96,6 @@ A transaction can wait on several things at once (a category, a note, a flag, a 
 
 ## D62. Checklist cards
 Home and Backlog cards show Category and Note (and Flag / Never-posted when they apply) as a checklist: a large "?" for what is missing or unknown, a check when settled, and a dash for a note that is not needed. The best category guess is one button ("Use Groceries"); other suggestions and the full search are collapsed; the account, the bank's full line, nearby transactions and "Not a budget item" sit behind Details. A note can be added or edited from any card. The Transactions list shows notes in place of the account (the account is in the row's detail).
+
+## D63. Home order
+Needs attention first (collapsible, open by default, the choice remembered per device), Favorites second, Recent third; searching and Add transaction come last. No intro text on Home. On phones, favorites are 2-column tiles of three short lines (name, balance, spent of target) with the pace bar as a strip along the tile's bottom edge, and the star (pinning) moves to the Budget page, taking each tile from ~87px to ~72px tall.
