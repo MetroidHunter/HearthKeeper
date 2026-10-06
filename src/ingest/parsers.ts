@@ -1,10 +1,12 @@
 import { registerGreenlightParser } from '../greenlight/parser.js';
 import { registerChaseParser } from '../chase/parser.js';
 import { registerReceiptParsers } from '../receipts/parsers.js';
+import { registerWfNoticeParser } from '../wf/notice.js';
 
-/** Every parser that ships enabled. Experimental receipt parsers are opt-in (see src/receipts). */
-export function registerAllParsers(opts: { experimental?: boolean } = {}) {
+/** Every parser that ships enabled. Receipt parsers can be switched off with HK_DISABLE_RECEIPT_PARSERS=1 (or `receipts: false`). */
+export function registerAllParsers(opts: { receipts?: boolean } = {}) {
   registerGreenlightParser();
   registerChaseParser();
-  if (opts.experimental ?? process.env.HK_EXPERIMENTAL_PARSERS === '1') registerReceiptParsers(); // guesses until real samples are captured
+  registerWfNoticeParser();
+  if (opts.receipts ?? process.env.HK_DISABLE_RECEIPT_PARSERS !== '1') registerReceiptParsers();
 }

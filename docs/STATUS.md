@@ -19,7 +19,7 @@ Last verified: 241 unit/property/API tests (Vitest) plus the Web Test Runner bro
 - Merchants, rules, backtest (seeded 236 rules checked against 16,675 historical rows), ranked suggestions, backlog mode with grouped bulk answers.
 - Greenlight: nine message shapes plus declined/withdraw/request, per-profile policy, scored final-amount matching, expected-allowance fulfilment by nearest date.
 - Notes matcher (global assignment, per-source windows, item splits with loose subset search).
-- Chase alert parser (real format from `IFTTT_Code.gs`), including alerts that arrive after the CSV already posted the charge. Experimental Amazon/Venmo/PayPal receipt parsers are opt-in (`HK_EXPERIMENTAL_PARSERS=1`).
+- Chase alert parser (real format from `IFTTT_Code.gs`), including alerts that arrive after the CSV already posted the charge. Amazon order, Venmo (paid/received), PayPal (two formats) and Wells Fargo account-update parsers are written against real sample emails (fixtures in `test/fixtures/receipts`) and are on by default; only those formats are verified.
 
 **Discovery track, ingest**: raw capture, HMAC/bearer auth, shapes page, idempotent replay. All 154 real IFTTT messages parse and replay.
 

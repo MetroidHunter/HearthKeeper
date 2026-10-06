@@ -141,7 +141,17 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     return { closeReadiness: steps, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
   });
 
-  app.get('/api/accounts', async () => db.prepare('SELECT id, name, institution, type, shared, in_system FROM accounts WHERE in_system=1 ORDER BY id').all());
+  app.get('/api/accounts', async () => db.prepare('SELECT id, name, institution, type, shared, in_system, last4 FROM accounts WHERE in_system=1 ORDER BY id').all());
+  // last 4 digits identify which account an emailed bank alert belongs to ("for account ...5843"); unique per institution
+  app.patch('/api/accounts/:id', async (req: any, reply) => {
+    const v = rec(req.body).last4; const last4 = v === null || v === '' ? null : String(v).trim();
+    if (last4 !== null && !/^\d{4}$/.test(last4)) return reply.code(400).send({ error: 'last 4 digits must be exactly 4 digits' });
+    const a = db.prepare('SELECT institution FROM accounts WHERE id=?').get(Number(req.params.id)) as { institution: string } | undefined;
+    if (!a) return reply.code(404).send({ error: 'no such account' });
+    if (last4 && db.prepare('SELECT 1 FROM accounts WHERE institution=? AND last4=? AND id!=?').get(a.institution, last4, Number(req.params.id))) return reply.code(409).send({ error: `another ${a.institution} account already uses ${last4}` });
+    db.prepare('UPDATE accounts SET last4=? WHERE id=?').run(last4, Number(req.params.id));
+    return { ok: true };
+  });
 
   /* ---------- categories & budgets ---------- */
   app.get('/api/categories', async () => db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all());

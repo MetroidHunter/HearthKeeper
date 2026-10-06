@@ -1,80 +1,132 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { seedHousehold } from './helpers.js';
-import { parseAmazonOrder, parseVenmo, parsePayPal, amazonNote } from '../src/receipts/parsers.js';
-import { captureEvent, parseEvent, clearParsers, replay } from '../src/ingest/events.js';
+import { parseAmazonOrders, parseVenmo, parsePayPal, amazonNote } from '../src/receipts/parsers.js';
+import { htmlToText } from '../src/receipts/text.js';
+import { parseWfNotice, lineDate } from '../src/wf/notice.js';
+import { captureEvent, parseEvent, clearParsers } from '../src/ingest/events.js';
 import { registerAllParsers } from '../src/ingest/parsers.js';
 import { createTransaction } from '../src/core/transactions.js';
 import { runNoteMatcher } from '../src/notes/matcher.js';
+import { commitImport } from '../src/ingest/import.js';
+import { suggestMapping, parseCsv } from '../src/ingest/csv.js';
+import { setSplits } from '../src/core/transactions.js';
 
-// These samples are GUESSES at the common shapes, not captured emails (see docs/STATUS.md): replace with real fixtures after discovery.
-const AMAZON = `Hello,
-Thank you for your order.
-Order #112-3456789-0123456
-Placed on October 3, 2026
+// Fixtures are real emails (HTML parts, tracking attributes and personal details stripped) in test/fixtures/receipts.
+interface Fx { headers: Record<string, string>; text: string; html: string }
+const fx = (n: string): Fx => JSON.parse(readFileSync(new URL(`./fixtures/receipts/${n}.json`, import.meta.url), 'utf8'));
+const body = (n: string) => htmlToText(fx(n).html);
+/** What the Apps Script forwarder posts: plain text (often empty) + html + headers. */
+const payload = (n: string) => JSON.stringify({ text: fx(n).text, html: fx(n).html, headers: fx(n).headers });
+const cap = (h: ReturnType<typeof seedHousehold>, source: string, n: string, extra: Record<string, unknown> = {}) =>
+  captureEvent(h.db, { source, channel: 'email', payload: payload(n), headers: fx(n).headers, dedupeKey: n + JSON.stringify(extra) } as any);
 
-Bags - Resealable Cellophane (100 Pack)
-Quantity: 1
-$12.99
-
-Photo Sleeves, Clear (50 count)
-Quantity: 2
-$8.50
-
-Order Total: $23.99
-Arriving Tuesday`;
-const VENMO = `You paid Sam Lee $15.00
-🍕🍝🍷
-Transfer Date and Amount:
-Oct 3, 2026 · - $15.00
-Payment ID: 1234`;
-
-describe('experimental receipt parsers', () => {
-  it('amazon: order ref, total, items and the skills\' lowercase-noun note convention', () => {
-    const o = parseAmazonOrder(AMAZON)!;
-    expect(o).toMatchObject({ orderRef: '112-3456789-0123456', totalCents: 2399 });
-    expect(o.items).toEqual([{ name: 'Bags - Resealable Cellophane (100 Pack)', qty: 1, cents: 1299 }, { name: 'Photo Sleeves, Clear (50 count)', qty: 2, cents: 850 }]);
-    expect(amazonNote(o.items)).toBe('bags,photo sleeves');
-    expect(parseAmazonOrder('Your package was delivered')).toBeNull();
-    expect(parseAmazonOrder('Order #112-3456789-0123456 shipped')).toBeNull(); // strict: a total is required
+describe('real-email parsers', () => {
+  it('htmlToText keeps inline-split amounts together and drops invisible padding', () => {
+    expect(htmlToText('<div><span>$</span><span>15</span><span>.</span><span>00</span></div><p>a&nbsp;&zwnj;b&amp;c</p>')).toBe('$15.00\na b&c');
   });
-  it('venmo and paypal shapes', () => {
-    expect(parseVenmo(VENMO)).toEqual({ counterparty: 'Sam Lee', cents: -1500, note: '🍕🍝🍷' });
-    expect(parseVenmo('Sam Lee paid you $20.00\nrent')).toMatchObject({ cents: 2000, counterparty: 'Sam Lee', note: 'rent' });
+  it('amazon: two orders in one "Ordered 3 items" email, category summary as the note', () => {
+    for (const text of [body('amazon_order'), fx('amazon_order').text]) { // html part and the forwarder's plain text
+      const os = parseAmazonOrders(text);
+      expect(os.map((o) => [o.totalCents, o.orderRef.length])).toEqual([[2810, 19], [5747, 19]]);
+    }
+    const os = parseAmazonOrders(body('amazon_order'));
+    expect(os[0].items).toEqual([{ name: 'Pet Supplies', qty: 1, cents: 0 }, { name: 'Skin Care', qty: 1, cents: 0 }]);
+    expect(amazonNote(os[0].items)).toBe('pet supplies,skin care');
+    expect(amazonNote(os[1].items)).toBe('pet supplies');
+    expect(parseAmazonOrders('Your package was delivered')).toEqual([]);
+    expect(parseAmazonOrders('Order # 112-3456789-0123456 shipped')).toEqual([]); // strict: a total is required
+  });
+  it('venmo: paid and received, amount split across elements, memo, date and id', () => {
+    expect(parseVenmo(body('venmo_paid'))).toMatchObject({ counterparty: 'Casey Lind', cents: -17800, date: '2026-09-13', note: '🎉' });
+    expect(parseVenmo(body('venmo_received'))).toMatchObject({ counterparty: 'Jordan Reed', cents: 1500, date: '2026-09-12', note: '💸 to Sample Group' });
+    expect(parseVenmo(body('venmo_paid'))!.txnId).toMatch(/^\d{10,}$/);
     expect(parseVenmo('Welcome to Venmo')).toBeNull();
-    expect(parsePayPal('You sent a payment of $12.50 USD to Instant Ink\nThanks')).toEqual({ cents: -1250, merchant: 'Instant Ink' });
+    expect(parseVenmo('You paid Sam Lee $15.00')).toBeNull(); // no transaction details block
+  });
+  it('paypal: receipt (RT000403) and merchant payment with items (RT001736)', () => {
+    expect(parsePayPal(body('paypal_receipt'))).toMatchObject({ merchant: 'Sample Shop', cents: -500, date: '2026-07-22', statement: 'PAYPAL *SAMPLESHOP SAMPLESHOP', items: [] });
+    expect(parsePayPal(body('hulu_paypal'))).toMatchObject({ merchant: 'Hulu', cents: -1365, date: '2026-09-28', items: [{ name: 'Hulu with Ads', qty: 1, cents: 1365 }] });
     expect(parsePayPal('Your statement is ready')).toBeNull();
   });
+  it('wells fargo account update: account, as-of date and lines', () => {
+    expect(parseWfNotice(body('wf_purchase'))).toEqual({ last4: '2222', asOf: '2026-10-02', lines: [{ description: expect.stringMatching(/^PURCHASE\s+AUTHORIZED ON\s+09\/29 ACE PARKING/), cents: -1400 }] });
+    expect(parseWfNotice(body('wf_greenlight'))).toMatchObject({ last4: '1111', asOf: '2026-09-26', lines: [{ cents: -662 }] });
+    expect(parseWfNotice(fx('wf_purchase').text)).toBeNull(); // empty plain part: only the HTML part carries it (the forwarder falls back to html)
+    expect(parseWfNotice('Your balance is low')).toBeNull();
+    expect(parseWfNotice("Here's the rundown for account ...1111 Deposits PAYROLL ACME $1,234.50 As of 10/02/2026 at 1:00 a.m.")).toMatchObject({ lines: [{ description: 'PAYROLL ACME', cents: 123450 }] });
+  });
+  it('line date: the purchase date, with the year rolled back across New Year', () => {
+    expect(lineDate('PURCHASE AUTHORIZED ON 09/29 ACE PARKING', '2026-10-02')).toBe('2026-09-29');
+    expect(lineDate('PURCHASE AUTHORIZED ON 12/31 X', '2027-01-02')).toBe('2026-12-31');
+    expect(lineDate('GREENLIGHT APP 260925', '2026-09-26')).toBe('2026-09-26');
+  });
 
-  describe('end to end (opt-in)', () => {
+  describe('end to end', () => {
     beforeEach(() => clearParsers());
-    it('is off by default: events are captured and stay pending, nothing is created', () => {
-      const h = seedHousehold(); registerAllParsers({ experimental: false });
-      captureEvent(h.db, { source: 'amazon_receipt', channel: 'email', payload: AMAZON });
-      expect(replay(h.db).replayed).toBe(0);
-      expect(h.db.prepare("SELECT parse_status s FROM raw_events").get()).toEqual({ s: 'pending' });
-      expect(h.db.prepare('SELECT COUNT(*) c FROM external_notes').get()).toEqual({ c: 0 });
-    });
-    it('amazon receipt becomes a note with items, then auto-matches the later bank charge; a duplicate email adds nothing', () => {
-      const h = seedHousehold(); registerAllParsers({ experimental: true });
-      const e1 = captureEvent(h.db, { source: 'amazon_receipt', channel: 'email', payload: AMAZON, headers: { Date: 'Sat, 03 Oct 2026 10:00:00 -0700' }, dedupeKey: 'm1' });
-      parseEvent(h.db, e1.id);
-      const e2 = captureEvent(h.db, { source: 'amazon_receipt', channel: 'email', payload: AMAZON, headers: { Date: 'Sat, 03 Oct 2026 10:05:00 -0700' }, dedupeKey: 'm2' });
-      parseEvent(h.db, e2.id);
-      expect(h.db.prepare('SELECT COUNT(*) c FROM external_notes').get()).toEqual({ c: 1 });
-      expect(h.db.prepare('SELECT COUNT(*) c FROM external_note_items').get()).toEqual({ c: 2 });
-      const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-05', amountCents: -2399, descriptor: 'AMZN Mktp US*2K4LM9' });
+    it('amazon email becomes one note per order; the same email twice adds nothing; the bank charge picks the note up', () => {
+      const h = seedHousehold(); registerAllParsers();
+      parseEvent(h.db, cap(h, 'amazon_receipt', 'amazon_order').id);
+      parseEvent(h.db, cap(h, 'amazon_receipt', 'amazon_order', { again: 1 }).id);
+      expect(h.db.prepare('SELECT COUNT(*) c FROM external_notes').get()).toEqual({ c: 2 });
+      expect(h.db.prepare('SELECT COUNT(*) c FROM external_note_items').get()).toEqual({ c: 3 });
+      const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-09-24', amountCents: -5747, descriptor: 'AMZN Mktp US*2K4LM9' });
       runNoteMatcher(h.db);
-      expect(h.db.prepare('SELECT note, note_state s FROM transactions WHERE id=?').get(t)).toEqual({ note: 'bags,photo sleeves', s: 'auto_matched' });
+      expect(h.db.prepare('SELECT note FROM transactions WHERE id=?').get(t)).toEqual({ note: 'pet supplies' });
     });
-    it('venmo with a vague emoji note matches but is flagged for a real note; unknown shapes stay unrecognized', () => {
-      const h = seedHousehold(); registerAllParsers({ experimental: true });
-      const v = captureEvent(h.db, { source: 'venmo_receipt', channel: 'email', payload: 'You paid Sam Lee $15.00\n🍕\nPayment ID: 1', headers: { Date: 'Fri, 02 Oct 2026 12:00:00 -0700' } });
-      parseEvent(h.db, v.id);
-      const t = createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-10-04', amountCents: -1500, descriptor: 'VENMO PAYMENT 261003 1000000001 BRYS' });
-      runNoteMatcher(h.db);
-      expect(h.db.prepare('SELECT note_state s, flag_reason f FROM transactions WHERE id=?').get(t)).toMatchObject({ s: 'needs_note' });
-      const u = captureEvent(h.db, { source: 'paypal_receipt', channel: 'email', payload: 'Weekly summary' });
-      expect(parseEvent(h.db, u.id)).toMatchObject({ status: 'unrecognized' });
+    it('venmo and paypal: forwarded html is parsed, a repeat of the same transaction id is one note, other mail stays unrecognized', () => {
+      const h = seedHousehold(); registerAllParsers();
+      for (const [s, n] of [['venmo_receipt', 'venmo_paid'], ['paypal_receipt', 'paypal_receipt'], ['paypal_receipt', 'hulu_paypal']] as const) expect(parseEvent(h.db, cap(h, s, n).id)).toEqual({ status: 'ok' });
+      parseEvent(h.db, cap(h, 'venmo_receipt', 'venmo_paid', { again: 1 }).id);
+      expect(h.db.prepare('SELECT source, amount_cents c, occurred_on d, counterparty FROM external_notes ORDER BY id').all()).toEqual([
+        { source: 'venmo', c: -17800, d: '2026-09-13', counterparty: 'Casey Lind' }, { source: 'paypal', c: -500, d: '2026-07-22', counterparty: 'Sample Shop' }, { source: 'paypal', c: -1365, d: '2026-09-28', counterparty: 'Hulu' }]);
+      expect(parseEvent(h.db, captureEvent(h.db, { source: 'paypal_receipt', channel: 'email', payload: 'Weekly summary' }).id)).toMatchObject({ status: 'unrecognized' });
     });
+    it('wells fargo alerts: need the account last 4; then create provisionals, dedupe, and the bank file supersedes them', () => {
+      const h = seedHousehold(); registerAllParsers();
+      const ev = cap(h, 'wf_notice', 'wf_purchase');
+      expect(parseEvent(h.db, ev.id)).toMatchObject({ status: 'error', error: expect.stringContaining('2222') });
+      h.db.prepare("UPDATE accounts SET last4='2222' WHERE id=?").run(h.wf);
+      expect(parseEvent(h.db, ev.id)).toEqual({ status: 'ok' });
+      expect(h.db.prepare("SELECT status, amount_cents c, occurred_on d, review_state r FROM transactions WHERE account_id=?").all(h.wf)).toEqual([{ status: 'provisional', c: -1400, d: '2026-09-29', r: 'needs_category' }]);
+      parseEvent(h.db, cap(h, 'wf_notice', 'wf_purchase', { again: 1 }).id);
+      expect(h.db.prepare('SELECT COUNT(*) c FROM transactions WHERE account_id=?').get(h.wf)).toEqual({ c: 1 });
+      // a posted row already in the books: the alert adds nothing
+      h.db.prepare("UPDATE accounts SET last4='1111' WHERE id=?").run(h.wf);
+      createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-09-25', amountCents: -662, descriptor: 'GREENLIGHT APP 260925 GREENLIGHT ALEX SAMPLE' });
+      parseEvent(h.db, cap(h, 'wf_notice', 'wf_greenlight').id);
+      expect(h.db.prepare('SELECT COUNT(*) c FROM transactions WHERE account_id=?').get(h.wf)).toEqual({ c: 2 });
+    });
+    it('a bank CSV that repeats a charge the alert already created supersedes it (keeping the answer); a CSV imported first makes the alert a no-op', () => {
+      const h = seedHousehold(); registerAllParsers();
+      h.db.prepare("UPDATE accounts SET last4='2222' WHERE id=?").run(h.wf);
+      parseEvent(h.db, cap(h, 'wf_notice', 'wf_purchase').id);
+      const prov = (h.db.prepare("SELECT id FROM transactions WHERE status='provisional'").get() as any).id;
+      setSplits(h.db, prov, [{ categoryId: h.cats['Fees and Taxes'], amountCents: -1400 }]); // answered from the phone before the file arrives
+      const csv = '10/02/2026,-14.00,*, ,PURCHASE AUTHORIZED ON 09/29 ACE PARKING 3286 BELLVUE WA S306273081194346 CARD 4444\n';
+      const m = suggestMapping(parseCsv(csv)); const sp = { columnMap: m.columnMap, dateFormat: m.dateFormat, signRule: m.signRule, skipRows: 0 };
+      expect(commitImport(h.db, 'Wells Fargo', csv, sp, { accountId: h.wf }).imported).toBe(1);
+      expect(h.db.prepare("SELECT status, COUNT(*) c FROM transactions GROUP BY status ORDER BY status").all()).toEqual([{ status: 'posted', c: 1 }, { status: 'void', c: 1 }]);
+      const posted = (h.db.prepare("SELECT id FROM transactions WHERE status='posted'").get() as any).id;
+      expect(h.db.prepare('SELECT category_id c FROM transaction_splits WHERE transaction_id=?').get(posted)).toEqual({ c: h.cats['Fees and Taxes'] });
+      // the other order: the alert for an already-imported charge is ignored
+      parseEvent(h.db, cap(h, 'wf_notice', 'wf_purchase', { late: 1 }).id);
+      expect(h.db.prepare("SELECT COUNT(*) c FROM transactions WHERE status!='void'").get()).toEqual({ c: 1 });
+    });
+  });
+});
+
+describe('account last 4 (wells fargo alert routing)', () => {
+  it('PATCH validates, is unique per institution, and can clear', async () => {
+    const { buildApp } = await import('../src/server/app.js'); const h = seedHousehold();
+    h.db.prepare("INSERT INTO accounts(name,institution,type) VALUES ('Wells Fargo 2','Wells Fargo','bank')").run();
+    const app = buildApp(h.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 's' }, now: () => '2026-10-04' }); const patch = (id: number, last4: unknown) => app.inject({ method: 'PATCH', url: `/api/accounts/${id}`, headers: { 'x-requested-with': 'hearthkeeper' }, payload: { last4 } });
+    expect((await patch(h.wf, '1234')).statusCode).toBe(200);
+    expect((await patch(h.wf, '12')).statusCode).toBe(400);
+    expect((await patch(h.wf + 100, '1234')).statusCode).toBe(404);
+    const other = (h.db.prepare("SELECT id FROM accounts WHERE name='Wells Fargo 2'").get() as any).id;
+    expect((await patch(other, '1234')).statusCode).toBe(409);
+    expect((await patch(h.wf, null)).statusCode).toBe(200);
+    expect((await patch(other, '1234')).statusCode).toBe(200);
   });
 });

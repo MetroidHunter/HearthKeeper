@@ -42,6 +42,19 @@ Chase alerts sent through the same automation are recognised by their wording ("
 8. **Check.** The run also sends a signed heartbeat, so Ingest health shows `receiver-mailbox` seen within five minutes even before a real alert arrives. When a real Chase alert lands, it appears on Home / Backlog as a pending ("provisional") transaction; the bank CSV later turns it into the posted one.
 If an alert shows as *unrecognized* on Ingest health, the email wording differs from the SMS wording the parser was written against. Send me a copy with your name and card digits removed and I will add the shape and replay it.
 
+## 3b. Wells Fargo, Venmo, PayPal and Amazon emails → receiver mailbox
+
+These four are parsed from real sample emails (the same receiver mailbox and Apps Script as Chase; `HK_DISABLE_RECEIPT_PARSERS=1` turns the receipt ones off). In Gmail, add a forwarding filter on each real mailbox for the senders below, so the mail reaches the receiver mailbox (the Apps Script labels and posts it):
+
+| Sender | What it becomes |
+|---|---|
+| `notify.wellsfargo.com` — "Your account update is here" (daily rundown: withdrawals, and deposits if you have them) | A provisional transaction on the Wells Fargo account whose last 4 digits match. **First set the last 4 for each Wells Fargo account in Settings**; until then these emails wait (an error on the Data page) and are parsed when you save the digits and replay. The bank CSV later replaces them, keeping any category/note you set. |
+| `venmo.com` — "You paid X $N" / "X paid you $N" | A note (memo, person, amount, date) that the matcher attaches to the matching bank/card charge. |
+| `paypal.com` — "Receipt for your PayPal payment", and merchant payment confirmations ("Hulu: $13.65 USD") | A note with the merchant (and items when listed). |
+| `amazon.com` — "Ordered N items: …" | One note per order, with the order's total and its category summary ("pet supplies,skin care"). Amazon's email does not name products, so the note is only as specific as that. |
+
+Not handled (left as "unrecognized" on purpose): shipping/delivery mail, Venmo requests, PayPal refunds, and balance-only Wells Fargo alerts. Uploading a bank CSV later is always safe: rows already created from an alert are replaced by the posted row, not duplicated.
+
 ## 4. What "working" looks like after a day
 - Ingest health: both sources seen recently, nothing pending or failed.
 - Home: new purchases appear within minutes, each with a clear reason it needs you.

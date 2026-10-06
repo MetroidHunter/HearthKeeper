@@ -21,9 +21,9 @@ export function deviceName(ua?: string | null) {
 /** Notifications settings (design §15.3): verbose by default; quiet hours and lock-screen privacy off until you want them. */
 @customElement('hk-settings')
 export class Settings extends Page {
-  @state() prefs: any = null; @state() digest: any = null; @state() status = ''; @state() theme: Theme = getTheme(); @state() devices: any[] = []; @state() thisEndpoint: string | null = null; @state() canPush = true;
+  @state() prefs: any = null; @state() digest: any = null; @state() status = ''; @state() theme: Theme = getTheme(); @state() devices: any[] = []; @state() thisEndpoint: string | null = null; @state() canPush = true; @state() accounts: any[] = [];
   connectedCallback() { super.connectedCallback(); this.load(); }
-  async load() { await this.run(async () => { [this.prefs, this.digest, this.devices] = await Promise.all([api.get('/api/me/notify-prefs'), api.get('/api/digest'), api.get('/api/push/devices')]); }); this.thisEndpoint = (await this.thisSub())?.endpoint ?? null; }
+  async load() { await this.run(async () => { [this.prefs, this.digest, this.devices, this.accounts] = await Promise.all([api.get('/api/me/notify-prefs'), api.get('/api/digest'), api.get('/api/push/devices'), api.get('/api/accounts')]); }); this.thisEndpoint = (await this.thisSub())?.endpoint ?? null; }
   /** This browser's own push subscription, if it has one. Never waits forever: a browser with no service worker answers null. */
   private async thisSub(): Promise<PushSubscription | null> {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) { this.canPush = false; return null; }
@@ -88,6 +88,9 @@ export class Settings extends Page {
         <div class="row" style="margin-top:8px"><label><input type="checkbox" id="privacy" .checked=${p.lockScreenPrivacy} @change=${(e: any) => this.save({ lockScreenPrivacy: e.target.checked })} /> Hide merchant and amount on the lock screen</label></div>
       </div>
       ${this.status ? html`<p class="muted" role="status">${this.status}</p>` : ''}
+      ${(() => { const wf = this.accounts.filter((a) => a.institution === 'Wells Fargo'); return wf.length ? html`<h2>Wells Fargo alert emails</h2>
+        <div class="card"><p class="muted" style="margin-top:0">The alert says "for account …1234". Enter each account's last 4 digits so alerts land on the right account.</p>
+          ${wf.map((a) => html`<div class="row"><span class="grow">${a.name}</span><input class="last4" inputmode="numeric" maxlength="4" size="4" placeholder="1234" aria-label="Last 4 digits of ${a.name}" .value=${a.last4 ?? ''} @change=${async (e: any) => { try { await api.patch(`/api/accounts/${a.id}`, { last4: e.target.value }); a.last4 = e.target.value || null; toast('Saved'); } catch (x: any) { toast(x.message ?? 'Could not save'); await this.load(); } }} /></div>`)}</div>` : nothing; })()}
       <h2>Today's digest preview</h2>
       <div class="card"><b>${this.digest?.text}</b>
         ${this.digest?.autoCategorized.length ? html`<h2>Auto-categorized in the last day</h2>${this.digest.autoCategorized.slice(0, 12).map((a: any) => html`<div class="row"><span class="grow">${a.descriptor}</span><span class="muted">${a.category ?? ''}</span></div>`)}` : ''}</div>`;
