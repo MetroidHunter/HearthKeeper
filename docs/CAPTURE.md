@@ -1,7 +1,7 @@
 # Connecting live capture
 
 Two feeds, two tokens (both are already in your database; read them with
-`node --import tsx src/seed/cli.ts tokens` run from the checkout on the box, as root or the `hearthkeeper` user, with `HK_DATA_DIR=/var/lib/hearthkeeper` set).
+`sudo make tokens` on the box, from any checkout; it prints label, channel and secret).
 
 | Feed | Token label | How it authenticates | Used by |
 |---|---|---|---|

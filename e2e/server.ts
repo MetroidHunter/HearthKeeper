@@ -36,6 +36,13 @@ app.post('/__e2e/seed-reserved', async () => {
   grandfatherSeed(db);
   return { categoryId: (db.prepare('SELECT id FROM categories WHERE name=?').get(SEED_LABEL) as { id: number }).id };
 });
+// seed a push device with a chosen user-agent (a browser cannot set that header itself)
+app.post('/__e2e/push-device', async (req) => {
+  const b = req.body as { endpoint: string; ua: string };
+  const uid = (db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get() as { id: number }).id;
+  db.prepare('INSERT OR REPLACE INTO push_subscriptions(user_id, endpoint, p256dh, auth, user_agent) VALUES (?,?,?,?,?)').run(uid, b.endpoint, 'k', 'a', b.ua);
+  return { ok: true };
+});
 const port = Number(process.env.E2E_API_PORT ?? 8765);
 await app.listen({ port, host: '127.0.0.1' });
 console.log(`E2E_READY ${port}`);

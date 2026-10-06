@@ -133,4 +133,19 @@ describe('notifications (verbose first, design §15.3)', () => {
     expect(s.t.sent.some((x) => x.payload.title === 'HearthKeeper test')).toBe(true);
     expect((await app.inject({ url: '/api/digest' })).json().text).toMatch(/need you/);
   });
+
+  it('device list: you see and remove only your own devices', async () => {
+    const s = setup();
+    const app = buildApp(s.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 'x' }, notifier: s.n });
+    const H = { 'x-requested-with': 'hearthkeeper' };
+    const mine = s.db.prepare('SELECT id, endpoint FROM push_subscriptions WHERE user_id=?').all(s.u1) as any[];
+    const theirs = s.db.prepare('SELECT id, endpoint FROM push_subscriptions WHERE user_id=?').get(s.u2) as any;
+    const list = (await app.inject({ url: '/api/push/devices' })).json();
+    expect(list.map((d: any) => d.id)).toEqual(mine.map((m) => m.id)); // dev mode acts as the first user
+    expect((await app.inject({ method: 'DELETE', url: `/api/push/devices/${theirs.id}`, headers: H })).json()).toEqual({ removed: 0 });
+    await app.inject({ method: 'POST', url: '/api/push/unsubscribe', headers: H, payload: { endpoint: theirs.endpoint } });
+    expect(s.db.prepare('SELECT COUNT(*) c FROM push_subscriptions WHERE user_id=?').get(s.u2)).toEqual({ c: 1 }); // untouched
+    expect((await app.inject({ method: 'DELETE', url: `/api/push/devices/${mine[0].id}`, headers: H })).json()).toEqual({ removed: 1 });
+    expect((await app.inject({ url: '/api/push/devices' })).json()).toHaveLength(mine.length - 1);
+  });
 });

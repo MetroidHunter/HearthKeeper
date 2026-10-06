@@ -20,7 +20,7 @@ SNAPSHOT_FILE = $(notdir $(SNAPSHOT))
 MANIFEST_FILE = $(notdir $(SNAPSHOT_MANIFEST))
 ZONE_ARG = $(if $(ZONE),--zone $(ZONE),)
 
-.PHONY: help bootstrap update install-data push-data
+.PHONY: help bootstrap update install-data push-data tokens
 
 help: ## list the targets
 	@awk -F':.*## ' '/^[a-z-]+:.*## /{printf "  %-13s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -199,6 +199,14 @@ install-data: ## [box, sudo] install an uploaded snapshot (SNAPSHOT=..., FORCE=1
 	echo "==> installed. Previous database kept in $$KEEP"
 	echo "    ingest tokens now in effect:"; HK tokens | awk '{print "      "$$1" ("$$2")"}'
 	rm -f "$$GZ" "$${GZ%.sqlite.gz}.manifest.json"
+
+# Prints the ingest token secrets (for the IFTTT URL and the receiver script). Runs from the deployed app, whichever checkout you are in.
+tokens: ## [box, sudo] print the ingest token secrets
+	[ "$$(id -u)" = 0 ] || { echo "run as root: sudo make tokens"; exit 1; }
+	set -a; source /etc/hearthkeeper.env; set +a
+	APP=/opt/hearthkeeper; [ -d "$$APP/node_modules" ] || APP=$$PWD
+	echo "label	channel	secret"
+	cd "$$APP" && node --import tsx src/seed/cli.ts tokens
 
 # Uploads a snapshot to the VM and installs it there. Written with plain commands (no shell syntax) so it also runs under Windows make.
 push-data: ## [laptop] upload a snapshot and install it on the VM (SNAPSHOT=, VM=, ZONE=, FORCE=1)

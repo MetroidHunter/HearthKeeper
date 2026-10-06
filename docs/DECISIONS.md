@@ -102,3 +102,6 @@ Needs attention first (collapsible, open by default, the choice remembered per d
 
 ## D64. Needs attention starts collapsed; one phone automation can feed Chase too
 The Home "Needs attention" section is collapsed on a fresh device (the count stays visible in its heading) and remembers how you leave it. On the device channel a Chase card alert sent without an explicit `source` is recognised by its wording and stored as `chase_alert`, so a single IFTTT automation can forward both Greenlight and Chase notifications. Setup steps are in `docs/CAPTURE.md`.
+
+## D65. Notification devices: one switch per device, no master checkbox
+Settings lists the signed-in person's devices (browser and OS from the user-agent, "This device" badge, added and last-delivered dates) with Remove, and the main button reflects this browser: "Turn on notifications on this device" when it is not subscribed, "Turn off notifications on this device" when it is. The old "Send push notifications to me" checkbox is gone from the UI because it duplicated what removing devices does and nobody could tell the two apart; the stored preference remains, and if an old setting left it off a banner offers to turn it back on. The unsubscribe endpoint now only removes the caller's own subscriptions. `sudo make tokens` prints the ingest token secrets from the deployed app.

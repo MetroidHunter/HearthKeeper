@@ -152,8 +152,8 @@ describe('Settings: notifications', () => {
 
   it('shows verbose defaults, saves quiet hours / digest hour / privacy, and previews the digest', async () => {
     await mount('/settings');
-    await waitFor(() => $('#push'), 'prefs');
-    expect($('#push').checked).to.equal(true);
+    await waitFor(() => $('#quiet'), 'prefs');
+    expect($('#push')).to.not.exist; // no separate master switch: each device is on or off by itself
     expect($('#quiet').checked).to.equal(false);   // verbose first: quiet hours off by default
     expect($('#privacy').checked).to.equal(false);
     $('#quiet').click(); await waitFor(async () => (await api('/api/me/notify-prefs')).quiet.enabled === true, 'quiet saved');
@@ -162,6 +162,54 @@ describe('Settings: notifications', () => {
     expect(text(document.body)).to.match(/need you/); // digest preview
     const q = (await api('/api/me/notify-prefs')).quiet;
     expect(q.start).to.equal('22:00');
+  });
+});
+
+describe('Settings: notification devices', () => {
+  let trap, real;
+  beforeEach(async () => { await reset(); trap = trapErrors(); real = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker'); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); if (real) Object.defineProperty(navigator, 'serviceWorker', real); else delete navigator.serviceWorker; });
+  const sub = (endpoint, ua) => api('/__e2e/push-device', { method: 'POST', body: { endpoint, ua } });
+  /** Pretend this browser holds a push subscription (headless Chrome has no push service). */
+  const thisBrowserIs = (endpoint) => Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { register: async () => undefined, controller: null, ready: Promise.resolve({ pushManager: { getSubscription: async () => (endpoint ? { endpoint, unsubscribe: async () => true } : null) } }) } });
+
+  it('lists the devices, marks this one, offers Turn off here, and removes a device after confirming', async () => {
+    await sub('https://push.example/phone', 'Mozilla/5.0 (Linux; Android 14) AppleWebKit Chrome/120 Mobile Safari/537.36');
+    await sub('https://push.example/laptop', 'Mozilla/5.0 (Windows NT 10.0) Chrome/120 Edg/120');
+    thisBrowserIs('https://push.example/phone');
+    await mount('/settings');
+    await waitFor(() => $$('#devices .device').length === 2, 'two devices listed');
+    const names = $$('#devices .device').map((d) => text(d));
+    expect(names.some((n) => /Chrome on Android/.test(n) && /This device/.test(n))).to.equal(true);
+    expect(names.some((n) => /Edge on Windows/.test(n) && !/This device/.test(n))).to.equal(true);
+    expect($('#disable')).to.exist; expect($('#enable')).to.not.exist; // this browser is subscribed: the button now turns it off
+    expect(text($('#disable'))).to.match(/Turn off notifications on this device/);
+    byText('button', /^Remove$/, $$('#devices .device').find((d) => /Edge/.test(text(d)))).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Stop notifications to Edge on Windows/.test(text(d))), 'confirm');
+    byText('button', /Remove device/, dlg).click();
+    await waitFor(async () => (await api('/api/push/devices')).length === 1, 'device removed on the server');
+    await waitFor(() => $$('#devices .device').length === 1, 'list updated');
+  });
+
+  it('on a browser that is not subscribed the button offers to turn notifications on', async () => {
+    await sub('https://push.example/other', 'Mozilla/5.0 (iPhone) Safari/604');
+    thisBrowserIs(null);
+    await mount('/settings');
+    await waitFor(() => $('#enable'), 'enable button');
+    expect(text($('#enable'))).to.match(/Turn on notifications on this device/);
+    expect($('#disable')).to.not.exist;
+    expect(text($('#devices'))).to.match(/Safari on iPhone/);
+    expect($('#devices .device .badge')).to.not.exist; // none of the listed devices is this one
+  });
+
+  it('turning off here removes this device from the list', async () => {
+    await sub('https://push.example/me', 'Mozilla/5.0 (Macintosh; Intel Mac OS X) Chrome/120');
+    thisBrowserIs('https://push.example/me');
+    await mount('/settings');
+    await waitFor(() => $('#disable'), 'disable button');
+    $('#disable').click();
+    await waitFor(async () => (await api('/api/push/devices')).length === 0, 'unsubscribed on the server');
+    await waitFor(() => $('#enable') && /No devices yet/.test(text(document.body)), 'page now offers to turn on');
   });
 });
 

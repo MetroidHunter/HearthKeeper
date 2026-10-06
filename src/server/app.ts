@@ -103,10 +103,13 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     if (!b.endpoint || !b.keys?.p256dh || !b.keys?.auth) return reply.code(400).send({ error: 'endpoint and keys are required' });
     if (!isPublicHttps(String(b.endpoint))) return reply.code(400).send({ error: 'push endpoint must be a public https URL' }); // the server POSTs to this URL: no internal addresses
     db.prepare(`INSERT INTO push_subscriptions(user_id, endpoint, p256dh, auth, user_agent) VALUES (?,?,?,?,?)
-      ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth`).run(uid, b.endpoint, b.keys.p256dh, b.keys.auth, String(req.headers['user-agent'] ?? ''));
+      ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent`).run(uid, b.endpoint, b.keys.p256dh, b.keys.auth, String(req.headers['user-agent'] ?? ''));
     return { ok: true };
   });
-  app.post('/api/push/unsubscribe', async (req) => { db.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').run(rec(req.body).endpoint); return { ok: true }; });
+  // Only your own devices: a device list entry can be removed by its owner and nobody else.
+  app.get('/api/push/devices', async (req: any) => { const uid = userIdOf(req); return uid ? db.prepare('SELECT id, endpoint, user_agent, created_at, last_ok_at FROM push_subscriptions WHERE user_id=? ORDER BY id').all(uid) : []; });
+  app.delete('/api/push/devices/:id', async (req: any) => { const uid = userIdOf(req); const n = uid ? db.prepare('DELETE FROM push_subscriptions WHERE id=? AND user_id=?').run(Number(req.params.id), uid).changes : 0; return { removed: n }; });
+  app.post('/api/push/unsubscribe', async (req: any) => { const uid = userIdOf(req); if (uid) db.prepare('DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?').run(rec(req.body).endpoint, uid); return { ok: true }; });
   app.post('/api/push/test', async (req: any, reply) => {
     const uid = userIdOf(req);
     if (!opts.notifier || !uid) return reply.code(400).send({ error: 'push is not configured on this server' });
