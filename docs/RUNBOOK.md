@@ -36,7 +36,7 @@ HK_DATA_DIR=./data npm run hk -- backtest-rules                                 
 - Keep the Sheets applet running (dual-run) for a month; compare.
 
 ## 6. Deploy and move the data
-See `docs/DEPLOY.md`: `deploy/build-prod-db.sh` (steps 1, 2 and 4 above in one repeatable script), `deploy/push-code.sh` and `deploy/push-data.sh`.
+See `docs/DEPLOY.md` and `make help`.
 
 ## 7. First close
 Run one close in the app (**Close**), keep the sheets read-only for another month, then archive them and turn off the IFTTT Sheets applet.

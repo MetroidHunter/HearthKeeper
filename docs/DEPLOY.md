@@ -1,59 +1,29 @@
-# Deploying HearthKeeper (and moving your data)
+# Deploying HearthKeeper
 
-Everything here is a script in `deploy/`; nothing needs hand-typed commands on the VM. Scripts marked **laptop** run on your computer, **vm** on the server.
+All deploy tasks are targets in the top-level `Makefile`; `make help` lists them. The box needs `make` (`sudo apt-get install -y make`).
 
-| Script | Where | What it does |
+| Target | Where | What it does |
 |---|---|---|
-| `gcp-setup.sh` | laptop | Firewall (80/443) and static IP; prints the commands for a daily disk-snapshot schedule. *Untested against a real project.* |
-| `push-code.sh` | laptop | Ships the current git commit to the VM as a tarball and runs `bootstrap.sh`. First install and every update. |
-| `bootstrap.sh` | vm | Idempotent host setup: Node 22, Caddy (auto TLS), swap, service user, `npm ci` + build, systemd service, health checks. Remembers its settings in `/etc/hearthkeeper.env`. |
-| `update.sh` | vm | `git pull` the checkout it lives in, then rebuild, restart and health-check via `bootstrap.sh`. `--check` previews. |
-| `build-prod-db.sh` | laptop | Rebuilds the production database from your two spreadsheets, proves parity (exit 1 on mismatch), writes a verified snapshot. |
-| `push-data.sh` (or `push-data.ps1` on Windows) / `install-data.sh` | laptop / vm | Uploads a snapshot and installs it: verified before and after copying, refuses to overwrite live data without `--force`, keeps the old database. |
+| `sudo make bootstrap` | box | Idempotent install and update: Node 22, Caddy (automatic TLS), swap, service user, `npm ci` + build, systemd service, health checks. Asks for the domain, Google client ID and allowed emails if it does not know them, and remembers them in `/etc/hearthkeeper.env`. |
+| `sudo make update` | box | `git pull` this checkout (as its owner), then `bootstrap`. `CHECK=1` only shows what would be deployed. |
+| `sudo make install-data SNAPSHOT=/tmp/x.sqlite.gz` | box | Installs an uploaded snapshot as the live database: verified first, refuses to replace live data without `FORCE=1`, keeps the old database, deletes the uploaded copy. |
+| `make push-data SNAPSHOT=x.sqlite.gz VM=<instance> ZONE=<zone>` | your computer | Uploads a snapshot (and its manifest) with `gcloud`, then runs `install-data` on the VM. `FORCE=1` passes through. Needs `make` and `gcloud` on your machine; it uses only plain commands so it also works with Windows `make`. |
 
-## First deployment
+## First install
+Put the repo on the box, then `cd` into it and run `sudo make bootstrap` from a terminal. Use `https://<domain>/healthz` to check TLS. Add `https://<domain>` as an authorized JavaScript origin on the Google OAuth client.
 
-1. **GCP** (optional): `HK_PROJECT=... HK_VM=... HK_ZONE=... bash deploy/gcp-setup.sh`
-2. **Code and host:**
-   ```
-   HK_VM=<instance> HK_ZONE=<zone> \
-   HK_DOMAIN=hearthkeeper.net \
-   HK_GOOGLE_CLIENT_ID=<id>.apps.googleusercontent.com \
-   HK_ALLOWED_EMAILS=you@gmail.com,partner@gmail.com \
-   bash deploy/push-code.sh
-   ```
-   Any of the three settings you leave out are asked for interactively and saved on the VM in `/etc/hearthkeeper.env`, so on the first run `HK_VM=... HK_ZONE=... bash deploy/push-code.sh` is enough. No gcloud? Use `HK_HOST=user@ip` and plain ssh. At the end the script reports service health, and whether the public HTTPS URL answers (TLS certificate issued).
-3. **Data**: see below. Until you load data the app starts with an empty database.
-4. Open `https://hearthkeeper.net`, sign in with an allowlisted Google account.
+## Updating
+On the box: `sudo make update`. Each run first copies the current database to `/var/backups/hearthkeeper/pre-deploy-<stamp>.sqlite.gz` (the last 14 are kept; rollback aids, not backups) because the app migrates its schema on start. To go back to an older version, check out the older commit and run `sudo make bootstrap`; a migrated schema is rolled back by restoring that copy by hand.
 
-## Data migration
-
-Two supported paths. Both end in the same place: a *snapshot* (`.sqlite.gz` + `.manifest.json`) that is verified, uploaded and installed.
-
-**A. Rebuild from the spreadsheets (the cut-over path).** Export both workbooks as .xlsx with formulas calculated and put them in `private/`, then:
+## Loading data
+A snapshot is `<name>.sqlite.gz` plus `<name>.manifest.json`, kept side by side. `install-data` verifies it (checksums, row counts, SQLite integrity, money invariants, schema not newer than the code) and again after unpacking. The previous database goes to `/var/backups/hearthkeeper/pre-restore-<stamp>/`.
 ```
-HK_USERS="Brys:you@gmail.com;Miracle:partner@gmail.com" bash deploy/build-prod-db.sh     # parity must say PASS
-HK_VM=... HK_ZONE=... bash deploy/push-data.sh private/snapshots/hk-prod-<stamp>.sqlite.gz
+make push-data SNAPSHOT=hk-prod-20261005T230819Z.sqlite.gz VM=hearthekeeper ZONE=us-west1-b
 ```
-`build-prod-db.sh` always starts from an empty directory, so it is repeatable: same sheets + same code = same database. The user list matters because it is stored in the database (used for notification routing); use real emails.
+Snapshots are made with `npm run hk -- snapshot --out <dir>` (check them with `npm run hk -- verify --file <x.sqlite.gz>`). Rebuilding one from the spreadsheets is `tools/xlsx_to_export.py` followed by the `init`, `migrate`, `seed-rules` and `profiles` commands in `docs/RUNBOOK.md`.
 
-**B. Move an existing database** (for example after trying things out locally, or between VMs):
-```
-npm run hk -- snapshot --out private/snapshots          # run with HK_DATA_DIR pointing at the source data
-bash deploy/push-data.sh private/snapshots/<name>.sqlite.gz
-```
-Backups are your GCP disk snapshots (no app-level backup job). SQLite in WAL mode survives a crash-consistent snapshot the same way it survives power loss. To restore, create a disk from a snapshot and attach it; there is no data script involved.
-
-What the verifier proves (`npm run hk -- verify --file x.sqlite.gz`): gzip and SQLite checksums match the manifest, every table has the manifest's row count, SQLite `integrity_check` and `foreign_key_check` pass, money invariants hold (splits sum to amounts, transfer legs sum to zero), and the database does not come from newer code than the one deployed.
-
-### Things to know before you cut over
-- **Ingest tokens live in the database.** Shipping a database ships its tokens, so the IFTTT webhook URL and the Apps Script secret you configure must be the ones in the deployed database: `ssh` in and run `cd /opt/hearthkeeper && sudo node --import tsx src/seed/cli.ts tokens`, or read them from the output of `install-data.sh`. Do not point IFTTT at the VM before the data is installed, or its first captures land in the empty database and `--force` would discard them.
-- **The gap.** The workbook is a point in time. Anything that happened between your export and the day the webhook starts reaching the VM arrives through the backlog CSV import (Imports page); the reconcile logic matches it against what is there.
-- **Rollback.** `install-data.sh` keeps the previous database in `/var/backups/hearthkeeper/pre-restore-<stamp>/`, and `bootstrap.sh` keeps the last 14 local `pre-deploy-<stamp>.sqlite.gz` copies taken before each update (the app migrates the schema on start). These are rollback aids, not backups; they live on the same disk.
-- **Privacy.** A snapshot contains your whole financial history plus ingest secrets and push keys. `private/` is gitignored; keep snapshots out of git and delete the uploaded copy from `/tmp` (the scripts do).
-- **Not tested here:** `bootstrap.sh`, `gcp-setup.sh`, `push-*.sh` and `install-data.sh` need a real VM and gcloud, which this build environment does not have. The data path they wrap (`build-prod-db.sh`, `snapshot`, `verify`) was run end to end on your real sheets: parity PASS, 16,691 transactions, and the snapshot verified. Expect to fix a small thing or two on the first real run; the scripts stop on the first error and say where.
-
-## Updating later
-From the box, inside the checkout: `sudo bash deploy/update.sh`. Or from your computer:
-
-Commit, then `HK_VM=... HK_ZONE=... bash deploy/push-code.sh` (no other variables). It takes a pre-deploy rollback copy, rebuilds, restarts and health-checks.
+## Things to know
+- **Ingest tokens live in the database.** Loading a database loads its tokens; read them with `node --import tsx src/seed/cli.ts tokens` in the checkout. Do not point IFTTT at the box before the data is installed.
+- **The gap.** Anything between your spreadsheet export and the day the webhook starts is brought in with the bank CSV import.
+- **Backups** are GCP disk snapshots (attach a daily schedule to the VM disk). There is no app-level backup job.
+- **Privacy.** A snapshot holds your whole financial history plus ingest secrets and push keys. Delete local copies when done.
