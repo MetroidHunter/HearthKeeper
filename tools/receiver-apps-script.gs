@@ -17,6 +17,7 @@ function forwardNewMail() {
   var label = props.getProperty('HK_TOKEN_LABEL'), secret = props.getProperty('HK_SECRET');
   var newLabel = GmailApp.getUserLabelByName('hk/new'), doneLabel = GmailApp.getUserLabelByName('hk/sent') || GmailApp.createLabel('hk/sent');
   if (!newLabel) throw new Error('Create label hk/new first');
+  ['HK_URL', 'HK_TOKEN_LABEL', 'HK_SECRET'].forEach(function (k) { if (!props.getProperty(k)) throw new Error('Script property ' + k + ' is not set (Project Settings → Script properties; get the values from `sudo make tokens`)'); });
   var threads = newLabel.getThreads(0, 50);
   threads.forEach(function (thread) {
     var ok = true;
