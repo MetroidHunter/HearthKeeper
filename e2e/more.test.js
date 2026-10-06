@@ -76,6 +76,31 @@ describe('Earnings', () => {
   });
 });
 
+describe('Earnings: typing into number fields', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+  /** Type one character at a time like a person, the way the browser reports it: the value so far, then an input event. */
+  const typeInto = async (el, str) => { el.focus(); el.value = ''; for (const ch of str) { el.value += ch; el.dispatchEvent(new Event('input', { bubbles: true })); await sleep(15); } };
+  it('typing keeps what you typed (no reformatting under the cursor) and tidies the number when you leave the box', async () => {
+    await mount('/earnings');
+    byText('button', /New scenario/).click();
+    const card = await waitFor(() => $$('.card').find((c) => /recurring/.test(text(c))), 'editor');
+    const gross = $('input.gross', card), tax = $('input.tax', card), work = $('input.work', card);
+    await typeInto(gross, '220000');
+    expect(gross.value).to.equal('220000'); // not "2200.00" / cents
+    await typeInto(tax, '32.5');
+    expect(tax.value).to.equal('32.5'); // the dot survives
+    await typeInto(work, '92.5');
+    expect(work.value).to.equal('92.5');
+    await waitFor(() => /\$11,|\$12,/.test(text(card)), 'live net recalculated');
+    gross.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => gross.value === '220000.00', 'tidied on blur');
+    byText('button', /^Save$/, card).click();
+    await waitFor(async () => (await api('/api/scenarios')).some((s) => s.lines.some((l) => l.annualSalaryCents === 22000000 && l.taxRateBp === 3250 && l.workTimeBp === 9250)), 'saved with the exact numbers typed');
+  });
+});
+
 describe('Transfers: rebalance', () => {
   let trap;
   beforeEach(async () => { await reset(); trap = trapErrors(); });

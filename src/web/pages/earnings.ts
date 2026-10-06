@@ -10,8 +10,11 @@ export class Earnings extends Page {
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { this.scenarios = await api.get('/api/scenarios'); }); }
   net(l: any) { const g = Math.round(l.annualSalaryCents * (l.workTimeBp ?? 10000) / 10000); return Math.round(g * (10000 - l.taxRateBp) / 10000); }
-  edit(s?: any) { this.draft = s ? { id: s.id, name: s.name, lines: s.lines.map((l: any) => ({ ...l })) } : { name: 'New scenario', lines: [{ person: 'Brys', label: 'Salary', annualSalaryCents: 0, workTimeBp: 10000, taxRateBp: 3200, recurring: true }] }; }
-  async save() { const d = this.draft; await this.run(async () => { if (d.id) await api.put(`/api/scenarios/${d.id}/lines`, { lines: d.lines }); else await api.post('/api/scenarios', { name: d.name, lines: d.lines }); this.draft = null; await this.load(); }); }
+  /** What the user is typing lives in text fields (_gross/_work/_tax) so a re-render never rewrites the box under the cursor; the numbers are derived from it. */
+  private withText(l: any) { return { ...l, _gross: (l.annualSalaryCents / 100).toFixed(2), _work: String((l.workTimeBp ?? 10000) / 100), _tax: String(l.taxRateBp / 100) }; }
+  private num(v: string) { const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return Number.isFinite(n) ? n : 0; }
+  edit(s?: any) { this.draft = s ? { id: s.id, name: s.name, lines: s.lines.map((l: any) => this.withText(l)) } : { name: 'New scenario', lines: [this.withText({ person: 'Brys', label: 'Salary', annualSalaryCents: 0, workTimeBp: 10000, taxRateBp: 3200, recurring: true })] }; }
+  async save() { const d = this.draft; const lines = d.lines.map(({ _gross, _work, _tax, ...l }: any) => l); await this.run(async () => { if (d.id) await api.put(`/api/scenarios/${d.id}/lines`, { lines }); else await api.post('/api/scenarios', { name: d.name, lines }); this.draft = null; await this.load(); }); }
   render() {
     return html`${pageHead('Earnings', 'Income scenarios: salary, work time and tax assumptions that add up to the monthly income your budget is built on.', 'Make a scenario for a raise or a job change and compare it before attaching it to a plan. One-time income (bonuses) is listed but not counted in monthly income.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="row" style="margin-bottom:10px"><button class="primary" @click=${() => this.edit()}>＋ New scenario</button></div>
@@ -25,11 +28,11 @@ export class Earnings extends Page {
     const d = this.draft;
     return html`<div class="card"><div class="row"><input class="grow" .value=${d.name} ?disabled=${!!d.id} @input=${(e: any) => (d.name = e.target.value)} /></div>
       ${d.lines.map((l: any, i: number) => html`<div class="row" style="margin-top:8px"><input style="width:6rem" placeholder="Person" .value=${l.person ?? ''} @input=${(e: any) => (l.person = e.target.value)} /><input style="width:7rem" placeholder="Label" .value=${l.label} @input=${(e: any) => (l.label = e.target.value)} />
-        <label class="muted">Gross <input style="width:8rem" .value=${(l.annualSalaryCents / 100).toFixed(2)} @input=${(e: any) => { l.annualSalaryCents = parseMoney(e.target.value || '0'); this.requestUpdate(); }} /></label>
-        <label class="muted">Work % <input style="width:4rem" .value=${String(l.workTimeBp / 100)} @input=${(e: any) => { l.workTimeBp = Math.round(parseFloat(e.target.value || '0') * 100); this.requestUpdate(); }} /></label>
-        <label class="muted">Tax % <input style="width:4rem" .value=${String(l.taxRateBp / 100)} @input=${(e: any) => { l.taxRateBp = Math.round(parseFloat(e.target.value || '0') * 100); this.requestUpdate(); }} /></label>
+        <label class="muted">Gross <input class="gross" inputmode="decimal" style="width:8rem" .value=${l._gross} @input=${(e: any) => { l._gross = e.target.value; l.annualSalaryCents = Math.round(this.num(l._gross) * 100); this.requestUpdate(); }} @change=${() => { l._gross = (l.annualSalaryCents / 100).toFixed(2); this.requestUpdate(); }} /></label>
+        <label class="muted">Work % <input class="work" inputmode="decimal" style="width:4rem" .value=${l._work} @input=${(e: any) => { l._work = e.target.value; l.workTimeBp = Math.round(this.num(l._work) * 100); this.requestUpdate(); }} @change=${() => { l._work = String(l.workTimeBp / 100); this.requestUpdate(); }} /></label>
+        <label class="muted">Tax % <input class="tax" inputmode="decimal" style="width:4rem" .value=${l._tax} @input=${(e: any) => { l._tax = e.target.value; l.taxRateBp = Math.round(this.num(l._tax) * 100); this.requestUpdate(); }} @change=${() => { l._tax = String(l.taxRateBp / 100); this.requestUpdate(); }} /></label>
         <label class="muted"><input type="checkbox" .checked=${l.recurring} @change=${(e: any) => (l.recurring = e.target.checked)} /> recurring</label>
         <b>${money(Math.round(this.net(l) / 12))}/mo · ${money(Math.round(this.net(l) / 26))} bi-weekly</b><button @click=${() => { d.lines.splice(i, 1); this.requestUpdate(); }}>✕</button></div>`)}
-      <div class="row" style="margin-top:10px"><button @click=${() => { d.lines.push({ label: 'Line', annualSalaryCents: 0, workTimeBp: 10000, taxRateBp: 3200, recurring: true }); this.requestUpdate(); }}>＋ line</button><button @click=${() => (this.draft = null)}>Cancel</button><button class="primary" @click=${() => this.save()}>Save</button></div></div>`;
+      <div class="row" style="margin-top:10px"><button @click=${() => { d.lines.push(this.withText({ label: 'Line', annualSalaryCents: 0, workTimeBp: 10000, taxRateBp: 3200, recurring: true })); this.requestUpdate(); }}>＋ line</button><button @click=${() => (this.draft = null)}>Cancel</button><button class="primary" @click=${() => this.save()}>Save</button></div></div>`;
   }
 }
