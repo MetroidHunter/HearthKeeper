@@ -60,7 +60,7 @@ export class Home extends Page {
 
       <h2>Recent</h2>
       <div class="card flush"><div class="list hover">${this.recent.map((t: any) => html`<div class="list-row"><span class="muted" style="width:62px">${fmtDate(t.occurred_on)}</span>
-        <span class="grow">${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? html`<span class="badge warn">pending</span>` : nothing}</span>
+        <span class="grow">${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? html`<span class="badge warn">pending</span>` : nothing}${t.note ? html`<div class="muted small">${t.note}</div>` : nothing}</span>
         <span class="muted hide-sm">${t.splits[0]?.category ?? ''}</span>${amt(t.amount_cents)}</div>`)}</div></div>`;
   }
   async addDialog() {

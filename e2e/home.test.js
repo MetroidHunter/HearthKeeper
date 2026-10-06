@@ -1,4 +1,4 @@
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, api, pickCat, confirmDialog, setInput } from './helpers.js';
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, api, pickCat, confirmDialog, setInput, openAll } from './helpers.js';
 
 describe('Home (phone view)', () => {
   let trap;
@@ -17,9 +17,9 @@ describe('Home (phone view)', () => {
     const inbox = await api('/api/inbox');
     expect(text(byText('h2', /^Needs you/).nextElementSibling)).to.match(new RegExp(`${inbox.counts.total} item`)); // the headline count is the true count
     expect(inbox.needsCategory[0].why).to.be.a('string');
-    const why = await waitFor(() => $('.why'), 'a why line');
-    expect(text(why)).to.match(/Needs a (category|note)|Flagged|Never posted/);
-    expect(text(why.closest('.card'))).to.match(/Why this needs you/);
+    const why = await waitFor(() => $('.why-text'), 'a why line under a missing item');
+    expect(text(why)).to.match(/rule|merchant|note|sheet|flag|posted|Amazon/i);
+    expect($('.check.missing .mark', why.closest('.card'))).to.exist; // the reason sits under the item with the ?
   });
 
   it('shows the whole transaction line and the transactions around it', async () => {
@@ -34,10 +34,10 @@ describe('Home (phone view)', () => {
 
   it('picking a suggestion asks first and shows the budget change; Yes saves, Cancel does not', async () => {
     await mount('/');
-    const card = await waitFor(() => $$('.card.txn').find((c) => $('button.option', c)), 'a needs-you card with suggestions');
+    const card = await waitFor(() => $$('.card.txn').find((c) => $('button.quick', c)), 'a needs-you card with suggestions');
     const name = text($('b', card));
     const before = (await api('/api/inbox')).counts.needsCategory;
-    const opt = $('button.option', card);
+    const opt = $('button.quick', card);
     opt.click();
     let dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'confirm dialog');
     expect(text(dlg)).to.match(/Balance now/); expect(text(dlg)).to.match(/Balance after/);
@@ -53,6 +53,7 @@ describe('Home (phone view)', () => {
   it('any category can be found by typing in the search box', async () => {
     await mount('/');
     const card = await waitFor(() => $('.card.txn'), 'a needs-you card');
+    openAll(card);
     const picker = $('hk-category-select', card);
     await pickCat(picker, 'Gas');
     const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as Gas/.test(text(d))), 'confirm dialog for Gas');
@@ -86,6 +87,7 @@ describe('Home (phone view)', () => {
     const card = await waitFor(() => $$('.card.txn').find((c) => /El Rinconsito|Greenlight wallet/i.test(text(c))), 'the Greenlight spend card');
     const id = Number(card.dataset.id);
     const before = (await api('/api/budget')).rows.find((r) => r.name === 'Gas');
+    openAll(card);
     await pickCat($('hk-category-select', card), 'Gas');
     await confirmDialog(/Yes, categorize/);
     await waitFor(() => !$$('.card.txn').some((c) => Number(c.dataset.id) === id), 'the card to leave Needs you');
@@ -100,11 +102,11 @@ describe('Home (phone view)', () => {
 
   it('a failed save is shown in a dialog instead of failing silently', async () => {
     await mount('/');
-    const card = await waitFor(() => $$('.card.txn').find((c) => $('button.option', c)), 'a card');
+    const card = await waitFor(() => $$('.card.txn').find((c) => $('button.quick', c)), 'a card');
     const real = window.fetch;
     window.fetch = (u, o) => (/\/categorize/.test(String(u)) ? Promise.resolve(new Response(JSON.stringify({ error: 'Period is closed' }), { status: 409, headers: { 'content-type': 'application/json' } })) : real(u, o)); // the server refuses
     try {
-      $('button.option', card).click();
+      $('button.quick', card).click();
       await confirmDialog(/Yes, categorize/);
       const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /did not save/.test(text(d))), 'error dialog');
       expect(text(dlg)).to.match(/Period is closed/); expect(text(dlg)).to.match(/Nothing was changed/);
@@ -116,12 +118,13 @@ describe('Home (phone view)', () => {
     await mount('/');
     const venmo = () => $$('.card.txn').find((c) => /VENMO PAYMENT/i.test(text(c)));
     const card = await waitFor(venmo, 'the Venmo card');
-    expect(text(card)).to.match(/Needs a category/); expect(text(card)).to.match(/Needs a note/);
+    expect(text($('[data-check=category]', card))).to.match(/Category\s*Not set/); expect(text($('[data-check=note]', card))).to.match(/Note\s*Needed/);
     expect($('button.note-none', card)).to.exist;
+    openAll(card);
     await pickCat($('hk-category-select', card), 'Eating Out');
     await confirmDialog(/Yes, categorize/);
-    await waitFor(() => { const c = venmo(); return c && /Category: Eating Out/.test(text(c)) && !/Needs a category/.test(text(c)); }, 'the card to show the category and drop that reason');
-    expect(text(venmo())).to.match(/Needs a note/); // still waiting on the note: that is why it did not leave
+    await waitFor(() => { const c = venmo(); return c && /Category\s*Eating Out/.test(text(c)) && $('[data-check=category]', c).classList.contains('ok'); }, 'the card to show the category and drop that reason');
+    expect($('[data-check=note]', venmo()).classList.contains('missing')).to.equal(true); // still waiting on the note: that is why it did not leave
     expect(text($$('.toast').at(-1))).to.match(/Categorized as Eating Out/); // and the save was confirmed on screen
     $('button.note-none', venmo()).click();
     await waitFor(() => !venmo(), 'the card to leave once nothing is open');
@@ -133,8 +136,38 @@ describe('Home (phone view)', () => {
     await api(`/api/transactions/${created.id}`, { method: 'PATCH', body: { flagged: 1, flagReason: 'check this' } });
     await mount('/');
     const card = await waitFor(() => $$('.card.txn').find((c) => /FLAGGED THING/.test(text(c))), 'the flagged card');
-    expect(text(card)).to.match(/Flagged: Flagged for follow-up: check this/);
+    expect(text($('[data-check=flag]', card))).to.match(/check this/);
     $('button.unflag', card).click();
     await waitFor(() => !$$('.card.txn').some((c) => /FLAGGED THING/.test(text(c))), 'card to leave after Mark as reviewed');
+  });
+
+  it('cards are a checklist: a big ? for what is missing, a check once it is settled, and the account is tucked into Details', async () => {
+    await mount('/');
+    const card = await waitFor(() => $$('.card.txn').find((c) => $('[data-check=category].missing', c)), 'a card with a missing category');
+    const mark = $('[data-check=category] .mark', card);
+    expect(text(mark)).to.equal('?'); expect(parseFloat(getComputedStyle(mark).fontSize)).to.be.at.least(20);
+    expect($('[data-check=note]', card)).to.exist; // both rows are always there
+    expect($('details.picker', card)).to.exist; // the picker is collapsed, not taking up the card
+    expect($('details.picker', card).open).to.equal(false);
+    expect($('.option-list', card).checkVisibility()).to.equal(false); // collapsed: takes no room
+    const acct = $('details.more', card); expect(acct.open).to.equal(false);
+    expect(text(acct)).to.match(/Chase|Wells|Greenlight/); // the account lives in Details
+    expect(text($('.row', card))).to.not.match(/Chase|Wells|Greenlight/); // not in the headline
+  });
+
+  it('a note can be added from any card, shows on the card, and appears in the Transactions list', async () => {
+    await mount('/');
+    const card = await waitFor(() => $$('.card.txn').find((c) => $('[data-check=note]:not(.missing) button.note-add', c)), 'a card with no note requirement');
+    const id = card.dataset.id;
+    $('[data-check=note] button.note-add', card).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /What was this for/.test(text(d))), 'note dialog');
+    setInput($('input', dlg), 'birthday gift for Sam');
+    byText('button', /Save note/, dlg).click();
+    await waitFor(() => /birthday gift for Sam/.test(text($(`.card.txn[data-id="${id}"] [data-check=note]`) ?? document.body)), 'note on the card');
+    expect($(`.card.txn[data-id="${id}"] [data-check=note]`).classList.contains('ok')).to.equal(true);
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr').some((r) => /birthday gift for Sam/.test(text(r))), 'the note column');
+    expect($$('thead th').map((t) => text(t))).to.include('Note');
+    expect($$('thead th').map((t) => text(t))).to.not.include('Account');
   });
 });

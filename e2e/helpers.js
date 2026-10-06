@@ -65,3 +65,6 @@ export async function confirmDialog(label = /Yes|Save|Retire|Unretire|Merge|Cate
   $$('button.primary', dlg).find((b) => label.test(text(b))).click();
   await sleep(30);
 }
+
+/** Expand every collapsible part of a card (category search, Details) the way a person would by clicking them. */
+export function openAll(root) { $$('details', root).forEach((d) => { d.open = true; }); }

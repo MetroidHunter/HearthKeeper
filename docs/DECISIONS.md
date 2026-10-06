@@ -93,3 +93,6 @@ A Greenlight spend has a zero total (the allowance already charged the child's c
 
 ## D61. One card per transaction, one way out per open reason
 A transaction can wait on several things at once (a category, a note, a flag, a pending charge that never posted). Home and Backlog now show it once, list every open reason, and give each its own action: category options, note (pick a matching note, type one, or "no note needed"), "Mark as reviewed", "Hide it: it never posted". Categorizing one reason leaves the card in place showing "✓ Category: X" and what is still open; saves are confirmed with a toast. Before this, an uncategorized Amazon/Venmo/PayPal payment looked unchanged after you categorized it, because it was still waiting on its note.
+
+## D62. Checklist cards
+Home and Backlog cards show Category and Note (and Flag / Never-posted when they apply) as a checklist: a large "?" for what is missing or unknown, a check when settled, and a dash for a note that is not needed. The best category guess is one button ("Use Groceries"); other suggestions and the full search are collapsed; the account, the bank's full line, nearby transactions and "Not a budget item" sit behind Details. A note can be added or edited from any card. The Transactions list shows notes in place of the account (the account is in the row's detail).
