@@ -1,7 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { api, money, fmtDate } from './api.js';
 import { amt, pace } from './shared.js';
-import { showDialog, alertBox, promptBox, toast, catSelect, type PickCat } from './ui.js';
+import { showDialog, alertBox, promptBox, toast, catSelect, pendingBadge, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
 export interface Suggestion { id: number; name: string; why: string }
@@ -25,7 +25,7 @@ export async function showContext(t: TxnLike) {
   const c = await api.get(`/api/transactions/${t.id}/context?before=8&after=8`);
   await showDialog((close) => html`<h3 class="title">Around this transaction</h3><p class="muted small">${t.account}, in date order. The highlighted line is the one you are deciding on.</p>
     <div class="card flush">${c.rows.map((r: any) => html`<div class="ctx-row ${r.isTarget ? 'target' : ''}"><span class="muted">${fmtDate(r.occurred_on)}</span>
-      <span>${r.descriptor_raw}${r.status === 'provisional' ? html` <span class="badge warn">pending</span>` : nothing}<div class="muted small">${r.categories || '(no category)'}${r.note ? ` · ${r.note}` : ''}</div></span>${amt(r.amount_cents)}</div>`)}</div>
+      <span>${r.descriptor_raw}${r.status === 'provisional' ? pendingBadge() : nothing}<div class="muted small">${r.categories || '(no category)'}${r.note ? ` · ${r.note}` : ''}</div></span>${amt(r.amount_cents)}</div>`)}</div>
     <div class="actions"><button class="primary" @click=${() => close()}>Close</button></div>`, { wide: true });
 }
 
@@ -96,7 +96,7 @@ export function txnCard(env: Env, t: TxnLike & { reason?: string; reasons?: { re
     : html`<button class="note-add" @click=${typeNote}>${t.note ? 'Edit' : 'Add a note'}</button>`;
   const shown = t.effective_cents ?? t.amount_cents;
   return html`<div class="card txn" data-id=${t.id}><div class="row"><b class="grow">${t.descriptor_clean || t.descriptor_raw}</b>${amt(shown)}</div>
-    <div class="muted small">${fmtDate(t.occurred_on)}${t.status === 'provisional' ? html` · <span class="badge warn">pending</span>` : nothing}</div>
+    <div class="muted small">${fmtDate(t.occurred_on)}${t.status === 'provisional' ? html` · ${pendingBadge()}` : nothing}</div>
     <div class="checklist">
       ${check(catState, 'Category', catState === 'missing' ? 'Not set' : t.categories ?? 'None', has('needs_category')?.why, catActions, 'category')}
       ${check(noteState, 'Note', noteState === 'missing' ? 'Needed' : t.note ? `“${t.note}”` : 'None', has('needs_note')?.why, noteActions, 'note')}

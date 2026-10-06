@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, fmtDate } from '../api.js';
 import { amt, pace, type Cat } from '../shared.js';
-import { showDialog, catSelect } from '../ui.js';
+import { showDialog, catSelect, pendingBadge } from '../ui.js';
 import { txnCard, type Env } from '../txn.js';
 
 const FOLD = 'hk-home-attention-open';
@@ -68,7 +68,7 @@ export class Home extends Page {
 
       <h2>Recent</h2>
       <div class="card flush"><div class="list hover">${this.recent.map((t: any) => html`<div class="list-row"><span class="muted" style="width:62px">${fmtDate(t.occurred_on)}</span>
-        <span class="grow">${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? html`<span class="badge warn">pending</span>` : nothing}${t.note ? html`<div class="muted small">${t.note}</div>` : nothing}</span>
+        <span class="grow">${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? pendingBadge() : nothing}${t.note ? html`<div class="muted small">${t.note}</div>` : nothing}</span>
         <span class="muted hide-sm">${t.splits[0]?.category ?? ''}</span>${amt(t.amount_cents)}</div>`)}</div></div>
 
       <div class="row"><input class="grow" type="search" placeholder="Search merchant, note, category" .value=${this.q} @input=${(e: any) => (this.q = e.target.value)} @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && (location.hash = `#/explore?q=${encodeURIComponent(this.q)}`)} />

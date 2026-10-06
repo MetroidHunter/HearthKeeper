@@ -271,6 +271,25 @@ describe('Backlog review (grouped by merchant)', () => {
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
+  it('uses the same per-transaction cards as Home: a lone transaction is just the card; a merchant group holds cards under one bulk bar', async () => {
+    const accts = await api('/api/accounts'); const chase = accts.find((a) => a.name === 'Chase Prime Visa').id;
+    for (let i = 0; i < 3; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'TWINS CAFE', amountCents: -(700 + i) } });
+    await mount('/backlog');
+    const group = await waitFor(() => $$('.group').find((c) => /TWINS CAFE/.test(text(c))), 'group');
+    expect($$('.card.txn', group).length, 'one card per transaction').to.equal(3);
+    expect($('.bulkbar', group), 'one bulk bar').to.exist;
+    expect($$('.check.missing, .check', $('.card.txn', group)).length).to.be.greaterThan(0); // the Home checklist
+    const lone = $$('.card.txn').find((c) => /SEQUOIA PAYROLL/.test(text(c)));
+    expect(lone, 'a single-transaction merchant is just the card').to.exist;
+    expect(lone.closest('.group')).to.equal(null);
+  });
+
+  it('"pending" explains itself', async () => {
+    await mount('/transactions');
+    const badge = await waitFor(() => $$('.badge.warn').find((b) => /pending/.test(text(b))), 'a pending transaction');
+    expect(badge.dataset.tip).to.match(/real-time alert.*bank has not posted it yet.*replaces this one and keeps your category/);
+  });
+
   it('one answer categorizes every transaction of a merchant and teaches a suggest-mode rule', async () => {
     const accts = await api('/api/accounts'); const chase = accts.find((a) => a.name === 'Chase Prime Visa').id;
     for (let i = 0; i < 4; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'BRAND NEW BAKERY', amountCents: -(500 + i) } });

@@ -221,3 +221,8 @@ details.fold .fold-hint { margin-left:auto; }
   .mtxn { display:none; } .mname .mtx { display:inline; margin-left:var(--space-2); } .mname { display:flex; justify-content:space-between; align-items:baseline; gap:var(--space-2); } .mact select { flex:1; }
 }
 @media (max-width:640px) { .row > input[type=search].grow { flex-basis:100%; } }
+
+/* Backlog merchant group: bulk bar above the same per-transaction cards as Home */
+.bulkbar { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; margin-top:10px; } .bulkbar hk-category-select { flex:1 1 220px; min-width:0; }
+.group .stack > .card.txn { background:var(--bg, var(--card)); }
+@media (max-width:640px) { .bulkbar > * { flex:1 1 100%; } .bulkbar button.primary { min-height:44px; } }

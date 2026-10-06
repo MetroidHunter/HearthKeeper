@@ -47,15 +47,21 @@ export class Backlog extends Page {
       ${gs.length === 0 ? html`<div class="card muted">Nothing waiting.</div>` : gs.slice(0, 40).map((g) => this.group(g))}
       ${gs.length > 40 ? html`<p class="muted">Showing the 40 biggest of ${gs.length} merchants. Filter, or settle these first.</p>` : nothing}`;
   }
+  /**
+   * One merchant: a bulk bar (one answer for all of them) above the same per-transaction cards Home uses, so a single transaction can still be
+   * handled on its own (its own category, note or "not a budget item") without leaving the group.
+   */
   group(g: any) {
-    const expanded = this.open.has(g.key); const lines = expanded ? g.txns : g.txns.slice(0, 3);
+    const expanded = this.open.has(g.key); const byId = new Map<number, any>((this.inbox?.items ?? []).map((t: any) => [t.id, t]));
+    const lines = (expanded ? g.txns : g.txns.slice(0, 3)) as any[]; const env = this.env();
+    const best = g.suggestions[0];
+    const only = g.count === 1 ? byId.get(g.txnIds[0]) : null;
+    if (only) return txnCard(env, only, { reload: () => this.load() }); // one transaction: just the card, exactly as on Home
     return html`<div class="card group" data-key=${g.key}><div class="row"><b class="grow">${g.name}</b><span class="badge">${g.count} transaction${g.count === 1 ? '' : 's'}</span>${amt(g.totalCents)}</div>
-      <div class="why" style="margin-top:10px"><span aria-hidden="true">ⓘ</span><span><b>Why this needs you:</b> ${g.merchantId ? 'These have no category and nothing about this merchant says which one it is.' : 'This description is new, so no merchant or rule recognizes it.'} One answer here applies to all ${g.count}.</span></div>
-      <div class="stack" style="margin-top:10px">${lines.map((t: any) => html`<div class="row"><div class="grow">${fullLine({ ...t, account: t.account })}</div><button class="icon" title="Show the transactions around this one" @click=${() => showContext({ ...t, account: t.account })}>Nearby</button></div>`)}
-        ${g.count > 3 ? html`<button class="link" @click=${() => { expanded ? this.open.delete(g.key) : this.open.add(g.key); this.requestUpdate(); }}>${expanded ? 'Show fewer' : `Show all ${Math.min(g.count, g.txns.length)}${g.count > g.txns.length ? ` of ${g.count}` : ''} transactions`}</button>` : nothing}</div>
-      <h3 style="margin-top:14px">Pick a category for all ${g.count}</h3>
-      <div class="option-list" style="margin-top:8px">${g.suggestions.length ? g.suggestions.map((s: any, i: number) => { const r = this.rows.find((x: any) => x.id === s.id);
-        return html`<button class="option ${i === 0 ? 'best' : ''}" @click=${() => this.answer(g, s.id, s)}><span class="name">${s.name}</span>${i === 0 ? html`<span class="tag">Best match</span>` : nothing}<span class="muted small">${s.why}</span><span class="meta">${r ? `${money(r.currentCents)} balance` : ''}</span></button>`; }) : html`<div class="muted small">No suggestion for this merchant.</div>`}</div>
-      <div class="row" style="margin-top:10px"><span class="muted small">Something else:</span>${catSelect(this.cats, null, (id) => { if (id) void this.answer(g, id); }, { placeholder: 'Search all categories…' })}</div></div>`;
+      <div class="bulkbar"><span class="muted small">${g.count === 1 ? 'Category for this one:' : `One answer for all ${g.count}:`}</span>
+        ${catSelect(this.cats, null, (id) => { if (id) void this.answer(g, id); }, { placeholder: 'Search all categories…' })}
+        ${best ? html`<button class="primary" title=${best.why} @click=${() => this.answer(g, best.id, best)}>Use ${best.name}${g.count > 1 ? ` for all ${g.count}` : ''}</button>` : nothing}</div>
+      <div class="stack" style="margin-top:10px">${lines.map((t: any) => { const full = byId.get(t.id); return full ? txnCard(env, full, { reload: () => this.load() }) : html`<div class="row"><div class="grow">${fullLine({ ...t, account: t.account })}</div><button class="icon" title="Show the transactions around this one" @click=${() => showContext({ ...t, account: t.account })}>Nearby</button></div>`; })}
+        ${g.count > 3 ? html`<button class="link" @click=${() => { expanded ? this.open.delete(g.key) : this.open.add(g.key); this.requestUpdate(); }}>${expanded ? 'Show fewer' : `Show all ${Math.min(g.count, g.txns.length)}${g.count > g.txns.length ? ` of ${g.count}` : ''} transactions`}</button>` : nothing}</div></div>`;
   }
 }

@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney, fmtDate } from '../api.js';
 import { amt, type Cat } from '../shared.js';
-import { pageHead, th, catSelect, clickedBackdrop } from '../ui.js';
+import { pageHead, th, catSelect, clickedBackdrop, pendingBadge } from '../ui.js';
 
 @customElement('hk-transactions')
 export class Transactions extends Page {
@@ -48,7 +48,7 @@ export class Transactions extends Page {
       <div class="card flush" style="overflow-x:auto"><table><thead><tr><th></th>${th('Date', 'The day it happened, in Pacific time.')}${th('Description', 'As the bank sent it. Badges: pending (not posted yet), hidden reason, flag (needs follow-up).')}${th('Note', 'What it was for: from an Amazon, Venmo or PayPal match, or typed by you. The account is in the details when you open a row.')}${th('Category', 'Where the money was counted. "Splits" means it is divided between categories.')}${th('Amount', 'Negative is money out.', 'num')}</tr></thead><tbody>
         ${this.rows.map((t) => html`<tr class="clickable" @click=${() => this.openTxn(t)}>
           <td @click=${(e: Event) => e.stopPropagation()}><input type="checkbox" .checked=${this.sel.has(t.id)} @change=${(e: any) => { e.target.checked ? this.sel.add(t.id) : this.sel.delete(t.id); this.requestUpdate(); }} /></td>
-          <td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? html`<span class="badge warn">pending</span>` : ''}${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<span class="badge">${t.ignored_reason ?? t.kind}</span>` : ''}${t.flagged ? html`<span class="badge bad">flag</span>` : ''}</td>
+          <td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? pendingBadge() : ''}${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<span class="badge">${t.ignored_reason ?? t.kind}</span>` : ''}${t.flagged ? html`<span class="badge bad">flag</span>` : ''}</td>
           <td class="muted" style="max-width:260px">${t.note ?? ''}</td><td>${t.splits.length > 1 ? `${t.splits.length} splits` : t.splits[0]?.category ?? html`<span class="badge warn">needs category</span>`}</td><td class="num">${amt(t.amount_cents)}</td></tr>`)}
         ${this.rows.length === 0 ? html`<tr><td colspan="6" class="muted">No transactions match.</td></tr>` : nothing}
       </tbody></table></div>
