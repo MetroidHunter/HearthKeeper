@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DB } from '../core/db.js';
 import { withNotifySuppressed } from '../notify/bus.js';
+import { forwardedSource } from './forwarded.js';
 
 export type Source = 'chase_alert' | 'chase_csv' | 'wf_csv' | 'simplefin' | 'greenlight_msg' | 'wf_notice' | 'amazon_receipt' | 'venmo_receipt' | 'paypal_receipt' | 'notes_csv' | 'manual' | 'email_unknown' | 'device_unknown';
 
@@ -99,7 +100,13 @@ export function clearParsers() { registry.clear(); }
 
 /** Parse one stored event; unknown sources stay `pending` and never create transactions (§19.2). */
 export function parseEvent(db: DB, id: number): ParseResult | null {
-  const ev = db.prepare('SELECT * FROM raw_events WHERE id=?').get(id) as RawEvent;
+  let ev = db.prepare('SELECT * FROM raw_events WHERE id=?').get(id) as RawEvent;
+  const fwd = forwardedSource(db, ev); // a household member's hand-forward: parse it as the original sender's mail
+  if (fwd) {
+    const h = { ...JSON.parse(ev.headers_json ?? '{}'), 'X-HK-Original-From': fwd.originalFrom };
+    db.prepare('UPDATE raw_events SET source=?, headers_json=? WHERE id=?').run(fwd.source, JSON.stringify(h), id);
+    ev = db.prepare('SELECT * FROM raw_events WHERE id=?').get(id) as RawEvent;
+  }
   const p = registry.get(ev.source);
   if (!p) return null;
   let r: ParseResult;

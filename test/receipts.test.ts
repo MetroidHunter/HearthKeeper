@@ -11,6 +11,8 @@ import { runNoteMatcher } from '../src/notes/matcher.js';
 import { commitImport } from '../src/ingest/import.js';
 import { suggestMapping, parseCsv } from '../src/ingest/csv.js';
 import { setSplits } from '../src/core/transactions.js';
+import { parseChaseEmail } from '../src/chase/parser.js';
+import { replay } from '../src/ingest/events.js';
 
 // Fixtures are real emails (HTML parts, tracking attributes and personal details stripped) in test/fixtures/receipts.
 interface Fx { headers: Record<string, string>; text: string; html: string }
@@ -172,5 +174,60 @@ describe('account last 4 (wells fargo alert routing)', () => {
     expect((await patch(other, '1234')).statusCode).toBe(409);
     expect((await patch(h.wf, null)).statusCode).toBe(200);
     expect((await patch(other, '1234')).statusCode).toBe(200);
+  });
+});
+
+describe('hand-forwarded mail from a household member', () => {
+  beforeEach(() => clearParsers());
+  const AUTH = 'mx.google.com; dkim=pass header.i=@gmail.com header.s=x; spf=pass smtp.mailfrom=me@gmail.com; dmarc=pass (p=NONE) header.from=gmail.com';
+  const CHASE_FWD = `---------- Forwarded message ---------
+From: Chase <no.reply.alerts@chase.com>
+Date: Tue, Oct 6, 2026, 01:27
+Subject: You made a $30.00 transaction with PAYPAL *NY TIMES NYT
+To: <me@gmail.com>
+
+
+This transaction is above the level you set, see more here.
+
+[image: Chase Logo]
+Transaction alert
+You made a $30.00 transaction
+Account Prime Visa (...4585)
+Date Oct 6, 2026`;
+  const WF_FWD = `---------- Forwarded message ---------
+From: Wells Fargo <alerts@notify.wellsfargo.com>
+Subject: Your account update is here
+
+Here's the rundown
+
+for account ...1111
+*Withdrawals*
+ROCKET MORTGAGE LOAN 261003 42880 $2,000.00
+As of 10/06/2026 at 12:42 a.m., Central Time`;
+  const hand = (h: ReturnType<typeof seedHousehold>, payload: string, from = 'Me <me@gmail.com>', auth = AUTH, key = payload.slice(0, 120)) =>
+    captureEvent(h.db, { source: 'email_unknown', channel: 'email', payload, headers: { From: from, 'Authentication-Results': auth }, dedupeKey: key });
+  it('chase alert email: amount, merchant and date (no time of day)', () => {
+    expect(parseChaseEmail([CHASE_FWD])).toEqual({ amountCents: -3000, vendor: 'PAYPAL *NY TIMES NYT', authorizedAtUtc: null, occurredOn: '2026-10-06' });
+    expect(parseChaseEmail(['Transaction alert\nYou made a $30.00 transaction\nDate Oct 6, 2026'], 'You made a $30.00 transaction with PAYPAL *NY TIMES NYT')).toMatchObject({ vendor: 'PAYPAL *NY TIMES NYT' }); // subject header only (filter-forwarded)
+    expect(parseChaseEmail(['hello'])).toBeNull();
+  });
+  it('is taken as the original sender\'s mail only for a household member whose forward is authenticated', () => {
+    const h = seedHousehold(); registerAllParsers();
+    h.db.prepare("INSERT INTO users(name,email) VALUES ('Me','me@gmail.com')").run();
+    h.db.prepare("UPDATE accounts SET last4='1111' WHERE id=?").run(h.wf);
+    const wf = hand(h, WF_FWD), ch = hand(h, CHASE_FWD);
+    expect(parseEvent(h.db, wf.id)).toEqual({ status: 'ok' });
+    expect(parseEvent(h.db, ch.id)).toEqual({ status: 'ok' });
+    expect(h.db.prepare("SELECT id, source FROM raw_events ORDER BY id").all()).toEqual([{ id: wf.id, source: 'wf_notice' }, { id: ch.id, source: 'chase_alert' }]);
+    expect(h.db.prepare("SELECT amount_cents c, occurred_on d, descriptor_raw x, status s FROM transactions ORDER BY id").all()).toEqual([
+      { c: -200000, d: '2026-10-06', x: 'ROCKET MORTGAGE LOAN 261003 42880', s: 'provisional' }, { c: -3000, d: '2026-10-06', x: 'PAYPAL *NY TIMES NYT', s: 'provisional' }]);
+    parseEvent(h.db, ch.id); replay(h.db, { includeOk: true });
+    expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 2 }); // replay-safe
+    // not a household member / not authenticated as them / forwarded from an unknown sender: stays unknown
+    for (const [from, auth, text] of [['Eve <eve@gmail.com>', AUTH.replace(/me@/, 'eve@'), CHASE_FWD], ['Me <me@gmail.com>', 'mx.google.com; spf=pass', CHASE_FWD], ['Me <me@gmail.com>', AUTH, CHASE_FWD.replace('no.reply.alerts@chase.com', 'x@evil.com')]]) {
+      const e = hand(h, text, from, auth, from + auth + text.length);
+      expect(parseEvent(h.db, e.id)).toBeNull();
+      expect(h.db.prepare('SELECT source FROM raw_events WHERE id=?').get(e.id)).toEqual({ source: 'email_unknown' });
+    }
   });
 });
