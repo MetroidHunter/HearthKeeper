@@ -53,6 +53,14 @@ These four are parsed from real sample emails (the same receiver mailbox and App
 | `paypal.com` — "Receipt for your PayPal payment", and merchant payment confirmations ("Hulu: $13.65 USD") | A note with the merchant (and items when listed). |
 | `amazon.com` — "Ordered N items: …" | One note per order, with the order's total and its category summary ("pet supplies,skin care"). Amazon's email does not name products, so the note is only as specific as that. |
 
+Gmail filter searches (Settings → Filters → *Forward it to* the receiver), taken from the sample emails:
+- Wells Fargo: `from:alerts@notify.wellsfargo.com subject:"Your account update is here"`
+- Venmo: `from:venmo@venmo.com (subject:"paid you" OR subject:"You paid")`
+- PayPal: `from:service@paypal.com (subject:"Receipt for your PayPal payment" OR subject:"USD")`
+- Amazon: `from:auto-confirm@amazon.com subject:Ordered`
+
+After updating the Apps Script (paste the new `tools/receiver-apps-script.gs` over the old one and save), re-run it once: older versions marked every message `email_unknown`.
+
 Not handled (left as "unrecognized" on purpose): shipping/delivery mail, Venmo requests, PayPal refunds, and balance-only Wells Fargo alerts. Uploading a bank CSV later is always safe: rows already created from an alert are replaced by the posted row, not duplicated.
 
 ## 4. What "working" looks like after a day

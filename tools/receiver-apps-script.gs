@@ -23,8 +23,11 @@ function forwardNewMail() {
     thread.getMessages().forEach(function (m) {
       var raw = m.getRawContent();
       var headers = {};
+      // Only the header block, with folded continuation lines joined: Authentication-Results is folded over several lines and its
+      // "dkim=pass" is on the later ones. The first occurrence is the one this mailbox's own Gmail added.
+      var headBlock = raw.split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
       ['Delivered-To', 'X-Forwarded-For', 'X-Forwarded-To', 'To', 'From', 'Subject', 'Date', 'Message-ID', 'Reply-To', 'Authentication-Results'].forEach(function (h) {
-        var mm = new RegExp('^' + h + ':\\s*(.+)$', 'mi').exec(raw);
+        var mm = new RegExp('^' + h + ':\\s*(.+)$', 'mi').exec(headBlock);
         if (mm) headers[h] = mm[1].trim();
       });
       var body = JSON.stringify({ source: guessSource(m.getFrom(), headers['Authentication-Results']), messageId: m.getId(), text: m.getPlainBody() || stripHtml(m.getBody()), headers: headers, html: m.getBody().length < 200000 ? m.getBody() : null });
