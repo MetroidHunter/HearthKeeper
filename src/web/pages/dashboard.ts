@@ -36,7 +36,6 @@ export class Dashboard extends Page {
     const over = exp.filter((r) => r.currentCents < 0);
     const overSum = over.reduce((a, r) => a + r.currentCents, 0);
     const spent = exp.reduce((a, r) => a + r.spent[0], 0), target = exp.reduce((a, r) => a + r.targetCents, 0);
-    const open = this.d.closeReadiness.filter((s: any) => !s.pass);
     const counts = this.inbox?.counts;
     return html`${pageHead('Dashboard', 'The state of the household at a glance. The tiles are the things worth acting on and each one opens the place to act; the diagrams below show how the year is going.', 'Charts use your last 12 months and this month. For slicing by anything else, use Analytics or Explore under Discover.')}
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
@@ -46,7 +45,7 @@ export class Dashboard extends Page {
         <a class="stat" href="#/budget"><span class="label">Overspent envelopes</span><span class="value ${over.length ? 'neg' : ''}">${over.length}</span><span class="sub">${over.length ? `${money(overSum)} below zero in total` : 'every envelope is at or above zero'}</span></a>
         <a class="stat" href="#/budget"><span class="label">Spent this month</span><span class="value">${money(spent)}</span><span class="sub">of ${money(target)} planned (${target ? Math.round((spent / target) * 100) : 0}%)</span></a>
         <a class="stat" href="#/plans"><span class="label">Unallocated income</span><span class="value ${h?.unallocatedCents < 0 ? 'neg' : ''}">${money(h?.unallocatedCents)}</span><span class="sub">${money(h?.incomeCents)} income, ${money(h?.allocatedCents)} allocated</span></a>
-        <a class="stat" href="#/close"><span class="label">Close readiness</span><span class="value">${this.d.closeReadiness.length - open.length}/${this.d.closeReadiness.length}</span><span class="sub">${open.length ? open.map((s: any) => `${s.name} (${s.count})`).join(', ') : 'ready to close'}</span></a></div>
+        <a class="stat" href="#/months"><span class="label">Months to tidy</span><span class="value ${this.d.monthsNeedingWork ? 'neg' : ''}">${this.d.monthsNeedingWork}</span><span class="sub">${this.d.monthsNeedingWork ? `${this.d.monthsOpenItems} open item${this.d.monthsOpenItems === 1 ? '' : 's'} across ${this.d.monthsNeedingWork} of ${this.d.months} months` : `all ${this.d.months} months are done`}</span></a></div>
 
       <h2>Diagrams</h2>
       <div class="grid2"><div class="card"><h3>Income, spending and plan by month</h3><div class="chart sm" data-c="income"></div></div>

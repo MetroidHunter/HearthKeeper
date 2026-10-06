@@ -6,7 +6,7 @@ import { categoryBalance, checkInvariants, currentAllocation } from '../src/core
 import { budgetHistory } from '../src/core/categories.js';
 import { proposeRebalance, commitRebalance, placePool, adjustment } from '../src/core/transfers.js';
 import { createTransaction, setSplits } from '../src/core/transactions.js';
-import { closeChecklist } from '../src/core/close.js';
+import { monthsOverview } from '../src/core/months.js';
 
 describe('earnings', () => {
   it('matches the Projection worked example: $220k @ 100% @ 32% => $12,466.67/mo', () => {
@@ -120,12 +120,12 @@ describe('rebalance and close', () => {
     expect(checkInvariants(h.db)).toEqual([]);
   });
 
-  it('close checklist flags uncategorized and passes when clean', () => {
+  it('the month checklist flags uncategorized transactions in the month they are in', () => {
     const h = seedHousehold();
     createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-02', amountCents: -500, descriptor: 'MYSTERY' });
     createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-10-02', amountCents: -500, descriptor: 'MYSTERY' });
-    const steps = closeChecklist(h.db, '2026-10-04');
-    expect(steps.find((s) => s.name === 'Uncategorized')!.count).toBe(2);
-    expect(steps.find((s) => s.name === 'Duplicates')).toBeDefined();
+    const oct = monthsOverview(h.db, '2026-10-04')[0];
+    expect(oct.month).toBe('2026-10'); expect(oct.items.find((i) => i.key === 'category')!.count).toBe(2);
+    expect(oct.items.find((i) => i.key === 'dupes')).toBeDefined();
   });
 });

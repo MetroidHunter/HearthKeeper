@@ -8,8 +8,7 @@ import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
 import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetVsActual } from '../core/analytics.js';
-import { listPeriods, reopenPeriod } from '../core/locks.js';
-import { closeChecklist, closePeriod } from '../core/close.js';
+import { monthsOverview, NEEDS_WHERE } from '../core/months.js';
 import { answerCategory, promotable } from '../core/answers.js';
 import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
 import { addRule, backtest, type RuleMatch } from '../core/rules.js';
@@ -137,8 +136,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/inbox/grouped', async () => groupedInbox(db));
   app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { makeRule: b.makeRule, actor: actor(req) }); });
   app.get('/api/dashboard', async () => {
-    const steps = closeChecklist(db, now());
-    return { closeReadiness: steps, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
+    const months = monthsOverview(db, now());
+    return { monthsNeedingWork: months.filter((m) => m.todo > 0).length, monthsOpenItems: months.reduce((a, m) => a + m.todo, 0), months: months.length, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
   });
 
   app.get('/api/accounts', async () => db.prepare('SELECT id, name, institution, type, shared, in_system, last4 FROM accounts WHERE in_system=1 ORDER BY id').all());
@@ -200,6 +199,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     if (q.category) { where.push('EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id=?)'); args.push(q.category); }
     if (q.kind) { where.push('t.kind=?'); args.push(q.kind); }
     if (q.hidden !== '1') where.push("t.kind NOT IN ('ignored','internal_transfer')");
+    if (q.needs) { if (!NEEDS_WHERE[q.needs]) throw Object.assign(new Error('unknown filter'), { statusCode: 400 }); where.push(`(${NEEDS_WHERE[q.needs]})`); } // a "fix it" link from the Months checklist
     if (q.q) { where.push('(LOWER(t.descriptor_raw) LIKE ? OR LOWER(COALESCE(t.note,\'\')) LIKE ?)'); args.push(`%${String(q.q).toLowerCase()}%`, `%${String(q.q).toLowerCase()}%`); }
     return { where, args };
   };
@@ -275,17 +275,14 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     if (b.defaultCategoryId !== undefined) db.prepare('UPDATE merchants SET default_category_id=?, default_mode=COALESCE(?, default_mode), review_state=\'reviewed\' WHERE id=?').run(b.defaultCategoryId, b.defaultMode ?? null, req.params.id); return { ok: true }; });
   app.post('/api/merchant-groups', async (req) => { const b = rec(req.body); const id = Number(db.prepare('INSERT INTO merchant_groups(name) VALUES (?)').run(b.name).lastInsertRowid); for (const m of b.merchantIds ?? []) db.prepare('INSERT OR IGNORE INTO merchant_group_members VALUES (?,?)').run(id, m); return { id }; });
 
-  /* ---------- transfers & close ---------- */
+  /* ---------- transfers & months ---------- */
   app.get('/api/transfers', async () => db.prepare('SELECT e.*, (SELECT json_group_array(json_object(\'categoryId\', category_id, \'cents\', amount_cents)) FROM envelope_transfer_legs WHERE transfer_id=e.id) legs FROM envelope_transfers e ORDER BY id DESC LIMIT 200').all());
   app.get('/api/transfers/rebalance', async (req: any) => proposeRebalance(db, req.query.asOf ?? now()));
   app.post('/api/transfers/rebalance', async (req) => commitRebalance(db, rec(req.body) as any, actor(req)));
   app.post('/api/transfers/place-pool', async (req) => { const b = rec(req.body); return { id: placePool(db, b.asOf ?? now(), b.poolCategoryId, b.allocations, actor(req)) }; });
   app.post('/api/transfers/manual', async (req) => { const b = rec(req.body); return { id: manualTransfer(db, b.date ?? now(), b.from, b.to, b.cents, b.memo, actor(req)) }; });
   app.post('/api/transfers/adjustment', async (req) => { const b = rec(req.body); return { id: adjustment(db, b.date ?? now(), b.categoryId, b.cents, b.reason, actor(req)) }; });
-  app.get('/api/close', async (req: any) => closeChecklist(db, req.query.through ?? now(), { walletTyped: req.query.wallet !== undefined ? Number(req.query.wallet) : undefined }));
-  app.get('/api/close/periods', async () => listPeriods(db));
-  app.delete('/api/close/:id', async (req: any) => ({ reopened: reopenPeriod(db, Number(req.params.id), actor(req), String(rec(req.body).reason ?? '')) }));
-  app.post('/api/close', async (req) => ({ id: closePeriod(db, rec(req.body).through ?? now(), actor(req)) }));
+  app.get('/api/months', async () => monthsOverview(db, now())); // month by month: what still needs doing, and a few numbers
 
   /* ---------- imports ---------- */
   app.post('/api/imports/preview', BIG, async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId }); });

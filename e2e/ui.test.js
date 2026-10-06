@@ -69,7 +69,7 @@ describe('Navigation groups, page intros, header help, consistent margins', () =
     expect(menus.Settings.join('|')).to.match(/Greenlight.*Rules & merchants.*Ingest health.*Migration/);
   });
   it('every page starts with a block explaining it and its table headers have hover help', async () => {
-    for (const route of ['/budget', '/backlog', '/transactions', '/categories', '/transfers', '/plans', '/earnings', '/imports', '/analytics', '/explore', '/dashboard', '/settings', '/greenlight', '/rules', '/ingest', '/migration', '/close']) {
+    for (const route of ['/budget', '/backlog', '/transactions', '/categories', '/transfers', '/plans', '/earnings', '/imports', '/analytics', '/explore', '/dashboard', '/settings', '/greenlight', '/rules', '/ingest', '/migration', '/months']) {
       await mount(route);
       const intro = $('.intro');
       expect(intro, `${route} has no intro`).to.exist;

@@ -11,7 +11,7 @@ Last verified: 241 unit/property/API tests (Vitest) plus the Web Test Runner bro
 
 **Phase 1, replace the Budget sheet**
 - Categories, quick budget change, earnings scenarios, plans (diff, staleness guard, atomic go-live that now also drops later versions and skips retired categories, revert, RESTATE confirm).
-- Rebalance/transfers, close checklist, period soft-lock with reopen.
+- Rebalance/transfers. The Months page (month-by-month checklist with quick numbers and fix links) replaced the close checklist; there is no period lock.
 - Budget page, pie, spend-by, Explore, analytics (monthly, trend, income vs spend, treemap, year pivot, budget vs actual).
 
 **Phase 2, replace the transaction sheet**

@@ -8,14 +8,15 @@ import { pageHead, th, catSelect, clickedBackdrop, pendingBadge } from '../ui.js
 @customElement('hk-transactions')
 export class Transactions extends Page {
   @state() rows: any[] = []; @state() cats: Cat[] = []; @state() q = ''; @state() category = ''; @state() hidden = false; @state() open: any = null; @state() rows_: { categoryId: number | null; cents: number }[] = []; @state() cands: any[] = []; @state() items: any = null; @state() hist: any[] = []; @state() sel = new Set<number>();
-  @state() from = ''; @state() to = ''; @state() page = 0; @state() size = 50; @state() total = 0;
+  @state() from = ''; @state() to = ''; @state() needs = ''; @state() page = 0; @state() size = 50; @state() total = 0;
   connectedCallback() {
     super.connectedCallback();
     const qs = new URLSearchParams(location.hash.split('?')[1] ?? ''); // drill-down from a chart: #/transactions?category=3&from=2026-07-01&to=2026-07-31
-    this.category = qs.get('category') ?? ''; this.from = qs.get('from') ?? ''; this.to = qs.get('to') ?? ''; this.q = qs.get('q') ?? '';
+    this.category = qs.get('category') ?? ''; this.from = qs.get('from') ?? ''; this.to = qs.get('to') ?? ''; this.q = qs.get('q') ?? ''; this.needs = qs.get('needs') ?? '';
+    const month = qs.get('month'); if (month && /^\d{4}-\d{2}$/.test(month)) { this.from = `${month}-01`; this.to = `${month}-${String(new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate()).padStart(2, '0')}`; } // from the Months checklist
     this.load();
   }
-  private qs() { return `hidden=${this.hidden ? 1 : 0}${this.q ? `&q=${encodeURIComponent(this.q)}` : ''}${this.category ? `&category=${this.category}` : ''}${this.from ? `&from=${this.from}` : ''}${this.to ? `&to=${this.to}` : ''}`; }
+  private qs() { return `hidden=${this.hidden ? 1 : 0}${this.q ? `&q=${encodeURIComponent(this.q)}` : ''}${this.category ? `&category=${this.category}` : ''}${this.from ? `&from=${this.from}` : ''}${this.to ? `&to=${this.to}` : ''}${this.needs ? `&needs=${this.needs}` : ''}`; }
   /** `resetPage` is true whenever a filter changed; paging itself keeps the page. */
   async load(resetPage = false) {
     if (resetPage) this.page = 0;
@@ -38,6 +39,7 @@ export class Transactions extends Page {
   async bulk(categoryId: number) { await this.run(async () => { for (const id of this.sel) await api.post(`/api/transactions/${id}/categorize`, { categoryId }); }); this.sel = new Set(); this.load(); }
   render() {
     return html`${pageHead('Transactions', 'Every transaction, newest first. Search by description or note, filter by category or dates, and click any row to split it, add a note, hide it or see its history.', 'Select several rows with the checkboxes to give them all one category at once. Hidden transactions (transfers between your own accounts, things you marked "not a budget item") are kept and can be restored.')}${this.err ? html`<p class="err">${this.err}</p>` : nothing}
+      ${this.needs ? html`<div class="card row needs-chip"><span>Showing only transactions that need ${({ category: 'a category', note: 'a note', stale: 'resolving (pending, never posted)', flag: 'a flag reviewed', dupes: 'a duplicate check' } as Record<string, string>)[this.needs] ?? this.needs}${this.from ? ` in ${this.from.slice(0, 7)}` : ''}. Fix them here; the month's checklist updates itself.</span><button @click=${() => { this.needs = ''; this.load(true); }}>Show all</button><a href="#/months"><button>Back to Months</button></a></div>` : nothing}
       ${this.from || this.to ? html`<div class="card row"><span>Showing ${this.from} → ${this.to}${this.category ? ' for one category' : ''}</span><button @click=${() => { this.from = ''; this.to = ''; this.load(true); }}>Clear dates</button></div>` : nothing}
       <div class="row"><input class="grow" type="search" placeholder="Search description or note" .value=${this.q} @change=${(e: any) => { this.q = e.target.value; this.load(true); }} />
         ${catSelect(this.cats, this.category ? Number(this.category) : null, (id) => { this.category = id ? String(id) : ''; this.load(true); }, { placeholder: 'All categories', includeRetired: true })}

@@ -6,7 +6,7 @@ describe('Navigation smoke: every page renders without uncaught errors', () => {
   beforeEach(() => { trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
   for (const [route, h1] of [['/', 'Home'], ['/dashboard', 'Dashboard'], ['/budget', 'Budget'], ['/transactions', 'Transactions'], ['/plans', 'Plans'], ['/earnings', 'Earnings'], ['/transfers', 'Transfers'],
-    ['/close', 'Close the month'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Preferences'], ['/analytics', 'Analytics'], ['/migration', 'Migration'], ['/backlog', 'Backlog']]) {
+    ['/months', 'Months'], ['/imports', 'Imports'], ['/rules', 'Rules & merchants'], ['/greenlight', 'Greenlight'], ['/explore', 'Explore'], ['/categories', 'Categories'], ['/ingest', 'Ingest health'], ['/settings', 'Preferences'], ['/analytics', 'Analytics'], ['/migration', 'Migration'], ['/backlog', 'Backlog']]) {
     it(`renders ${route}`, async () => { await mount(route); expect(text($('h1'))).to.equal(h1); await sleep(150); });
   }
 });
@@ -69,21 +69,61 @@ describe('Rules and merchants', () => {
   });
 });
 
-describe('Close checklist and dashboard', () => {
+describe('Months checklist and dashboard', () => {
   let trap;
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('lists every step and blocks closing while items are open', async () => {
-    await mount('/close');
-    await waitFor(() => $$('.card .row').length >= 11, 'steps');
-    expect(text($('.card'))).to.match(/Uncategorized/);
-    const close = byText('button', /Resolve items to close|Close period/);
-    expect(close.disabled).to.equal(true);
+  it('shows every month newest first with what is left to do and quick numbers; finished months fold away', async () => {
+    const months = await api('/api/months');
+    await mount('/months');
+    await waitFor(() => $$('details.month').length > 0, 'month cards');
+    const cards = $$('details.month');
+    expect(cards.length).to.equal(Math.min(12, months.length));
+    expect(cards[0].dataset.month).to.equal(months[0].month); expect(text(cards[0])).to.match(/this month/);
+    expect(text($('summary', cards[0]))).to.match(/In \$[\d,]+\.\d{2}.*Spent \$.*plan \$.*txns/); // quick numbers on the one-line summary
+    for (const [i, m] of months.slice(0, cards.length).entries()) expect(cards[i].open, `${m.month} open iff something to do`).to.equal(m.todo > 0);
+    const withWork = $$('details.month').find((c) => $('.mcheck.todo', c));
+    expect(withWork, 'the demo has something to do somewhere').to.exist;
+    const todo = $('.mcheck.todo', withWork); expect($('a.mfix', todo).getAttribute('href')).to.match(/^#\//);
+    expect(text($('#months-summary'))).to.match(/\d+ of \d+ months? (has|have) something to do/);
   });
-  it('dashboard shows close readiness and coverage', async () => {
+
+  it('a fix link opens exactly those transactions, with a way back', async () => {
+    const months = await api('/api/months');
+    const m = months.find((x) => x.items.find((i) => i.key === 'category' && i.count > 0));
+    expect(m, 'a month with uncategorized transactions').to.exist;
+    const want = m.items.find((i) => i.key === 'category').count;
+    await mount('/months');
+    const card = await waitFor(() => $$('details.month').find((c) => c.dataset.month === m.month), 'month card');
+    $('.mcheck[data-key=category] a.mfix', card).click();
+    await waitFor(() => /#\/transactions/.test(location.hash), 'transactions page');
+    await waitFor(() => $('.needs-chip'), 'filter chip');
+    expect(text($('.needs-chip'))).to.match(/need a category/);
+    await waitFor(() => /of \d+/.test(text($('.pager'))), 'pager');
+    expect(text($('.pager'))).to.match(new RegExp(`of ${want}\\b`));
+    byText('button', /Back to Months/).click();
+    await waitFor(() => $('details.month'), 'back on Months');
+  });
+
+  it('"only months with something to do" hides finished months', async () => {
+    const months = await api('/api/months');
+    await mount('/months');
+    await waitFor(() => $$('details.month').length > 0, 'cards');
+    const box = byText('label', /Only months with something to do/); $('input', box).click();
+    await waitFor(() => $$('details.month').every((c) => $('.badge.warn', c)), 'only unfinished months');
+    expect($$('details.month').length).to.equal(Math.min(12, months.filter((x) => x.todo > 0).length));
+  });
+
+  it('the old /close address still lands on Months', async () => {
+    location.hash = '#/close';
+    await mount('/close');
+    await waitFor(() => /Months/.test(text($('h1'))), 'Months page');
+  });
+
+  it('dashboard shows months to tidy and coverage', async () => {
     await mount('/dashboard');
-    await waitFor(() => /Close readiness/.test(text(document.body)) && /Health/.test(text(document.body)), 'dashboard callouts');
+    await waitFor(() => /Months to tidy/.test(text(document.body)) && /Health/.test(text(document.body)), 'dashboard callouts');
     await waitFor(() => $$('.chart canvas').length >= 2, 'diagrams drawn');
     expect($$('a.stat').length).to.be.greaterThan(4); // callouts are links to where you act on them
   });

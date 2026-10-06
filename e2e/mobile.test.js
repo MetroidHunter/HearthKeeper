@@ -64,4 +64,13 @@ describe('Budget on a phone (390px wide)', () => {
     byText('button', /all groups/).click();
     await waitFor(() => $$('.pierow').some((r) => /^Food/.test(text(r))), 'back to groups');
   });
+
+  it('Months fits a phone: cards wrap, nothing scrolls sideways, fix links are tappable', async () => {
+    await mount('/months');
+    await waitFor(() => $$('details.month').length > 0, 'month cards');
+    expect(document.documentElement.scrollWidth, 'no horizontal page scroll').to.be.at.most(window.innerWidth);
+    for (const c of $$('details.month')) { const r = c.getBoundingClientRect(); expect(r.right, 'card inside the screen').to.be.at.most(window.innerWidth); expect(r.left).to.be.at.least(0); }
+    const open = $$('details.month').find((c) => c.open && $('a.mfix', c));
+    if (open) { const a = $('a.mfix', open).getBoundingClientRect(); expect(a.height, 'tap target').to.be.at.least(28); expect(a.right).to.be.at.most(window.innerWidth); }
+  });
 });

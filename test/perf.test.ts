@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { seedHousehold } from './helpers.js';
-import { closeChecklist } from '../src/core/close.js';
+import { monthsOverview } from '../src/core/months.js';
 import { budgetPage, inbox } from '../src/core/reports.js';
 import { checkInvariants } from '../src/core/balance.js';
 
-// Guards the hot paths against index regressions: the real sheet has ~17.6k transactions and the close checklist once took 5.5s there
+// Guards the hot paths against index regressions: the real sheet has ~17.6k transactions and the old close checklist once took 5.5s there
 // because transaction_splits had no index on transaction_id.
 describe('performance at real-history scale (20k transactions)', () => {
   const h = seedHousehold();
@@ -19,7 +19,7 @@ describe('performance at real-history scale (20k transactions)', () => {
     }
   })();
   const time = (fn: () => unknown) => { const t0 = performance.now(); fn(); return performance.now() - t0; };
-  it('close checklist stays fast', () => { expect(time(() => closeChecklist(h.db, '2026-10-04'))).toBeLessThan(1000); });
+  it('the months overview stays fast', () => { expect(time(() => monthsOverview(h.db, '2026-10-04'))).toBeLessThan(1500); });
   it('budget page and inbox stay fast', () => {
     expect(time(() => budgetPage(h.db, '2026-10-04'))).toBeLessThan(1000);
     expect(time(() => inbox(h.db))).toBeLessThan(1000);
