@@ -74,7 +74,7 @@ export class CategorySelect extends LitElement {
   private get chosen() { return this.cats.find((c) => c.id === this.value) ?? null; }
   private options(): PickCat[] {
     const q = this.q.trim().toLowerCase(); const parts = q.split(/\s+/).filter(Boolean);
-    return this.cats.filter((c) => !c.system && (c.status === undefined || c.status === 'active' || this.includeRetired) && (!parts.length || parts.every((p) => `${c.name} ${c.group_name ?? ''}`.toLowerCase().includes(p))))
+    return this.cats.filter((c) => !c.system && (c.status === undefined || c.status === 'active' || this.includeRetired) && (!parts.length || parts.every((p) => c.name.toLowerCase().includes(p))))
       .sort((a, b) => (a.group_name ?? 'Other').localeCompare(b.group_name ?? 'Other') || a.name.localeCompare(b.name));
   }
   private choose(c: PickCat | null) {

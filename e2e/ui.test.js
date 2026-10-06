@@ -15,6 +15,12 @@ describe('Searchable category picker', () => {
     setInput(input, 'groc');
     await waitFor(() => $$('.cs-pop .opt').length < all && $$('.cs-pop .opt').length >= 1, 'filtered');
     expect($$('.cs-pop .opt').every((o) => /groc/i.test(text(o)))).to.equal(true);
+    // a group's name is a heading, not a search term: "food" must not pull in every category that merely sits under Food
+    const groups = [...new Set($$('.cs-pop .grp').map((g) => text(g)))];
+    expect(groups.some((g) => /^food$/i.test(g))).to.equal(true);
+    setInput(input, 'food');
+    await waitFor(() => /No category matches/.test(text($('.cs-pop'))) || $$('.cs-pop .opt').every((o) => /food/i.test(text(o))), 'group name is not matched');
+    expect($$('.cs-pop .opt').every((o) => /food/i.test(text(o)))).to.equal(true);
     setInput(input, 'zzzz-nothing');
     await waitFor(() => /No category matches/.test(text($('.cs-pop'))), 'empty state');
     setInput(input, 'eating');
