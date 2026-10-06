@@ -75,12 +75,20 @@ describe('API: paging, favorites, merchants search', () => {
     await a.inject({ method: 'DELETE', url: `/api/favorites/${h.cats['Groceries']}`, headers: H });
     expect((await a.inject({ url: '/api/budget' })).json().rows.find((r: any) => r.name === 'Groceries').favorite).toBe(false);
   });
-  it('merchants are paged and searchable', async () => {
+  it('merchants are paged, searchable, most-used first, and can be filtered to those without a usual category', async () => {
     const h = seedHousehold(); const a = app(h);
     for (let i = 0; i < 120; i++) h.db.prepare("INSERT INTO merchants(name, review_state) VALUES (?, 'reviewed')").run(`Shop ${i}`);
-    h.db.prepare("INSERT INTO merchants(name, review_state) VALUES ('Zed Cafe','unreviewed')").run();
+    const z = Number(h.db.prepare("INSERT INTO merchants(name, review_state) VALUES ('Zed Cafe','unreviewed')").run().lastInsertRowid);
+    for (let i = 0; i < 3; i++) createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-01', amountCents: -500, descriptor: `ZED ${i}` }), h.db.prepare('UPDATE transactions SET merchant_id=? WHERE descriptor_raw=?').run(z, `ZED ${i}`);
     const p1 = (await a.inject({ url: '/api/merchants?limit=50' })).json();
-    expect(p1.rows).toHaveLength(50); expect(p1.total).toBe(121); expect(p1.unreviewed).toBe(1); expect(p1.rows[0].name).toBe('Zed Cafe');
+    expect(p1.rows).toHaveLength(50); expect(p1.total).toBe(121); expect(p1.unreviewed).toBe(1); expect(p1.rows[0].name).toBe('Zed Cafe'); // most transactions first
+    const nd = (await a.inject({ url: '/api/merchants?review=nodefault' })).json();
+    expect(nd.total).toBe(1); expect(nd.withoutDefault).toBe(1); // only shops you actually bought from
+    await a.inject({ method: 'PATCH', url: `/api/merchants/${z}`, headers: H, payload: { defaultCategoryId: h.cats['Eating Out'] } });
+    expect((await a.inject({ url: '/api/merchants?review=nodefault' })).json().total).toBe(0);
+    await a.inject({ method: 'PATCH', url: `/api/merchants/${z}`, headers: H, payload: { defaultMode: 'auto' } }); // mode on its own keeps the category
+    expect((await a.inject({ url: '/api/merchants?q=zed' })).json().rows[0]).toMatchObject({ default_mode: 'auto', default_category_id: h.cats['Eating Out'] });
+    expect((await a.inject({ method: 'PATCH', url: `/api/merchants/${z}`, headers: H, payload: { defaultMode: 'bogus' } })).json()).toMatchObject({ error: 'bad mode' });
     expect((await a.inject({ url: '/api/merchants?q=shop 11' })).json().rows.length).toBeGreaterThan(0);
   });
 });
@@ -130,5 +138,22 @@ describe('inbox items: one entry per transaction with every open reason', () => 
     const app = buildApp(h.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 'x' } });
     await app.inject({ method: 'PATCH', url: `/api/transactions/${id}`, headers: { 'x-requested-with': 'hearthkeeper' }, payload: { noteState: 'not_needed' } });
     expect(inbox(h.db, '2026-10-06').items.find((x: any) => x.id === id)).toBeUndefined();
+  });
+  it('ingest messages are paged, filterable, searchable and expandable', async () => {
+    const { captureEvent } = await import('../src/ingest/events.js');
+    const h = seedHousehold(); const a = app(h);
+    for (let i = 0; i < 60; i++) captureEvent(h.db, { source: i % 3 ? 'chase_alert' : 'wf_notice', channel: 'email', payload: `message number ${i} body`, headers: { Subject: `Subject ${i}`, From: 'x@y.com' }, dedupeKey: `k${i}` });
+    const p1 = (await a.inject({ url: '/api/ingest/list?limit=25' })).json();
+    expect(p1.total).toBe(60); expect(p1.rows).toHaveLength(25); expect(p1.rows[0].subject).toBe('Subject 59'); expect(p1.sources).toEqual(['chase_alert', 'wf_notice']);
+    expect(p1.rows[0].headers_json).toBeUndefined(); expect(p1.rows[0].payload).toBeUndefined(); // the list never carries whole messages
+    const p3 = (await a.inject({ url: '/api/ingest/list?limit=25&offset=50' })).json(); expect(p3.rows).toHaveLength(10);
+    expect((await a.inject({ url: '/api/ingest/list?source=wf_notice' })).json().total).toBe(20);
+    expect((await a.inject({ url: '/api/ingest/list?q=number 41' })).json().total).toBe(1);
+    const one = (await a.inject({ url: `/api/ingest/events/${p1.rows[0].id}` })).json();
+    expect(one.payload).toContain('message number 59'); expect(one.headers.Subject).toBe('Subject 59');
+    expect((await a.inject({ url: '/api/ingest/events/99999' })).statusCode).toBe(404);
+    const id = p1.rows[0].id;
+    await a.inject({ method: 'POST', url: `/api/ingest/events/${id}/noise`, headers: H });
+    expect((await a.inject({ url: '/api/ingest/list?status=noise' })).json().total).toBe(1);
   });
 });

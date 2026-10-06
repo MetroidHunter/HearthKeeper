@@ -58,10 +58,22 @@ const ALL: Route[] = [...TOP, ...MENUS.flatMap((m) => m.items), R('/signin', 'Si
 export class HkApp extends LitElement {
   @state() private path = this.current();
   @state() private auth: { mode: string; user: string | null; googleClientId: string | null } | null = null;
+  @state() private offline = false; private retryTimer: any;
   createRenderRoot() { return this; }
   private current() { return location.hash.replace(/^#/, '') || '/'; }
+  /**
+   * Who is signed in? If the server cannot be reached we cannot know: show the saved pages read-only with a visible banner, and keep asking
+   * (when the connection returns, when the tab is shown again, and every 20s) so the sign-in page appears as soon as it is needed.
+   */
   private async loadAuth() {
-    try { this.auth = await (await fetch('/auth/me', { credentials: 'same-origin' })).json(); } catch { this.auth = { mode: 'dev', user: 'offline', googleClientId: null }; } // offline: show the cached app
+    try {
+      this.auth = await (await fetch('/auth/me', { credentials: 'same-origin' })).json();
+      this.offline = false; clearTimeout(this.retryTimer);
+    } catch {
+      this.offline = true;
+      this.auth ??= { mode: 'dev', user: 'offline', googleClientId: null };
+      clearTimeout(this.retryTimer); this.retryTimer = setTimeout(() => this.loadAuth(), 20000);
+    }
   }
   /** Opening one menu closes the others; Escape and any outside click close them all. */
   private oneMenu(opened: HTMLDetailsElement) { this.querySelectorAll('nav details[open]').forEach((d) => { if (d !== opened) d.removeAttribute('open'); }); } // synchronous, so it cannot race the details toggle event
@@ -72,6 +84,8 @@ export class HkApp extends LitElement {
     document.addEventListener('mousedown', (e) => { if (!(e.target as HTMLElement).closest?.('nav details')) this.closeMenus(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenus(); });
     this.loadAuth();
+    addEventListener('online', () => this.loadAuth());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && this.offline) this.loadAuth(); });
     addEventListener('hashchange', () => { this.path = this.current(); });
     addEventListener('hk-unauthorized', () => { this.auth = { mode: 'google', user: null, googleClientId: this.auth?.googleClientId ?? null }; });
     flushQueue();
@@ -83,7 +97,7 @@ export class HkApp extends LitElement {
     const base = '/' + ((this.path.split('?')[0]).split('/')[1] ?? '');
     const hit = ALL.find((r) => r.path === base) ?? ALL[0];
     const link = (r: Route) => html`<a href="#${r.path}" class=${r.path === hit.path ? 'on' : ''} @click=${() => this.closeMenus()}>${r.label}${r.hint ? html`<small>${r.hint}</small>` : ''}</a>`;
-    return html`<nav class="top">${TOP.map(link)}
+    return html`${this.offline ? html`<div class="offline" role="status"><span>Can't reach the server, so I can't tell whether you're signed in. Showing the last saved data (read-only). Trying again every few seconds.</span><button @click=${() => this.loadAuth()}>Retry now</button></div>` : nothing}<nav class="top">${TOP.map(link)}
       ${MENUS.map((m) => html`<details class="menu ${m.items.some((r) => r.path === hit.path) ? 'on' : ''}"><summary @click=${(e: Event) => this.oneMenu((e.currentTarget as HTMLElement).parentElement as HTMLDetailsElement)}>${m.label}</summary><div class="panel">${m.items.map(link)}</div></details>`)}
       ${this.auth.mode === 'google' ? html`<a href="#" class="spacer" @click=${async (e: Event) => { e.preventDefault(); await fetch('/auth/logout', { method: 'POST', headers: { 'x-requested-with': 'hearthkeeper' }, credentials: 'same-origin' }); navigator.serviceWorker?.controller?.postMessage('logout'); try { localStorage.removeItem('hk-offline-queue'); } catch { /* ignore */ } await this.loadAuth(); }}>Sign out (${this.auth.user})</a>` : ''}</nav>
       <main>${hit.view()}</main>${nothing}`;

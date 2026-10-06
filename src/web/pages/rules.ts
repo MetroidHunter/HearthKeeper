@@ -1,21 +1,22 @@
 import { html, nothing } from 'lit';
+import { repeat } from 'lit/directives/repeat.js';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api } from '../api.js';
 import { type Cat } from '../shared.js';
-import { pageHead, th, catSelect, showDialog, promptBox, confirmBox } from '../ui.js';
+import { pageHead, th, catSelect, showDialog, promptBox, confirmBox, toast } from '../ui.js';
 
 const PAGE = 50;
 /** Rules and merchants. The household has thousands of merchants, so lists are paged and searched on the server; only 50 rows are ever in the DOM. */
 @customElement('hk-rules')
 export class Rules extends Page {
-  @state() rules: any[] = []; @state() merch: { rows: any[]; total: number; unreviewed: number } = { rows: [], total: 0, unreviewed: 0 }; @state() promotable: any[] = []; @state() cats: Cat[] = [];
+  @state() rules: any[] = []; @state() merch: { rows: any[]; total: number; unreviewed: number; withoutDefault: number } = { rows: [], total: 0, unreviewed: 0, withoutDefault: 0 }; @state() promotable: any[] = []; @state() cats: Cat[] = [];
   @state() tab: 'rules' | 'merchants' = 'rules'; @state() draft: any = null; @state() bt: any = null;
-  @state() rq = ''; @state() rpage = 0; @state() mq = ''; @state() mpage = 0; @state() onlyNew = false;
+  @state() rq = ''; @state() rpage = 0; @state() mq = ''; @state() mpage = 0; @state() onlyNew = true; /* true = only shops with no usual category yet */
   private timer: any;
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { [this.rules, this.promotable, this.cats] = await Promise.all([api.get('/api/rules'), api.get('/api/rules/promotable'), api.get('/api/categories')]); await this.loadMerchants(); }); }
-  async loadMerchants() { this.merch = await api.get(`/api/merchants?limit=${PAGE}&offset=${this.mpage * PAGE}${this.mq ? `&q=${encodeURIComponent(this.mq)}` : ''}${this.onlyNew ? '&review=unreviewed' : ''}`); }
+  async loadMerchants() { this.merch = await api.get(`/api/merchants?limit=${PAGE}&offset=${this.mpage * PAGE}${this.mq ? `&q=${encodeURIComponent(this.mq)}` : ''}${this.onlyNew ? '&review=nodefault' : ''}`); }
   summary(r: any) { try { return JSON.parse(r.match_json).all_of.map((c: any) => `${c.field} ${c.op} ${JSON.stringify(c.value)}`).join(' AND '); } catch { return ''; } }
   act(r: any) { const a = JSON.parse(r.action_json); return a.type === 'categorize' ? a.category : a.type; }
   async test() { const d = this.draft; await this.run(async () => { this.bt = await api.post('/api/rules/backtest', { match: this.matchOf(d) }); }); }
@@ -23,7 +24,7 @@ export class Rules extends Page {
   render() {
     return html`${pageHead('Rules & merchants', 'How transactions get categorized without you. A rule says "when the description contains X, use category Y"; a merchant remembers its usual category.', 'Rules start in suggest mode: they offer an answer but you confirm. After enough clean confirmations a rule can be promoted to auto. Backtest a new rule to see what it would have done to your history before saving it.')}
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
-      <div class="tabs"><button aria-pressed=${this.tab === 'rules'} @click=${() => (this.tab = 'rules')}>Rules (${this.rules.length})</button><button aria-pressed=${this.tab === 'merchants'} @click=${() => (this.tab = 'merchants')}>Merchants (${this.merch.total.toLocaleString()}${this.merch.unreviewed ? `, ${this.merch.unreviewed.toLocaleString()} to review` : ''})</button></div>
+      <div class="tabs"><button aria-pressed=${this.tab === 'rules'} @click=${() => (this.tab = 'rules')}>Rules (${this.rules.length})</button><button aria-pressed=${this.tab === 'merchants'} @click=${() => (this.tab = 'merchants')}>Merchants</button></div>
       ${this.tab === 'rules' ? this.rulesTab() : this.merchantsTab()}`;
   }
   pager(page: number, total: number, set: (n: number) => void) {
@@ -52,13 +53,33 @@ export class Rules extends Page {
   }
   merchantsTab() {
     const m = this.merch;
-    return html`<div class="row"><input class="grow" type="search" placeholder="Search merchants" .value=${this.mq} @input=${(e: any) => { this.mq = e.target.value; this.mpage = 0; clearTimeout(this.timer); this.timer = setTimeout(() => this.run(() => this.loadMerchants()), 250); }} />
-        <label><input type="checkbox" .checked=${this.onlyNew} @change=${(e: any) => { this.onlyNew = e.target.checked; this.mpage = 0; this.run(() => this.loadMerchants()); }} /> Only new merchants</label></div>
-      <div class="card flush" style="overflow-x:auto"><table><thead><tr>${th('Merchant', 'The cleaned-up name. Rename it to fix how it displays everywhere.')}${th('Txns', 'Transactions attributed to it.', 'num')}${th('Default category', 'Used as the suggestion for new transactions from this merchant.')}${th('Mode', 'How the default is applied: auto, suggest or ask.')}<th></th></tr></thead><tbody>
-      ${m.rows.map((x) => html`<tr><td>${x.name} ${x.review_state === 'unreviewed' ? html`<span class="badge warn">new</span>` : nothing}</td><td class="num">${x.txns}</td>
-        <td>${catSelect(this.cats, x.default_category_id, async (id) => { await this.run(() => api.patch(`/api/merchants/${x.id}`, { defaultCategoryId: id })); await this.loadMerchants(); }, { placeholder: '—' })}</td>
-        <td>${x.default_mode}</td><td><div class="row"><button @click=${() => this.rename(x)}>Rename</button><button @click=${() => this.merge(x)}>Merge…</button></div></td></tr>`)}</tbody></table></div>
+    return html`<div class="card muted small" style="margin:0">A <b>merchant</b> is a shop's cleaned-up name, taken from the messy text on your bank statement ("SQ *BLUE BOTTLE #12 SEATTLE WA" becomes "BLUE BOTTLE"). Nothing here needs your attention: this is just the quickest way to teach HearthKeeper. Pick a <b>usual category</b> and future purchases there arrive pre-filled in your Backlog (<b>suggest</b>), or are filed without asking (<b>auto</b>). Rules, in the other tab, are for patterns that span several merchants.</div>
+      <div class="row"><input class="grow" type="search" placeholder="Search merchants" .value=${this.mq} @input=${(e: any) => { this.mq = e.target.value; this.mpage = 0; clearTimeout(this.timer); this.timer = setTimeout(() => this.run(() => this.loadMerchants()), 250); }} />
+        <select aria-label="Which merchants" @change=${(e: any) => { this.onlyNew = e.target.value === 'nodefault'; this.mpage = 0; this.run(() => this.loadMerchants()); }}><option value="nodefault" ?selected=${this.onlyNew}>No usual category yet (${m.withoutDefault.toLocaleString()}), most-used first</option><option value="all" ?selected=${!this.onlyNew}>All merchants (most-used first)</option></select></div>
+      <div class="card flush mlist"><div class="mrow mhead"><span data-tip="The cleaned-up name of the shop." tabindex="0">Merchant</span><span class="num" data-tip="How many of your transactions are from it." tabindex="0">Txns</span><span data-tip="Future purchases here are pre-filled with this category." tabindex="0">Usual category</span><span data-tip="suggest: pre-fills it in your Backlog and you confirm. auto: files it without asking. ask: no pre-fill." tabindex="0">When it buys</span><span></span></div>
+      ${repeat(m.rows, (x: any) => x.id, (x: any) => html`<div class="mrow"><div class="mname"><b>${x.name}</b><span class="muted small mtx">${x.txns} txn${x.txns === 1 ? '' : 's'}</span></div><span class="num mtxn">${x.txns}</span>
+        <div class="mcat">${catSelect(this.cats, x.default_category_id, (id) => this.setDefault(x, id), { placeholder: 'Pick a category' })}</div>
+        <div class="mact"><select aria-label="Mode" ?disabled=${!x.default_category_id} @change=${(e: any) => this.setMode(x, e.target.value)}>${['suggest', 'auto', 'ask'].map((o) => html`<option ?selected=${o === x.default_mode}>${o}</option>`)}</select><button @click=${() => this.fix(x)}>Fix name…</button></div></div>`)}</div>
       ${this.pager(this.mpage, m.total, (n) => { this.mpage = n; this.run(() => this.loadMerchants()); })}`;
+  }
+  /** Saved in place: the row stays where it is (it only leaves the "no usual category" list when you reload or change page), with a confirmation. */
+  async setDefault(x: any, id: number | null) {
+    await this.run(() => api.patch(`/api/merchants/${x.id}`, { defaultCategoryId: id }));
+    const had = !!x.default_category_id; x.default_category_id = id;
+    const name = id ? this.cats.find((c) => c.id === id)?.name : null;
+    if (!had && id) this.merch = { ...this.merch, withoutDefault: Math.max(0, this.merch.withoutDefault - 1) };
+    if (had && !id) this.merch = { ...this.merch, withoutDefault: this.merch.withoutDefault + 1 };
+    this.requestUpdate();
+    toast(id ? `${x.name} → ${name} (${x.default_mode}). Future purchases there will be ${x.default_mode === 'auto' ? 'filed automatically' : x.default_mode === 'ask' ? 'left for you' : 'pre-filled for you to confirm'}.` : `${x.name}: usual category removed`);
+  }
+  async setMode(x: any, mode: string) { await this.run(() => api.patch(`/api/merchants/${x.id}`, { defaultMode: mode })); x.default_mode = mode; this.requestUpdate(); toast(`${x.name}: ${mode}`); }
+  /** One entry point for the two maintenance actions, each explained. */
+  async fix(x: any) {
+    const choice = await showDialog<'rename' | 'merge' | undefined>((close) => html`<h3 class="title">${x.name}</h3>
+      <p class="muted small"><b>Rename</b> changes how the name is shown everywhere. Use it when the cleaned-up name is ugly or wrong.</p>
+      <p class="muted small"><b>Merge</b> is for when two entries are really the same shop (for example "AMZN MKTP" and "AMAZON"). All of its transactions move to the one you keep, so they share a usual category and statistics. You cannot undo it.</p>
+      <div class="actions"><button @click=${() => close(undefined)}>Cancel</button><button @click=${() => close('rename')}>Rename…</button><button @click=${() => close('merge')}>Merge into another…</button></div>`);
+    if (choice === 'rename') await this.rename(x); else if (choice === 'merge') await this.merge(x);
   }
   async rename(x: any) { const n = await promptBox({ title: `Rename ${x.name}`, label: 'New name', value: x.name, confirm: 'Rename' }); if (n) { await this.run(() => api.patch(`/api/merchants/${x.id}`, { name: n })); await this.loadMerchants(); } }
   async merge(x: any) {

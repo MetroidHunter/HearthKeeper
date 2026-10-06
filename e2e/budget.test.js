@@ -11,6 +11,8 @@ describe('Budget', () => {
     const header = text($('.grid3'));
     expect(header).to.match(/Live plan\s*Current budget/);
     expect(header).to.match(/\$12,466\.67/); // the $220k @ 32% scenario from Projection
+    expect(header).to.match(/Allocated \/ income \(unallocated\)\s*\$4,490\.00\s*\/ \$12,466\.67\s*\(\$7,976\.67\)/); // one compact card: allocated / income (unallocated)
+    expect($$('.stat', $('.grid3')).length, 'plan + one combined card').to.equal(2);
     expect(byText('h3', /^Food/)).to.exist; // each group is a full card with its own heading
     expect(text($$('tbody tr').find((r) => /Salary/.test(text(r))))).to.match(/N\/A/); // income_reference shows N/A like the sheet
   });

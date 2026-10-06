@@ -38,9 +38,9 @@ export class Budget extends Page {
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
       <div class="grid3 bstats">
         <div class="stat plan"><span class="label">Live plan</span><span class="value" style="font-size:20px">${h.livePlan ?? 'none'}</span></div>
-        <div class="stat"><span class="label">Income per month</span><span class="value">${money(h.incomeCents)}</span></div>
-        <div class="stat"><span class="label">Allocated</span><span class="value">${money(h.allocatedCents)}</span></div>
-        <div class="stat"><span class="label">Unallocated</span><span class="value ${h.unallocatedCents < 0 ? 'neg' : ''}">${money(h.unallocatedCents)}</span><span class="sub">income minus allocated</span></div></div>
+        <div class="stat combo"><span class="label">Allocated / income (unallocated)</span>
+          <span class="value"><span>${money(h.allocatedCents)}</span> <span class="of">/ ${money(h.incomeCents)}</span> <span class="un ${h.unallocatedCents < 0 ? 'neg' : 'pos'}">(${money(h.unallocatedCents)})</span></span>
+          <span class="sub">per month; unallocated is income minus allocated</span></div></div>
       ${unc && unc.count ? html`<a class="stat" href="#/backlog"><span class="label">Needs category</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions have no category yet, so they are not in any envelope below. Categorize them in the Backlog and each amount moves into its category.</span></a>` : nothing}
       <div class="tabs"><button aria-pressed=${this.view === 'table'} @click=${() => (this.view = 'table')}>Groups</button><button aria-pressed=${this.view === 'pie'} @click=${() => { this.view = 'pie'; this.drill = null; }}>Pie</button>
         ${this.view === 'pie' ? html`<button @click=${async () => { this.pieMode = this.pieMode === 'allocated' ? 'spent' : 'allocated'; this.drill = null; this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }}>Share of ${this.pieMode} ↔</button>${this.drill ? html`<button @click=${() => (this.drill = null)}>← all groups</button>` : ''}` : ''}</div>

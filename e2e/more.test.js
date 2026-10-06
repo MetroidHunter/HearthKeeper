@@ -30,11 +30,42 @@ describe('Rules and merchants', () => {
     await waitFor(async () => (await api('/api/rules')).some((r) => /chipotle/i.test(r.match_json) && r.mode === 'suggest'), 'rule saved in suggest mode (verbose by default)');
   });
 
-  it('merchants to review shows unreviewed merchants', async () => {
+  const mrows = () => $$('.mlist .mrow:not(.mhead)');
+  it('merchants: most-used first, paged; giving one a usual category keeps its row, confirms, and does not leak into the next row\'s picker', async () => {
     await mount('/rules');
     byText('button', /^Merchants/).click();
-    await waitFor(() => $$('tbody tr').length > 3 && /new/.test(text($('tbody'))), 'merchant rows');
-    expect($$('tbody tr').length).to.be.at.most(50); // paged: never the whole merchant list
+    await waitFor(() => mrows().length > 3, 'merchant rows');
+    expect(mrows().length).to.be.at.most(50); // paged: never the whole merchant list
+    expect(text($('.card.muted.small'))).to.match(/A merchant is a shop/); // says what this page is
+    const before = (await api('/api/merchants?review=nodefault&limit=50')).withoutDefault;
+    const first = mrows()[0], second = mrows()[1];
+    const name1 = text($('.mname b', first));
+    await pickCat($('hk-category-select', first), 'Groceries');
+    await waitFor(() => /usual category|Future purchases/.test(text($$('.toast').at(-1))) || /→ Groceries/.test(text($$('.toast').at(-1))), 'confirmation toast');
+    await sleep(150);
+    expect(text($('.mname b', mrows()[0])), 'the row stays where it was').to.equal(name1);
+    expect($('input', mrows()[0]).value, 'its picker shows the category').to.match(/Groceries/);
+    expect($('input', mrows()[1]).value, 'the next row\'s picker is untouched').to.equal('');
+    const m = (await api('/api/merchants?q=' + encodeURIComponent(name1) + '&limit=5')).rows.find((r) => r.name === name1);
+    expect(m.default_category_id).to.be.a('number');
+    expect((await api('/api/merchants?review=nodefault&limit=50')).withoutDefault).to.equal(before - 1);
+    // reload the list (page change / filter): the row leaves the "no usual category" list and the next merchant is not mislabelled
+    choose($('select[aria-label="Which merchants"]'), 'All merchants');
+    await waitFor(() => mrows().length > 3, 'all merchants');
+    choose($('select[aria-label="Which merchants"]'), 'No usual category yet'); // back: the merchant we just filed is gone from this list
+    await waitFor(() => mrows().length > 3 && $('.mname b', mrows()[0]) && text($('.mname b', mrows()[0])) !== name1, 'filed merchant left the list');
+    expect(mrows().every((r) => $('input', r).value === ''), 'no leftover category on any remaining row').to.equal(true);
+    expect(second).to.exist;
+  });
+
+  it('Fix name… explains rename and merge', async () => {
+    await mount('/rules');
+    byText('button', /^Merchants/).click();
+    await waitFor(() => mrows().length > 3, 'merchant rows');
+    byText('button', /Fix name/, mrows()[0]).click();
+    const dlg = await waitFor(() => $('dialog[open]'), 'dialog');
+    expect(text(dlg)).to.match(/Rename changes how the name is shown.*Merge is for when two entries are really the same shop/);
+    byText('button', /^Cancel$/, dlg).click();
   });
 });
 

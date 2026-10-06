@@ -1,4 +1,4 @@
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, api } from './helpers.js';
+import { choose, expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, api } from './helpers.js';
 
 describe('Ingest health and the Shapes page', () => {
   let trap;
@@ -7,12 +7,28 @@ describe('Ingest health and the Shapes page', () => {
 
   it('clusters raw events by template and lets you mark noise', async () => {
     await mount('/ingest');
+    byText('button', /^Shapes$/).click();
     await waitFor(() => $$('.card').length > 3, 'clusters');
     const chase = $$('.card').find((c) => /chase_alert/.test(text(c)));
     expect(chase).to.exist;
     expect(text(chase)).to.match(/unparsed/); // the demo's chase alert text does not match the real shape, so it stays unrecognized
     byText('button', /Noise/, chase).click();
     await waitFor(async () => (await api('/api/shapes')).some((s) => s.source === 'chase_alert' && s.decision === 'noise'), 'decision saved');
+  });
+
+  it('messages: a compact, paged list; click a row to see the whole message; filters narrow it', async () => {
+    await mount('/ingest');
+    const rows = await waitFor(() => { const r = $$('.evrow'); return r.length > 1 && r; }, 'message rows');
+    expect(rows.length).to.be.at.most(25);
+    expect(text($('.pager'))).to.match(/1–\d+ of \d+/);
+    expect($('.evbody'), 'nothing is expanded at first').to.not.exist;
+    $('.evhead', rows[0]).click();
+    await waitFor(() => $('.evbody pre'), 'expanded message');
+    expect(text($('.evbody'))).to.match(/#\d+ ·/);
+    $('.evhead', rows[0]).click(); await waitFor(() => !$('.evbody'), 'collapsed again');
+    const sel = $('select[aria-label="Status"]'); choose(sel, 'Noise');
+    await waitFor(() => { const r = $$('.evrow'); return r.length ? r.every((x) => /noise/.test(text(x))) : /Nothing matches/.test(text($('.evlist'))); }, 'filtered to noise');
+    expect($$('.evrow').every((r) => /noise/.test(text(r)))).to.equal(true);
   });
 
   it('health tab lists sources and tokens', async () => {

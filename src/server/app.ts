@@ -254,12 +254,14 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const q = req.query; const where: string[] = []; const args: unknown[] = [];
     if (q.q) { where.push('LOWER(m.name) LIKE ?'); args.push(`%${String(q.q).toLowerCase()}%`); }
     if (q.review === 'unreviewed') where.push("m.review_state='unreviewed'");
+    if (q.review === 'nodefault') where.push('m.default_category_id IS NULL AND EXISTS (SELECT 1 FROM transactions t WHERE t.merchant_id=m.id)'); // the useful to-do list: shops you actually bought from, with no usual category yet
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const limit = Math.min(200, Number(q.limit ?? 50)), offset = Number(q.offset ?? 0);
-    const rows = db.prepare(`SELECT m.*, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ${w} ORDER BY (m.review_state='unreviewed') DESC, txns DESC, m.name LIMIT ? OFFSET ?`).all(...args, limit, offset);
+    const rows = db.prepare(`SELECT m.*, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ${w} ORDER BY txns DESC, m.name LIMIT ? OFFSET ?`).all(...args, limit, offset);
     const total = (db.prepare(`SELECT COUNT(*) c FROM merchants m ${w}`).get(...args) as { c: number }).c;
     const unreviewed = (db.prepare("SELECT COUNT(*) c FROM merchants WHERE review_state='unreviewed'").get() as { c: number }).c;
-    return { rows, total, unreviewed, limit, offset };
+    const withoutDefault = (db.prepare('SELECT COUNT(*) c FROM merchants m WHERE m.default_category_id IS NULL AND EXISTS (SELECT 1 FROM transactions t WHERE t.merchant_id=m.id)').get() as { c: number }).c;
+    return { rows, total, unreviewed, withoutDefault, limit, offset };
   });
   app.post('/api/merchants/:id/merge', async (req: any) => {
     const into = rec(req.body).intoId; const id = Number(req.params.id);
@@ -269,6 +271,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     return { ok: true };
   });
   app.patch('/api/merchants/:id', async (req: any) => { const b = rec(req.body); if (b.name) db.prepare('UPDATE merchants SET name=?, review_state=\'reviewed\' WHERE id=?').run(b.name, req.params.id);
+    if (b.defaultMode !== undefined && b.defaultCategoryId === undefined) { if (!['auto', 'suggest', 'ask'].includes(b.defaultMode)) return { error: 'bad mode' }; db.prepare("UPDATE merchants SET default_mode=?, review_state='reviewed' WHERE id=?").run(b.defaultMode, req.params.id); }
     if (b.defaultCategoryId !== undefined) db.prepare('UPDATE merchants SET default_category_id=?, default_mode=COALESCE(?, default_mode), review_state=\'reviewed\' WHERE id=?').run(b.defaultCategoryId, b.defaultMode ?? null, req.params.id); return { ok: true }; });
   app.post('/api/merchant-groups', async (req) => { const b = rec(req.body); const id = Number(db.prepare('INSERT INTO merchant_groups(name) VALUES (?)').run(b.name).lastInsertRowid); for (const m of b.merchantIds ?? []) db.prepare('INSERT OR IGNORE INTO merchant_group_members VALUES (?,?)').run(id, m); return { id }; });
 
@@ -314,6 +317,29 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/shapes', async () => shapes(db));
   app.post('/api/shapes/decide', async (req) => { const b = rec(req.body); decideShape(db, b.fingerprint, b.source, b.decision); return { ok: true }; });
   app.post('/api/ingest/replay', async (req) => replay(db, rec(req.body)));
+  app.get('/api/ingest/list', async (req: any) => { // paged: every message ever received is kept, so this list only ever grows
+    const q = req.query; const where: string[] = []; const args: unknown[] = [];
+    if (q.status) { where.push('parse_status=?'); args.push(String(q.status)); }
+    if (q.source) { where.push('source=?'); args.push(String(q.source)); }
+    if (q.q) { where.push('(LOWER(payload) LIKE ? OR LOWER(COALESCE(headers_json, \'\')) LIKE ?)'); const like = `%${String(q.q).toLowerCase().slice(0, 80)}%`; args.push(like, like); }
+    const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limit = Math.min(100, Number(q.limit ?? 25)), offset = Number(q.offset ?? 0);
+    const rows = (db.prepare(`SELECT id, source, channel, received_at, parse_status, parser_version, error, substr(payload, 1, 160) preview, headers_json FROM raw_events ${w} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset) as any[]).map(({ headers_json, ...r }) => {
+      let h: Record<string, string> = {}; try { h = JSON.parse(headers_json ?? '{}'); } catch { /* none */ }
+      return { ...r, subject: h.Subject ?? null, from: h['X-HK-Original-From'] ?? h.From ?? null };
+    });
+    const total = (db.prepare(`SELECT COUNT(*) c FROM raw_events ${w}`).get(...args) as { c: number }).c;
+    const sources = (db.prepare('SELECT DISTINCT source FROM raw_events ORDER BY source').all() as { source: string }[]).map((r) => r.source);
+    return { rows, total, sources, limit, offset };
+  });
+  app.get('/api/ingest/events/:id', async (req: any, reply) => {
+    const r = db.prepare('SELECT id, source, channel, received_at, parse_status, parser_version, error, payload, html IS NOT NULL has_html, headers_json FROM raw_events WHERE id=?').get(Number(req.params.id)) as any;
+    if (!r) return reply.code(404).send({ error: 'no such event' });
+    let headers = {}; try { headers = JSON.parse(r.headers_json ?? '{}'); } catch { /* none */ }
+    delete r.headers_json; return { ...r, payload: String(r.payload).slice(0, 20000), headers };
+  });
+  app.post('/api/ingest/events/:id/replay', async (req: any) => { const id = Number(req.params.id); const r = parseEvent(db, id); return { result: r ?? { status: 'pending', error: 'no parser for this source' } }; });
+  app.post('/api/ingest/events/:id/noise', async (req: any) => { db.prepare("UPDATE raw_events SET parse_status='noise' WHERE id=? AND parse_status IN ('pending','unrecognized','error')").run(Number(req.params.id)); return { ok: true }; });
   app.get('/api/ingest/events', async (req: any) => db.prepare('SELECT id, source, channel, received_at, parse_status, error, payload FROM raw_events WHERE (? IS NULL OR parse_status=?) ORDER BY id DESC LIMIT 200').all(req.query.status ?? null, req.query.status ?? null));
   app.post('/api/ingest/tokens', async (req) => { const b = rec(req.body); return createToken(db, b.label, b.channel, b.expectedCadenceHours); }); // secret is shown once
 
