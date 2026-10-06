@@ -21,10 +21,11 @@ export function htmlToText(html: string): string {
 }
 
 export interface EmailBody { text: string; headers: Record<string, string> }
-/** The body the parsers read: the HTML part rendered to lines when the forwarder sent one (its own plain text is often empty or unstructured), else the plain text. */
+/** The body the parsers read: the stored HTML part rendered to lines when there is one (the plain text is often empty or unstructured), else the plain text. */
 export function emailBody(ev: RawEvent): EmailBody {
   let headers: Record<string, string> = {};
   try { headers = JSON.parse(ev.headers_json ?? '{}'); } catch { /* none */ }
+  if (ev.html) { const text = htmlToText(ev.html); if (text) return { text, headers }; } // the stored HTML part (how the receiver mailbox delivers it)
   const t = ev.payload.trim();
   if (t.startsWith('{')) {
     try {

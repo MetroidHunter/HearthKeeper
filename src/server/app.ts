@@ -75,9 +75,9 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const sniffed: Source | undefined = channel === 'device' && typeof payload === 'string' && /Prime Visa: You made a \$/.test(payload) ? 'chase_alert' : undefined;
     const source = (req.query?.source as Source | undefined) ?? (body.source as Source | undefined) ?? sniffed ?? defaultSource;
     if (!ALLOWED_SOURCES[channel].includes(source)) return reply.code(400).send({ error: `source ${source} is not accepted on the ${channel} channel` }); // a leaked token must not be able to forge arbitrary sources
-    const cap = captureEvent(db, { source, channel, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), headers: channel === 'email' ? body.headers : undefined, tokenId: a.tokenId, dedupeKey: body.messageId ? `${source}:${body.messageId}` : undefined });
-    if (!cap.duplicate) parseEvent(db, cap.id); // no parser => stays pending; nothing is created
-    return { id: cap.id, duplicate: cap.duplicate };
+    const cap = captureEvent(db, { source, channel, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), html: channel === 'email' && typeof body.html === 'string' && body.html ? body.html.slice(0, 400_000) : null, headers: channel === 'email' ? body.headers : undefined, tokenId: a.tokenId, dedupeKey: body.messageId ? `${source}:${body.messageId}` : undefined });
+    if (!cap.duplicate || cap.backfilled) parseEvent(db, cap.id); // no parser => stays pending; nothing is created
+    return { id: cap.id, duplicate: cap.duplicate && !cap.backfilled };
   };
   app.post('/ingest/device', { bodyLimit: 256 * 1024 }, ingest('device', 'greenlight_msg'));
   app.post('/ingest/email', { bodyLimit: 1024 * 1024 }, ingest('email', 'email_unknown'));

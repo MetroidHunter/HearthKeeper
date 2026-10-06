@@ -104,4 +104,8 @@ CREATE INDEX txn_merchant ON transactions(merchant_id);
 `
 ALTER TABLE categories ADD COLUMN system INTEGER NOT NULL DEFAULT 0;
 `,
+`
+-- the HTML part of an email, kept next to its plain text: Venmo/PayPal/Amazon only parse reliably from it
+ALTER TABLE raw_events ADD COLUMN html TEXT;
+`,
 ];

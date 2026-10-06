@@ -16,12 +16,29 @@ import { setSplits } from '../src/core/transactions.js';
 interface Fx { headers: Record<string, string>; text: string; html: string }
 const fx = (n: string): Fx => JSON.parse(readFileSync(new URL(`./fixtures/receipts/${n}.json`, import.meta.url), 'utf8'));
 const body = (n: string) => htmlToText(fx(n).html);
-/** What the Apps Script forwarder posts: plain text (often empty) + html + headers. */
-const payload = (n: string) => JSON.stringify({ text: fx(n).text, html: fx(n).html, headers: fx(n).headers });
 const cap = (h: ReturnType<typeof seedHousehold>, source: string, n: string, extra: Record<string, unknown> = {}) =>
-  captureEvent(h.db, { source, channel: 'email', payload: payload(n), headers: fx(n).headers, dedupeKey: n + JSON.stringify(extra) } as any);
+  captureEvent(h.db, { source, channel: 'email', payload: fx(n).text || 'plain part is empty', html: fx(n).html, headers: fx(n).headers, dedupeKey: n + JSON.stringify(extra) } as any);
 
 describe('real-email parsers', () => {
+  it('through the real ingest endpoint: the signed POST from the forwarder keeps the html part, and the parser reads it', async () => {
+    const { buildApp } = await import('../src/server/app.js'); const { sign } = await import('../src/ingest/events.js'); const { createToken } = await import('../src/ingest/events.js');
+    clearParsers(); const h = seedHousehold(); const app = buildApp(h.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 's' }, now: () => '2026-10-06' });
+    const t = createToken(h.db, 'receiver-mailbox', 'email');
+    const body = JSON.stringify({ source: 'venmo_receipt', messageId: 'v1', text: '', html: fx('venmo_paid').html, headers: fx('venmo_paid').headers }); // empty plain part, like real Venmo mail
+    const ts = String(Math.floor(Date.now() / 1000));
+    const r = await app.inject({ method: 'POST', url: '/ingest/email', headers: { 'content-type': 'application/json', 'x-hk-token': 'receiver-mailbox', 'x-hk-timestamp': ts, 'x-hk-nonce': 'n1', 'x-hk-signature': sign(t.secret, ts, 'n1', body) }, payload: body });
+    expect(r.statusCode).toBe(200);
+    expect(h.db.prepare("SELECT parse_status s, error FROM raw_events").get()).toEqual({ s: 'ok', error: null });
+    expect(h.db.prepare('SELECT amount_cents c, counterparty FROM external_notes').get()).toEqual({ c: -17800, counterparty: 'Casey Lind' });
+    // an event stored before html was kept (plain text only, unparsed): resending the same message fills the html in and parses it
+    const old = captureEvent(h.db, { source: 'paypal_receipt', channel: 'email', payload: 'You paid $5.00 USD to Sample Shop', headers: fx('paypal_receipt').headers, dedupeKey: 'paypal_receipt:p1' });
+    expect(parseEvent(h.db, old.id)).toMatchObject({ status: 'unrecognized' });
+    const body2 = JSON.stringify({ source: 'paypal_receipt', messageId: 'p1', text: 'You paid $5.00 USD to Sample Shop', html: fx('paypal_receipt').html, headers: fx('paypal_receipt').headers });
+    const ts2 = String(Math.floor(Date.now() / 1000));
+    const r2 = await app.inject({ method: 'POST', url: '/ingest/email', headers: { 'content-type': 'application/json', 'x-hk-token': 'receiver-mailbox', 'x-hk-timestamp': ts2, 'x-hk-nonce': 'n2', 'x-hk-signature': sign(t.secret, ts2, 'n2', body2) }, payload: body2 });
+    expect(r2.json()).toMatchObject({ id: old.id, duplicate: false });
+    expect(h.db.prepare("SELECT parse_status s FROM raw_events WHERE id=?").get(old.id)).toEqual({ s: 'ok' });
+  });
   it('htmlToText keeps inline-split amounts together and drops invisible padding', () => {
     expect(htmlToText('<div><span>$</span><span>15</span><span>.</span><span>00</span></div><p>a&nbsp;&zwnj;b&amp;c</p>')).toBe('$15.00\na b&c');
   });
@@ -116,10 +133,10 @@ As of 10/06/2026 at 12:42 a.m., Central Time`; // the amount of the last line is
       h.db.prepare("UPDATE accounts SET last4='1111' WHERE id=?").run(h.wf);
       createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-09-25', amountCents: -662, descriptor: 'GREENLIGHT APP 260925 GREENLIGHT ALEX SAMPLE' });
       // a hand-forwarded message: the script reports the inner sender in X-HK-Original-From; the outer sender (a person) is not checked as the bank
-      const manual = captureEvent(h.db, { source: 'wf_notice', channel: 'email', payload: JSON.stringify({ text: 'x', html: fx('wf_purchase').html }), headers: { From: 'Me <me@gmail.com>', 'X-HK-Original-From': 'Wells Fargo <alerts@notify.wellsfargo.com>' }, dedupeKey: 'manual' } as any);
+      const manual = captureEvent(h.db, { source: 'wf_notice', channel: 'email', payload: 'x', html: fx('wf_purchase').html, headers: { From: 'Me <me@gmail.com>', 'X-HK-Original-From': 'Wells Fargo <alerts@notify.wellsfargo.com>' }, dedupeKey: 'manual' } as any);
       h.db.prepare("UPDATE accounts SET last4='2222' WHERE id=?").run(h.wf);
       expect(parseEvent(h.db, manual.id)).toEqual({ status: 'ok' });
-      const spoof = captureEvent(h.db, { source: 'wf_notice', channel: 'email', payload: JSON.stringify({ text: 'x', html: fx('wf_purchase').html }), headers: { From: 'Me <me@gmail.com>' }, dedupeKey: 'spoof' } as any);
+      const spoof = captureEvent(h.db, { source: 'wf_notice', channel: 'email', payload: 'x', html: fx('wf_purchase').html, headers: { From: 'Me <me@gmail.com>' }, dedupeKey: 'spoof' } as any);
       expect(parseEvent(h.db, spoof.id)).toMatchObject({ status: 'unrecognized', error: expect.stringContaining('not wellsfargo.com') });
       parseEvent(h.db, cap(h, 'wf_notice', 'wf_greenlight').id);
       expect(h.db.prepare('SELECT COUNT(*) c FROM transactions WHERE account_id=?').get(h.wf)).toEqual({ c: 2 });

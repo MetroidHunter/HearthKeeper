@@ -19,15 +19,19 @@ export function fingerprint(text: string): string {
     .replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
-export interface CaptureInput { source: Source; channel: 'email' | 'device' | 'upload' | 'api'; payload: string; headers?: Record<string, string>; tokenId?: number | null; receivedAt?: string; dedupeKey?: string }
+export interface CaptureInput { source: Source; channel: 'email' | 'device' | 'upload' | 'api'; payload: string; html?: string | null; headers?: Record<string, string>; tokenId?: number | null; receivedAt?: string; dedupeKey?: string }
 
 /** Store a raw event. Parses nothing (capture first, parse later; design §8.2). Returns {id, duplicate}. */
-export function captureEvent(db: DB, c: CaptureInput): { id: number; duplicate: boolean } {
+export function captureEvent(db: DB, c: CaptureInput): { id: number; duplicate: boolean; backfilled?: boolean } {
   const key = c.dedupeKey ?? createHash('sha256').update(c.source + '\0' + c.payload).digest('hex');
-  const ex = db.prepare('SELECT id FROM raw_events WHERE dedupe_key=?').get(key) as { id: number } | undefined;
-  if (ex) return { id: ex.id, duplicate: true };
-  const id = Number(db.prepare(`INSERT INTO raw_events(source, channel, received_at, ingest_token_id, payload, headers_json, dedupe_key, fingerprint) VALUES (?,?,?,?,?,?,?,?)`)
-    .run(c.source, c.channel, c.receivedAt ?? new Date().toISOString(), c.tokenId ?? null, c.payload, c.headers ? JSON.stringify(c.headers) : null, key, fingerprint(c.payload)).lastInsertRowid);
+  const ex = db.prepare('SELECT id, html FROM raw_events WHERE dedupe_key=?').get(key) as { id: number; html: string | null } | undefined;
+  if (ex) {
+    // an event stored before the html part was kept: a resend of the same message fills it in, and the caller re-parses it
+    if (c.html && !ex.html) { db.prepare('UPDATE raw_events SET html=? WHERE id=?').run(c.html, ex.id); return { id: ex.id, duplicate: true, backfilled: true }; }
+    return { id: ex.id, duplicate: true };
+  }
+  const id = Number(db.prepare(`INSERT INTO raw_events(source, channel, received_at, ingest_token_id, payload, html, headers_json, dedupe_key, fingerprint) VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(c.source, c.channel, c.receivedAt ?? new Date().toISOString(), c.tokenId ?? null, c.payload, c.html ?? null, c.headers ? JSON.stringify(c.headers) : null, key, fingerprint(c.payload)).lastInsertRowid);
   if (c.tokenId) db.prepare("UPDATE ingest_tokens SET last_seen_at=datetime('now') WHERE id=?").run(c.tokenId);
   return { id, duplicate: false };
 }
@@ -85,7 +89,7 @@ export function decideShape(db: DB, fp: string, source: string, decision: 'parse
 }
 
 /* ---------- parsers and replay ---------- */
-export interface RawEvent { id: number; source: string; channel: string; received_at: string; payload: string; headers_json: string | null; parse_status: string }
+export interface RawEvent { id: number; source: string; channel: string; received_at: string; payload: string; html?: string | null; headers_json: string | null; parse_status: string }
 export type ParseResult = { status: 'ok' | 'noise' | 'unrecognized' | 'error'; error?: string };
 export interface Parser { source: string; version: string; parse(db: DB, ev: RawEvent): ParseResult }
 
