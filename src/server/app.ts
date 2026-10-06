@@ -216,6 +216,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const cur = db.prepare('SELECT version FROM transactions WHERE id=?').get(id) as any;
     if (b.version !== undefined && b.version !== cur.version) throw Object.assign(new Error('conflict: edited elsewhere'), { statusCode: 409 });
     if (b.note !== undefined) db.prepare("UPDATE transactions SET note=?, note_state='user_provided', note_source='manual', version=version+1 WHERE id=?").run(b.note, id);
+    if (b.noteState === 'not_needed') db.prepare("UPDATE transactions SET note_state='not_needed', version=version+1 WHERE id=?").run(id); // "this one needs no note"
     if (b.flagged !== undefined) db.prepare('UPDATE transactions SET flagged=?, flag_reason=?, version=version+1 WHERE id=?').run(Number(b.flagged), b.flagReason ?? null, id);
     audit(db, 'transaction', id, 'update', undefined, b, actor(req));
     return { ok: true };

@@ -33,7 +33,7 @@ export class Backlog extends Page {
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
       <div class="tabs">${tab('merchants', `By merchant (${this.groups.length})`)}${tab('flagged', `Flagged (${c?.flagged ?? 0})`)}${tab('notes', `Waiting on notes (${c?.needsNote ?? 0})`)}</div>
       ${this.last ? html`<p class="muted" role="status">${this.last}</p>` : nothing}
-      ${this.view === 'merchants' ? this.merchants() : this.view === 'flagged' ? this.items(this.inbox?.flagged ?? [], 'Nothing is flagged.') : this.items(this.inbox?.needsNote ?? [], 'No notes are being waited on.')}`;
+      ${this.view === 'merchants' ? this.merchants() : this.view === 'flagged' ? this.items((this.inbox?.items ?? []).filter((t: any) => t.reasons.some((r: any) => r.reason === 'flagged')), 'Nothing is flagged.') : this.items((this.inbox?.items ?? []).filter((t: any) => t.reasons.some((r: any) => r.reason === 'needs_note')), 'No notes are being waited on.')}`;
   }
   items(list: any[], empty: string) {
     const env = this.env();

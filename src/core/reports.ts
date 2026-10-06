@@ -124,12 +124,21 @@ export function inbox(db: DB, today = new Date().toISOString().slice(0, 10)) {
   const rows = (reason: InboxReason) => (db.prepare(`SELECT ${cols} ${base(W[reason])} ORDER BY t.occurred_on DESC LIMIT 200`).all() as any[]).map((t) => ({ ...t, reason, why: whyNeedsYou(t, reason, today) }));
   const count = (w: string) => (db.prepare(`SELECT COUNT(*) c ${base(w)}`).get() as { c: number }).c;
   const unique = (db.prepare(`SELECT COUNT(*) c ${base(`(${Object.values(W).map((w) => `(${w})`).join(' OR ')})`)}`).get() as { c: number }).c;
+  const needsCategory = rows('needs_category').map((t) => ({ ...t, suggestions: suggestionsFor(db, t) }));
+  const needsNote = rows('needs_note'), staleProvisionals = rows('stale'), flagged = rows('flagged');
+  // One entry per transaction, however many things are wrong with it, so a person resolves it once and sees every open reason.
+  const merged = new Map<number, any>();
+  for (const t of [...needsCategory, ...flagged, ...needsNote, ...staleProvisionals]) {
+    const m = merged.get(t.id);
+    if (m) { m.reasons.push({ reason: t.reason, why: t.why }); if (t.suggestions && !m.suggestions) m.suggestions = t.suggestions; }
+    else merged.set(t.id, { ...t, reasons: [{ reason: t.reason, why: t.why }] });
+  }
+  const catNames = db.prepare("SELECT GROUP_CONCAT(DISTINCT c.name) n FROM transaction_splits s JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=? AND c.system=0");
+  const items = [...merged.values()].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || b.id - a.id).slice(0, 200).map((t) => ({ ...t, categories: (catNames.get(t.id) as { n: string | null }).n }));
   return {
     counts: { total: unique, needsCategory: count(W.needs_category), needsNote: count(W.needs_note), stale: count(W.stale), flagged: count(W.flagged) },
-    needsCategory: rows('needs_category').map((t) => ({ ...t, suggestions: suggestionsFor(db, t) })),
-    needsNote: rows('needs_note'),
-    staleProvisionals: rows('stale'),
-    flagged: rows('flagged'),
+    items,
+    needsCategory, needsNote, staleProvisionals, flagged,
     greenlightRequests: db.prepare("SELECT r.*, p.display_name FROM greenlight_requests r JOIN greenlight_profiles p ON p.id=r.profile_id WHERE r.status='pending'").all(),
     unrecognized: db.prepare("SELECT id, source, received_at, payload, error FROM raw_events WHERE parse_status IN ('unrecognized','error') ORDER BY id DESC LIMIT 100").all(),
   };

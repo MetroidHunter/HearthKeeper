@@ -90,3 +90,6 @@ Dialogs that ask for a decision (confirm, categorize, retire, add) ignore outsid
 
 ## D60. Answering a Greenlight spend re-attributes it
 A Greenlight spend has a zero total (the allowance already charged the child's category). One-tap answers from Home, Backlog or the API used to replace its two offsetting splits with a single $0 split, so nothing moved. `answerCategory` now writes the offsetting pair (chosen category -spend, the child's category +spend). Failed saves on Home/Backlog show a dialog with the server's message; the category picker no longer lets the inner input's native `change` event escape as a malformed one.
+
+## D61. One card per transaction, one way out per open reason
+A transaction can wait on several things at once (a category, a note, a flag, a pending charge that never posted). Home and Backlog now show it once, list every open reason, and give each its own action: category options, note (pick a matching note, type one, or "no note needed"), "Mark as reviewed", "Hide it: it never posted". Categorizing one reason leaves the card in place showing "✓ Category: X" and what is still open; saves are confirmed with a toast. Before this, an uncategorized Amazon/Venmo/PayPal payment looked unchanged after you categorized it, because it was still waiting on its note.

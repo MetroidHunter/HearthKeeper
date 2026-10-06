@@ -30,7 +30,7 @@ export class Settings extends Page {
     });
   }
   render() {
-    const p = this.prefs; if (!p) return html`${pageHead('Preferences', 'How HearthKeeper looks and when it bothers you.')}<p class="muted">${this.err || 'Loading…'}</p>`;
+    const p = this.prefs; if (!p) return html`${pageHead('Preferences', 'How HearthKeeper looks on this device, and when and how it notifies you.', 'Appearance is remembered on this device only, so your phone and your computer can differ. Notification settings are yours; Miracle sets her own when she signs in.')}<p class="muted">${this.err || 'Loading…'}</p>`;
     return html`${pageHead('Preferences', 'How HearthKeeper looks on this device, and when and how it notifies you.', 'Appearance is remembered on this device only, so your phone and your computer can differ. Notification settings are yours; Miracle sets her own when she signs in.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <h2>Appearance</h2>
       <div class="card"><div class="option-list" role="radiogroup" aria-label="Theme">${([['system', 'Match this device', 'Follows your phone or computer setting, including automatic night mode.'], ['light', 'Light', 'Always light.'], ['dark', 'Dark', 'Always dark.']] as [Theme, string, string][]).map(([v, label, hint]) => html`

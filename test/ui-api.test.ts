@@ -112,3 +112,23 @@ describe('suggestions respect the direction of the money', () => {
     expect(kinds(pay).every((k) => k !== 'expense')).toBe(true);
   });
 });
+
+describe('inbox items: one entry per transaction with every open reason', () => {
+  it('a wrapper payment that is uncategorized AND waiting on a note appears once with both reasons; categorizing leaves the note reason', async () => {
+    const h = seedHousehold();
+    const id = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-05', amountCents: -1500, descriptor: 'VENMO PAYMENT 123' });
+    h.db.prepare("UPDATE transactions SET note_state='awaiting_note' WHERE id=?").run(id);
+    let i = inbox(h.db, '2026-10-06');
+    expect(i.items.filter((t: any) => t.id === id)).toHaveLength(1);
+    expect(i.items.find((t: any) => t.id === id).reasons.map((r: any) => r.reason).sort()).toEqual(['needs_category', 'needs_note']);
+    expect(i.counts.total).toBe(1);
+    setSplits(h.db, id, [{ categoryId: h.cats['Groceries'], amountCents: -1500 }]);
+    i = inbox(h.db, '2026-10-06');
+    const t = i.items.find((x: any) => x.id === id);
+    expect(t.reasons.map((r: any) => r.reason)).toEqual(['needs_note']); // still here, for the note
+    expect(t.categories).toBe('Groceries'); // and it shows what was just decided
+    const app = buildApp(h.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 'x' } });
+    await app.inject({ method: 'PATCH', url: `/api/transactions/${id}`, headers: { 'x-requested-with': 'hearthkeeper' }, payload: { noteState: 'not_needed' } });
+    expect(inbox(h.db, '2026-10-06').items.find((x: any) => x.id === id)).toBeUndefined();
+  });
+});

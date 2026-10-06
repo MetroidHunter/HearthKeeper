@@ -30,7 +30,7 @@ export class Home extends Page {
     const rows: any[] = this.budget?.rows ?? [];
     const favs = rows.filter((r) => r.favorite);
     const shown = favs.length ? favs : rows.filter((r) => r.kind === 'expense').slice(0, 6);
-    const need = [...this.inbox.needsCategory, ...this.inbox.flagged, ...this.inbox.needsNote, ...this.inbox.staleProvisionals].filter((t: any, i: number, a: any[]) => a.findIndex((x) => x.id === t.id) === i);
+    const need: any[] = this.inbox.items;
     const unc = this.budget?.uncategorized;
     const env = this.env();
     return html`${pageHead('Home', 'Your favorite envelopes, the things that need a decision from you, and what just happened.', 'Everything under "Needs you" says why it is there. Pick a category and you will see what it does to that category\'s budget before it is saved.')}

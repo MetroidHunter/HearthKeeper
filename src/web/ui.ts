@@ -45,6 +45,11 @@ export function confirmBox(o: { title: string; body: TemplateResult | string; co
   return showDialog<boolean>((close) => html`<h3 class="title">${o.title}</h3><div>${o.body}</div>
     <div class="actions"><button class="cancel" @click=${() => close(false)}>${o.cancel ?? 'Cancel'}</button><button class=${o.danger ? 'primary danger-solid confirm' : 'primary confirm'} autofocus @click=${() => close(true)}>${o.confirm ?? 'Yes'}</button></div>`, { dismiss: false }).then((v) => v === true);
 }
+/** A short confirmation that something was saved (bottom of the screen, gone in a few seconds). */
+export function toast(message: string) {
+  const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = message; document.body.append(t);
+  setTimeout(() => t.classList.add('out'), 3200); setTimeout(() => t.remove(), 3700);
+}
 /** Something went wrong and the person needs to see it where they are, not in a banner scrolled out of view. */
 export function alertBox(title: string, message: string): Promise<void> {
   return showDialog((close) => html`<h3 class="title">${title}</h3><p>${message}</p><div class="actions"><button class="primary" autofocus @click=${() => close()}>OK</button></div>`).then(() => undefined);

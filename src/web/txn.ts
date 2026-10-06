@@ -1,7 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { api, money, fmtDate } from './api.js';
 import { amt, pace } from './shared.js';
-import { showDialog, alertBox, catSelect, type PickCat } from './ui.js';
+import { showDialog, alertBox, promptBox, toast, catSelect, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
 export interface Suggestion { id: number; name: string; why: string }
@@ -50,24 +50,43 @@ export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: n
   return { ok: ok === true, remember };
 }
 
-/** One transaction that needs a person: full line, why, suggestions as real buttons, search for anything else. */
-export function txnCard(env: Env, t: TxnLike & { reason?: string }, hooks: { reload: () => void } = { reload: () => undefined }): TemplateResult {
+/** One transaction that needs a person. Each open reason (category, note, flag, never posted) has its own way to resolve it, and the card stays, showing what is still open, until every reason is resolved. */
+export function txnCard(env: Env, t: TxnLike & { reason?: string; reasons?: { reason: string; why: string }[]; categories?: string | null }, hooks: { reload: () => void } = { reload: () => undefined }): TemplateResult {
+  const reasons = t.reasons ?? (t.reason ? [{ reason: t.reason, why: t.why ?? '' }] : []);
+  const has = (r: string) => reasons.find((x) => x.reason === r);
   const picks = t.suggestions ?? [];
+  const attempt = async (what: () => Promise<unknown>, done: string) => {
+    try { await what(); toast(done); } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); }
+    hooks.reload();
+  };
   const decide = async (categoryId: number, i: number | null) => {
     const sug = i === null ? undefined : picks[i];
     const { ok, remember } = await confirmCategorize(env, [t], categoryId, { suggestedBy: sug?.why, defaultRemember: !!sug && sug.why !== 'rule' });
     if (!ok) return;
-    try { await env.categorize([t.id], categoryId, remember); } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); }
-    hooks.reload();
+    await attempt(() => env.categorize([t.id], categoryId, remember), `Categorized as ${env.cats.find((c) => c.id === categoryId)?.name ?? 'the category'}`);
   };
-  return html`<div class="card txn" data-id=${t.id}><div class="row"><b class="grow">${t.descriptor_clean || t.descriptor_raw}</b>${amt(t.effective_cents ?? t.amount_cents)}</div>
+  const patch = (body: unknown) => api.patch(`/api/transactions/${t.id}`, body);
+  const addNote = async () => { const n = await promptBox({ title: 'What was this for?', label: 'Note', confirm: 'Save note' }); if (n?.trim()) await attempt(() => patch({ note: n.trim() }), 'Note saved'); };
+  const pickNote = async () => {
+    const c: any[] = await api.get(`/api/transactions/${t.id}/note-candidates`);
+    const chosen = await showDialog<any>((close) => html`<h3 class="title">Which note is this?</h3>${c.length ? html`<div class="option-list">${c.slice(0, 8).map((n) => html`<button class="option" @click=${() => close(n)}><span class="name">${n.note || '(no note)'}</span><span class="muted small">${n.source} · ${fmtDate(n.occurred_on)}${n.counterparty ? ` · ${n.counterparty}` : ''}</span></button>`)}</div>` : html`<p class="muted">No imported note matches this amount yet. Import the matching Amazon, Venmo or PayPal export on the Imports page, or type one.</p>`}<div class="actions"><button @click=${() => close(undefined)}>Close</button></div>`);
+    if (chosen) await attempt(() => api.post(`/api/transactions/${t.id}/note`, { noteId: chosen.id }), 'Note attached');
+  };
+  const shown = t.effective_cents ?? t.amount_cents;
+  return html`<div class="card txn" data-id=${t.id}><div class="row"><b class="grow">${t.descriptor_clean || t.descriptor_raw}</b>${amt(shown)}</div>
     <div class="muted small">${fmtDate(t.occurred_on)} · ${t.account}${t.status === 'provisional' ? html` <span class="badge warn">pending</span>` : nothing}</div>
     <div style="margin-top:10px">${fullLine(t)}</div>
-    ${t.why ? html`<div class="why" style="margin-top:10px"><span aria-hidden="true">ⓘ</span><span><b>Why this needs you:</b> ${t.why}</span></div>` : nothing}
-    <h3 style="margin-top:14px">Pick a category</h3>
-    <div class="option-list" style="margin-top:8px">${picks.length ? picks.map((p, i) => { const r = env.rows.find((x) => x.id === p.id);
-      return html`<button class="option ${i === 0 ? 'best' : ''}" @click=${() => decide(p.id, i)}><span class="name">${p.name}</span>${i === 0 ? html`<span class="tag">Best match</span>` : nothing}<span class="muted small">${whyLabel[p.why] ?? p.why}</span>
-        <span class="meta">${r?.currentCents !== undefined && r?.currentCents !== null ? `${money(r.currentCents)} balance` : ''}</span></button>`; }) : html`<div class="muted small">No suggestion: nothing matches yet. Search for the right category below.</div>`}</div>
-    <div class="row" style="margin-top:10px"><span class="muted small">Something else:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id, null); }, { placeholder: 'Search all categories…' })}</div>
-    <div class="row" style="margin-top:12px"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${async () => { try { await env.ignore!(t); } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); } hooks.reload(); }}>Not a budget item</button>` : nothing}</div></div>`;
+    ${t.categories ? html`<div class="resolved" style="margin-top:10px">✓ Category: ${t.categories}</div>` : nothing}
+    ${reasons.length ? html`<div class="muted small" style="margin-top:12px"><b>Why this needs you</b></div>` : nothing}
+    ${reasons.map((r) => html`<div class="why" style="margin-top:6px"><span aria-hidden="true">ⓘ</span><span><b>${r.reason === 'needs_category' ? 'Needs a category' : r.reason === 'needs_note' ? 'Needs a note' : r.reason === 'flagged' ? 'Flagged' : 'Never posted'}:</b> ${r.why}</span></div>`)}
+    ${has('needs_category') ? html`<div class="reason"><h3>Pick a category</h3>
+      <div class="option-list" style="margin-top:8px">${picks.length ? picks.map((p, i) => { const r = env.rows.find((x) => x.id === p.id);
+        return html`<button class="option ${i === 0 ? 'best' : ''}" @click=${() => decide(p.id, i)}><span class="name">${p.name}</span>${i === 0 ? html`<span class="tag">Best match</span>` : nothing}<span class="muted small">${whyLabel[p.why] ?? p.why}</span>
+          <span class="meta">${r?.currentCents !== undefined && r?.currentCents !== null ? `${money(r.currentCents)} balance` : ''}</span></button>`; }) : html`<div class="muted small">No suggestion: nothing matches yet. Search for the right category below.</div>`}</div>
+      <div class="row" style="margin-top:10px"><span class="muted small">Something else:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id, null); }, { placeholder: 'Search all categories…' })}</div></div>` : nothing}
+    ${has('needs_note') ? html`<div class="reason"><h3>Add the note</h3><div class="row" style="margin-top:8px"><button class="note-pick" @click=${pickNote}>Pick from matching notes</button><button class="note-add" @click=${addNote}>Type a note</button>
+      <button class="note-none" @click=${() => attempt(() => patch({ noteState: 'not_needed' }), 'Marked: no note needed')}>No note needed</button></div></div>` : nothing}
+    ${has('flagged') ? html`<div class="reason"><h3>Flag</h3><div class="row" style="margin-top:8px"><button class="unflag primary" @click=${() => attempt(() => patch({ flagged: 0 }), 'Flag cleared')}>Mark as reviewed</button></div></div>` : nothing}
+    ${has('stale') ? html`<div class="reason"><h3>Pending charge</h3><div class="row" style="margin-top:8px"><button class="hide-stale" @click=${() => attempt(() => api.post(`/api/transactions/${t.id}/ignore`, { reason: 'pending charge never posted' }), 'Hidden')}>Hide it: it never posted</button></div></div>` : nothing}
+    <div class="row" style="margin-top:12px"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${() => attempt(() => env.ignore!(t), 'Marked: not a budget item')}>Not a budget item</button>` : nothing}</div></div>`;
 }

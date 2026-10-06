@@ -17,7 +17,9 @@ describe('Home (phone view)', () => {
     const inbox = await api('/api/inbox');
     expect(text(byText('h2', /^Needs you/).nextElementSibling)).to.match(new RegExp(`${inbox.counts.total} item`)); // the headline count is the true count
     expect(inbox.needsCategory[0].why).to.be.a('string');
-    expect(text(await waitFor(() => $('.why'), 'a why line'))).to.match(/Why this needs you/);
+    const why = await waitFor(() => $('.why'), 'a why line');
+    expect(text(why)).to.match(/Needs a (category|note)|Flagged|Never posted/);
+    expect(text(why.closest('.card'))).to.match(/Why this needs you/);
   });
 
   it('shows the whole transaction line and the transactions around it', async () => {
@@ -108,5 +110,31 @@ describe('Home (phone view)', () => {
       expect(text(dlg)).to.match(/Period is closed/); expect(text(dlg)).to.match(/Nothing was changed/);
       byText('button', /^OK$/, dlg).click();
     } finally { window.fetch = real; }
+  });
+
+  it('a transaction with more than one open reason stays after the category is set, shows what was decided, and leaves once the note is dealt with', async () => {
+    await mount('/');
+    const venmo = () => $$('.card.txn').find((c) => /VENMO PAYMENT/i.test(text(c)));
+    const card = await waitFor(venmo, 'the Venmo card');
+    expect(text(card)).to.match(/Needs a category/); expect(text(card)).to.match(/Needs a note/);
+    expect($('button.note-none', card)).to.exist;
+    await pickCat($('hk-category-select', card), 'Eating Out');
+    await confirmDialog(/Yes, categorize/);
+    await waitFor(() => { const c = venmo(); return c && /Category: Eating Out/.test(text(c)) && !/Needs a category/.test(text(c)); }, 'the card to show the category and drop that reason');
+    expect(text(venmo())).to.match(/Needs a note/); // still waiting on the note: that is why it did not leave
+    expect(text($$('.toast').at(-1))).to.match(/Categorized as Eating Out/); // and the save was confirmed on screen
+    $('button.note-none', venmo()).click();
+    await waitFor(() => !venmo(), 'the card to leave once nothing is open');
+  });
+
+  it('flagged and never-posted items have their own way out', async () => {
+    const accts = await api('/api/accounts'); const chase = accts.find((a) => a.name === 'Chase Prime Visa').id;
+    const created = await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'FLAGGED THING', amountCents: -777, categoryId: (await api('/api/categories')).find((c) => c.name === 'Gas').id } });
+    await api(`/api/transactions/${created.id}`, { method: 'PATCH', body: { flagged: 1, flagReason: 'check this' } });
+    await mount('/');
+    const card = await waitFor(() => $$('.card.txn').find((c) => /FLAGGED THING/.test(text(c))), 'the flagged card');
+    expect(text(card)).to.match(/Flagged: Flagged for follow-up: check this/);
+    $('button.unflag', card).click();
+    await waitFor(() => !$$('.card.txn').some((c) => /FLAGGED THING/.test(text(c))), 'card to leave after Mark as reviewed');
   });
 });

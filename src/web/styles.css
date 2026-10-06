@@ -136,3 +136,7 @@ button.primary.danger-solid { background:var(--bad); border-color:var(--bad); co
 /* Budget group tables share column widths so numbers line up from one group to the next */
 section.group table { table-layout:fixed; } section.group th.num, section.group td.num { width:150px; } section.group th:last-child { width:150px; }
 @media (max-width:760px) { section.group th.num, section.group td.num { width:110px; } }
+.toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:100; background:var(--ink); color:var(--bg); padding:var(--space-3) var(--space-4); border-radius:var(--radius-sm); box-shadow:var(--shadow); max-width:90vw; transition:opacity .4s; }
+.toast.out { opacity:0; }
+.resolved { color:var(--good); font-weight:600; }
+.reason { border-top:1px solid var(--line); padding-top:var(--space-3); margin-top:var(--space-3); }
