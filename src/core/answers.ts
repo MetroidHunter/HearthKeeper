@@ -10,14 +10,21 @@ export type RuleChoice = 'auto' | 'suggest' | 'once';
  * and optionally creates a merchant-based rule with its backtest shown first.
  */
 export function answerCategory(db: DB, txnId: number, splits: SplitIn[], opts: { makeRule?: RuleChoice; actor?: string } = {}) {
-  const t = db.prepare('SELECT decided_rule_id, merchant_id, review_state, amount_cents, descriptor_clean FROM transactions WHERE id=?').get(txnId) as any;
+  const t = db.prepare('SELECT decided_rule_id, merchant_id, review_state, amount_cents, descriptor_clean, kind FROM transactions WHERE id=?').get(txnId) as any;
   let suggested: number | null = null;
   if (t.decided_rule_id) {
     const r = db.prepare('SELECT action_json FROM rules WHERE id=?').get(t.decided_rule_id) as any;
     const cat = r ? JSON.parse(r.action_json).category : null;
     suggested = cat ? getCategoryId(db, cat) : null;
   }
-  setSplits(db, txnId, splits, 'user');
+  let effective = splits;
+  if (t.kind === 'greenlight_reclass' && splits.length === 1 && splits[0].categoryId) {
+    // A Greenlight spend has a zero total: the money is already charged to the child's category, and answering only re-attributes it.
+    // "Put this in Groceries" therefore means -spend in Groceries and +spend back to the child's category, not a single $0 split.
+    const charged = db.prepare('SELECT category_id, amount_cents FROM transaction_splits WHERE transaction_id=? AND amount_cents>0 ORDER BY id LIMIT 1').get(txnId) as { category_id: number | null; amount_cents: number } | undefined;
+    if (charged) effective = [{ categoryId: splits[0].categoryId, amountCents: -charged.amount_cents, origin: 'greenlight_reclass' }, { categoryId: charged.category_id, amountCents: charged.amount_cents, origin: 'greenlight_reclass' }];
+  }
+  setSplits(db, txnId, effective, 'user');
   if (t.decided_rule_id && t.review_state === 'needs_category') {
     const same = splits.length === 1 && splits[0].categoryId === suggested;
     db.prepare(`UPDATE rules SET ${same ? 'clean_confirmations=clean_confirmations+1' : 'override_count=override_count+1'} WHERE id=?`).run(t.decided_rule_id);

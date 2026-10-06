@@ -45,6 +45,10 @@ export function confirmBox(o: { title: string; body: TemplateResult | string; co
   return showDialog<boolean>((close) => html`<h3 class="title">${o.title}</h3><div>${o.body}</div>
     <div class="actions"><button class="cancel" @click=${() => close(false)}>${o.cancel ?? 'Cancel'}</button><button class=${o.danger ? 'primary danger-solid confirm' : 'primary confirm'} autofocus @click=${() => close(true)}>${o.confirm ?? 'Yes'}</button></div>`, { dismiss: false }).then((v) => v === true);
 }
+/** Something went wrong and the person needs to see it where they are, not in a banner scrolled out of view. */
+export function alertBox(title: string, message: string): Promise<void> {
+  return showDialog((close) => html`<h3 class="title">${title}</h3><p>${message}</p><div class="actions"><button class="primary" autofocus @click=${() => close()}>OK</button></div>`).then(() => undefined);
+}
 export function promptBox(o: { title: string; label?: string; value?: string; confirm?: string }): Promise<string | undefined> {
   return showDialog<string>((close) => {
     let v = o.value ?? '';
@@ -112,7 +116,7 @@ export class CategorySelect extends LitElement {
   render() {
     const shown = this.open ? this.q : this.chosen?.name ?? '';
     return html`<input type="text" role="combobox" aria-expanded=${this.open} autocomplete="off" spellcheck="false" placeholder=${this.chosen ? '' : this.placeholder} .value=${shown}
-      @focus=${(e: any) => { this.open = true; this.idx = 0; e.target.select?.(); }} @input=${(e: any) => { this.q = e.target.value; this.open = true; this.idx = 0; }} @keydown=${(e: KeyboardEvent) => this.key(e)}
+      @focus=${(e: any) => { this.open = true; this.idx = 0; e.target.select?.(); }} @input=${(e: any) => { this.q = e.target.value; this.open = true; this.idx = 0; }} @change=${(e: Event) => e.stopPropagation()} @keydown=${(e: KeyboardEvent) => this.key(e)}
       @blur=${() => setTimeout(() => { if (!this.contains(document.activeElement)) { this.open = false; this.q = ''; } }, 120)} />`;
   }
 }
@@ -120,4 +124,4 @@ declare global { interface HTMLElementTagNameMap { 'hk-category-select': Categor
 
 /** Template helper: <hk-category-select> wired to a callback. */
 export const catSelect = (cats: PickCat[], value: number | null | undefined, onPick: (id: number | null, name: string) => void, o: { placeholder?: string; includeRetired?: boolean } = {}) =>
-  html`<hk-category-select .cats=${cats} .value=${value ?? null} placeholder=${o.placeholder ?? 'Category'} ?includeRetired=${o.includeRetired} @change=${(e: CustomEvent) => onPick(e.detail.id, e.detail.name)}></hk-category-select>`;
+  html`<hk-category-select .cats=${cats} .value=${value ?? null} placeholder=${o.placeholder ?? 'Category'} ?includeRetired=${o.includeRetired} @change=${(e: CustomEvent) => { if (e.detail && e.target === e.currentTarget) onPick(e.detail.id, e.detail.name); }}></hk-category-select>`; // ignore stray native change events

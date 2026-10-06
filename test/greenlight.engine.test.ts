@@ -169,4 +169,19 @@ describe.skipIf(!existsSync(corpusUrl))('real IFTTT corpus through capture -> re
     processGreenlightMessage(h.db, 9001, 'totally unparseable gibberish', '2026-10-04T00:00:00Z');
     expect(h.db.prepare('SELECT COUNT(*) c FROM greenlight_processed WHERE raw_event_id=9001').get()).toEqual({ c: 0 });
   });
+
+  it('answering a Greenlight spend from the inbox moves the money: category gets the spend, the child\'s category gets it back (not a $0 split)', async () => {
+    const { answerCategory } = await import('../src/core/answers.js');
+    const h = seedHousehold();
+    send(h, '$50.00 allowance transferred to Miracle', 'September 27, 2026');
+    send(h, 'Miracle spent $21.83 at Mystery Taco Truck', 'September 28, 2026');
+    const id = (h.db.prepare("SELECT id FROM transactions WHERE kind='greenlight_reclass'").get() as { id: number }).id;
+    expect(bal(h, 'Eating Out').splits).toBe(0);
+    answerCategory(h.db, id, [{ categoryId: h.cats['Eating Out'], amountCents: 0 }]); // exactly what POST /categorize sends for a one-tap answer
+    expect(bal(h, 'Eating Out').splits).toBe(-2183);
+    expect(bal(h, 'Miracle Spending').splits).toBe(-5000 + 2183); // the allowance charge is partly given back
+    expect((h.db.prepare('SELECT review_state FROM transactions WHERE id=?').get(id) as any).review_state).toBe('user_confirmed');
+    expect(h.db.prepare('SELECT COUNT(*) c FROM transaction_splits WHERE transaction_id=?').get(id)).toEqual({ c: 2 });
+    expect(checkInvariants(h.db)).toEqual([]);
+  });
 });

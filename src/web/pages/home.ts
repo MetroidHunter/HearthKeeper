@@ -19,8 +19,8 @@ export class Home extends Page {
   private env(): Env {
     return {
       cats: this.cats, rows: this.budget?.rows ?? [],
-      categorize: async (ids, categoryId, makeRule) => { await this.run(async () => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, makeRule: makeRule ? 'suggest' : undefined }); }); },
-      ignore: async (t) => { await this.run(() => api.post(`/api/transactions/${t.id}/ignore`, { reason: 'not a budget item' })); },
+      categorize: async (ids, categoryId, makeRule) => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, makeRule: makeRule ? 'suggest' : undefined }); }, // errors surface in a dialog (txn.ts)
+      ignore: async (t) => { await api.post(`/api/transactions/${t.id}/ignore`, { reason: 'not a budget item' }); },
     };
   }
   async toggleFavorite(r: any) { await this.run(() => (r.favorite ? api.del(`/api/favorites/${r.id}`) : api.post('/api/favorites', { categoryId: r.id }))); this.load(); }

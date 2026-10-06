@@ -1,7 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { api, money, fmtDate } from './api.js';
 import { amt, pace } from './shared.js';
-import { showDialog, confirmBox, catSelect, type PickCat } from './ui.js';
+import { showDialog, alertBox, catSelect, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
 export interface Suggestion { id: number; name: string; why: string }
@@ -57,7 +57,8 @@ export function txnCard(env: Env, t: TxnLike & { reason?: string }, hooks: { rel
     const sug = i === null ? undefined : picks[i];
     const { ok, remember } = await confirmCategorize(env, [t], categoryId, { suggestedBy: sug?.why, defaultRemember: !!sug && sug.why !== 'rule' });
     if (!ok) return;
-    await env.categorize([t.id], categoryId, remember); hooks.reload();
+    try { await env.categorize([t.id], categoryId, remember); } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); }
+    hooks.reload();
   };
   return html`<div class="card txn" data-id=${t.id}><div class="row"><b class="grow">${t.descriptor_clean || t.descriptor_raw}</b>${amt(t.effective_cents ?? t.amount_cents)}</div>
     <div class="muted small">${fmtDate(t.occurred_on)} · ${t.account}${t.status === 'provisional' ? html` <span class="badge warn">pending</span>` : nothing}</div>
@@ -68,5 +69,5 @@ export function txnCard(env: Env, t: TxnLike & { reason?: string }, hooks: { rel
       return html`<button class="option ${i === 0 ? 'best' : ''}" @click=${() => decide(p.id, i)}><span class="name">${p.name}</span>${i === 0 ? html`<span class="tag">Best match</span>` : nothing}<span class="muted small">${whyLabel[p.why] ?? p.why}</span>
         <span class="meta">${r?.currentCents !== undefined && r?.currentCents !== null ? `${money(r.currentCents)} balance` : ''}</span></button>`; }) : html`<div class="muted small">No suggestion: nothing matches yet. Search for the right category below.</div>`}</div>
     <div class="row" style="margin-top:10px"><span class="muted small">Something else:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id, null); }, { placeholder: 'Search all categories…' })}</div>
-    <div class="row" style="margin-top:12px"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${async () => { await env.ignore!(t); hooks.reload(); }}>Not a budget item</button>` : nothing}</div></div>`;
+    <div class="row" style="margin-top:12px"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${async () => { try { await env.ignore!(t); } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); } hooks.reload(); }}>Not a budget item</button>` : nothing}</div></div>`;
 }

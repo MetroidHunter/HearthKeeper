@@ -87,3 +87,6 @@ Nothing that predates the seed is asked for a category or a note. `grandfatherSe
 
 ## D59. Pop-ups
 Dialogs that ask for a decision (confirm, categorize, retire, add) ignore outside clicks; Esc still cancels. Informational dialogs and the transaction detail close on an outside click. The category list renders inside the dialog it opens from, because only top-layer content can sit above a modal. Hover hints are click-through, so they vanish when the pointer leaves the item. Opening one nav menu closes the others.
+
+## D60. Answering a Greenlight spend re-attributes it
+A Greenlight spend has a zero total (the allowance already charged the child's category). One-tap answers from Home, Backlog or the API used to replace its two offsetting splits with a single $0 split, so nothing moved. `answerCategory` now writes the offsetting pair (chosen category -spend, the child's category +spend). Failed saves on Home/Backlog show a dialog with the server's message; the category picker no longer lets the inner input's native `change` event escape as a malformed one.

@@ -78,4 +78,35 @@ describe('Home (phone view)', () => {
     byText('button', /^Save$/, dlg).click();
     await waitFor(() => /E2E COFFEE/.test(text(byText('h2', /^Recent/).nextElementSibling)), 'new row under Recent');
   });
+
+  it('picking from the search box and confirming saves it, with no page errors, including for a Greenlight spend', async () => {
+    await mount('/');
+    const card = await waitFor(() => $$('.card.txn').find((c) => /El Rinconsito|Greenlight wallet/i.test(text(c))), 'the Greenlight spend card');
+    const id = Number(card.dataset.id);
+    const before = (await api('/api/budget')).rows.find((r) => r.name === 'Gas');
+    await pickCat($('hk-category-select', card), 'Gas');
+    await confirmDialog(/Yes, categorize/);
+    await waitFor(() => !$$('.card.txn').some((c) => Number(c.dataset.id) === id), 'the card to leave Needs you');
+    const t = (await api(`/api/transactions?q=Rinconsito`))[0];
+    const gas = t.splits.find((s) => s.category === 'Gas');
+    expect(gas, 'a Gas split').to.exist;
+    expect(gas.amount_cents).to.be.below(0); // the spend now sits in Gas
+    expect(t.splits.reduce((a, s) => a + s.amount_cents, 0)).to.equal(0); // and the child's category got it back
+    const after = (await api('/api/budget')).rows.find((r) => r.name === 'Gas');
+    expect(after.currentCents).to.be.below(before.currentCents);
+  });
+
+  it('a failed save is shown in a dialog instead of failing silently', async () => {
+    await mount('/');
+    const card = await waitFor(() => $$('.card.txn').find((c) => $('button.option', c)), 'a card');
+    const real = window.fetch;
+    window.fetch = (u, o) => (/\/categorize/.test(String(u)) ? Promise.resolve(new Response(JSON.stringify({ error: 'Period is closed' }), { status: 409, headers: { 'content-type': 'application/json' } })) : real(u, o)); // the server refuses
+    try {
+      $('button.option', card).click();
+      await confirmDialog(/Yes, categorize/);
+      const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /did not save/.test(text(d))), 'error dialog');
+      expect(text(dlg)).to.match(/Period is closed/); expect(text(dlg)).to.match(/Nothing was changed/);
+      byText('button', /^OK$/, dlg).click();
+    } finally { window.fetch = real; }
+  });
 });

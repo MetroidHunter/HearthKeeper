@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, fmtDate } from '../api.js';
 import { amt, type Cat } from '../shared.js';
-import { pageHead, catSelect } from '../ui.js';
+import { pageHead, catSelect, alertBox } from '../ui.js';
 import { txnCard, confirmCategorize, showContext, fullLine, type Env } from '../txn.js';
 
 /** Backlog (design §8.3): the same decisions as Home, in bulk. Uncategorized items by merchant, plus flagged and note items one by one. */
@@ -14,16 +14,16 @@ export class Backlog extends Page {
   async load() { await this.run(async () => { let b: any; [this.groups, this.cats, b, this.inbox] = await Promise.all([api.get('/api/inbox/grouped'), api.get('/api/categories'), api.get('/api/budget'), api.get('/api/inbox')]); this.rows = b.rows; }); }
   private env(): Env {
     return { cats: this.cats, rows: this.rows,
-      categorize: async (ids, categoryId, makeRule) => { await this.run(async () => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, makeRule: makeRule ? 'suggest' : undefined }); }); },
-      ignore: async (t) => { await this.run(() => api.post(`/api/transactions/${t.id}/ignore`, { reason: 'not a budget item' })); } };
+      categorize: async (ids, categoryId, makeRule) => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, makeRule: makeRule ? 'suggest' : undefined }); },
+      ignore: async (t) => { await api.post(`/api/transactions/${t.id}/ignore`, { reason: 'not a budget item' }); } };
   }
   async answer(g: any, categoryId: number, sug?: { why: string }) {
     const { ok, remember } = await confirmCategorize(this.env(), [{ id: g.txnIds[0], occurred_on: g.txns[0]?.occurred_on ?? '', amount_cents: g.totalCents, descriptor_raw: g.name, account: '' }], categoryId, { groupName: g.name, count: g.count, defaultRemember: !!g.merchantId && (!sug || sug.why !== 'rule') });
     if (!ok) return;
-    await this.run(async () => {
+    try {
       const r = await api.post('/api/inbox/bulk', { txnIds: g.txnIds, categoryId, makeRule: remember && g.merchantId ? 'suggest' : undefined });
-      this.last = `${g.name}: ${r.applied} categorized${r.rule ? `; the new rule would have matched ${r.rule.backtest.matched} past transactions` : ''}`;
-    });
+      this.last = `${g.name}: ${r.applied} categorized${r.skipped ? `, ${r.skipped} skipped (already answered)` : ''}${r.rule ? `; the new rule would have matched ${r.rule.backtest.matched} past transactions` : ''}`;
+    } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); }
     await this.load();
   }
   render() {
