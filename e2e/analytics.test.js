@@ -7,9 +7,10 @@ describe('Analytics (chart catalog)', () => {
 
   const tab = async (key) => { byText('button', new RegExp(`^${key}$`)).click(); await waitFor(() => $('.chart')?.dataset.drawn === '1' && $('.chart canvas'), `${key} chart`); };
 
-  it('every tab draws a real chart from live data', async () => {
+  it('every tab draws a real chart from live data', async function () {
+    this.timeout(60000); // the first run of the whole suite makes the dev server transform ECharts cold, which can take well over 8s
     await mount('/analytics');
-    await waitFor(() => $('.chart canvas'), 'first chart (lazy ECharts load)');
+    await waitFor(() => $('.chart canvas'), 'first chart (lazy ECharts load)', 40000);
     for (const t of ['Spend over time', 'Treemap', 'Category trend', 'Income vs spend', 'Merchants']) { await tab(t); expect($('.chart canvas').width).to.be.greaterThan(100); }
   });
 

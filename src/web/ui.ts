@@ -15,7 +15,10 @@ export function setTheme(t: Theme) { try { if (t === 'system') localStorage.remo
 
 /* ---------- page furniture ---------- */
 /** Title plus a block explaining what the page is for (every page starts with one). */
-export const pageHead = (title: string, ...intro: string[]) => html`<div class="pagehead"><h1>${title}</h1><div class="intro">${intro.map((p) => html`<p>${p}</p>`)}</div></div>`;
+const phone = () => typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches;
+const introOpen = () => { try { return localStorage.getItem('hk-intro-open') === '1'; } catch { return false; } };
+/** On a phone the explanation starts folded (one line, "About this page") and remembers if you open it; elsewhere it is always shown. */
+export const pageHead = (title: string, ...intro: string[]) => html`<div class="pagehead"><h1>${title}</h1><details class="intro" ?open=${!phone() || introOpen()} @toggle=${(e: Event) => { if (phone()) { try { localStorage.setItem('hk-intro-open', (e.target as HTMLDetailsElement).open ? '1' : '0'); } catch { /* optional */ } } }}><summary>About this page</summary>${intro.map((p) => html`<p>${p}</p>`)}</details></div>`;
 /** Table header with a hover explanation. */
 export const th = (label: string, tip: string, cls = '') => html`<th class=${cls} data-tip=${tip} tabindex="0">${label}</th>`;
 

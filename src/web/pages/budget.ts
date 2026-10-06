@@ -4,7 +4,7 @@ import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { pace } from '../shared.js';
 import { pageHead, th } from '../ui.js';
-import { draw, theme } from '../charts.js';
+import { draw, theme, PALETTE } from '../charts.js';
 
 @customElement('hk-budget')
 export class Budget extends Page {
@@ -15,9 +15,17 @@ export class Budget extends Page {
   drawPie() {
     const el = this.querySelector('.chart') as HTMLElement; if (!el) return;
     const g = this.drill ? this.pie.groups.find((x: any) => x.name === this.drill) : null;
+    const narrow = el.clientWidth < 520; // phones: the list under the chart names the slices
     const data = g ? g.categories.map((c: any) => ({ name: c.name, value: c.cents })) : this.pie.groups.map((x: any) => ({ name: x.name, value: x.cents }));
-    void draw(el, { tooltip: { formatter: (p: any) => `${p.name}: ${money(p.value)} (${p.percent}%)` }, series: [{ type: 'pie', radius: ['35%', '70%'], data, label: { formatter: '{b}\n{d}%', color: theme().ink }, labelLine: { lineStyle: { color: theme().muted } } }] },
+    void draw(el, { tooltip: { formatter: (p: any) => `${p.name}: ${money(p.value)} (${p.percent}%)` }, series: [{ type: 'pie', radius: narrow ? ['38%', '85%'] : ['35%', '70%'], data, label: narrow ? { show: false } : { formatter: '{b}\n{d}%', color: theme().ink }, labelLine: narrow ? { show: false } : { lineStyle: { color: theme().muted } } }] },
       (p: any) => { if (!this.drill) this.drill = p.name; });
+  }
+  /** The pie's legend: name, amount and share per slice (tap a group to drill in). Always readable, unlike labels around a small chart. */
+  pieList() {
+    if (!this.pie) return nothing; // still loading
+    const g = this.drill ? this.pie.groups.find((x: any) => x.name === this.drill) : null;
+    const items: { name: string; cents: number }[] = g ? g.categories : this.pie.groups; const total = items.reduce((t, i) => t + i.cents, 0) || 1;
+    return html`<div class="pielist">${items.map((i, n) => html`<button class="pierow" ?disabled=${!!g} @click=${() => { if (!g) this.drill = i.name; }}><i style="background:${PALETTE[n % PALETTE.length]}"></i><span class="pn">${i.name}</span><span class="pa">${money(i.cents)}</span><span class="pp">${Math.round((i.cents / total) * 1000) / 10}%</span></button>`)}</div>`;
   }
   async saveBudget(r: any, v: string, month: string) { await this.run(() => api.post(`/api/categories/${r.id}/budget`, { monthlyCents: parseMoney(v), effectiveMonth: month })); this.editing = null; this.load(); }
   async toggleFavorite(r: any) { await this.run(() => (r.favorite ? api.del(`/api/favorites/${r.id}`) : api.post('/api/favorites', { categoryId: r.id }))); this.load(); }
@@ -36,7 +44,7 @@ export class Budget extends Page {
       ${unc && unc.count ? html`<a class="stat" href="#/backlog"><span class="label">Needs category</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions have no category yet, so they are not in any envelope below. Categorize them in the Backlog and each amount moves into its category.</span></a>` : nothing}
       <div class="tabs"><button aria-pressed=${this.view === 'table'} @click=${() => (this.view = 'table')}>Groups</button><button aria-pressed=${this.view === 'pie'} @click=${() => { this.view = 'pie'; this.drill = null; }}>Pie</button>
         ${this.view === 'pie' ? html`<button @click=${async () => { this.pieMode = this.pieMode === 'allocated' ? 'spent' : 'allocated'; this.drill = null; this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }}>Share of ${this.pieMode} ↔</button>${this.drill ? html`<button @click=${() => (this.drill = null)}>← all groups</button>` : ''}` : ''}</div>
-      ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div></div>` : [...groups].map(([g, rows]) => this.group(g, rows))}
+      ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div>${this.pieList()}</div>` : [...groups].map(([g, rows]) => this.group(g, rows))}
       ${this.editing ? this.editDialog() : ''}`;
   }
   group(name: string, rows: any[]) {
