@@ -139,7 +139,9 @@ export function supersedeProvisional(db: DB, provId: number, postedId: number): 
   const p = db.prepare('SELECT * FROM transactions WHERE id=?').get(provId) as any;
   const posted = db.prepare('SELECT amount_cents FROM transactions WHERE id=?').get(postedId) as any;
   const splits = db.prepare('SELECT category_id, amount_cents, memo, origin FROM transaction_splits WHERE transaction_id=?').all(provId) as any[];
-  if (p.kind === 'internal_transfer' || p.kind === 'ignored') {
+  // A charge you hid because it never posted is real spending once the bank does post it: that hide must not carry over. (A transfer, or a row hidden for another reason, does carry over.)
+  const hiddenAsNeverPosted = p.kind === 'ignored' && p.ignored_reason === 'pending charge never posted';
+  if (!hiddenAsNeverPosted && (p.kind === 'internal_transfer' || p.kind === 'ignored')) {
     // the alert was already a paired transfer / hidden row: the posted row must be the same thing, in the same pairing group
     db.prepare("UPDATE transactions SET kind=?, ignored_reason=?, transfer_group=?, review_state='not_needed', decided_by=?, decided_rule_id=? WHERE id=?").run(p.kind, p.ignored_reason, p.transfer_group, p.decided_by, p.decided_rule_id, postedId);
     db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(postedId);

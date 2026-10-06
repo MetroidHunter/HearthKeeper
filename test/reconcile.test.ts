@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { seedHousehold } from './helpers.js';
 import { commitImport, markStale } from '../src/ingest/import.js';
 import { suggestMapping, parseCsv } from '../src/ingest/csv.js';
-import { createTransaction, setSplits, classify } from '../src/core/transactions.js';
+import { createTransaction, setSplits, classify, ignoreTransaction } from '../src/core/transactions.js';
 import { addRule } from '../src/core/rules.js';
 import { categoryBalance } from '../src/core/balance.js';
 
@@ -59,6 +59,30 @@ describe('provisional -> posted reconciliation (review findings)', () => {
     const postedId = (h.db.prepare("SELECT id FROM transactions WHERE status='posted'").get() as any).id;
     expect((h.db.prepare('SELECT matched_txn_id m FROM external_notes WHERE id=?').get(n) as any).m).toBe(postedId);
     expect((h.db.prepare('SELECT note FROM transactions WHERE id=?').get(postedId) as any).note).toBe('bags');
+  });
+});
+
+describe('a pending charge that the bank posts months later', () => {
+  it('a charge hidden as "never posted" counts again when the bank file finally posts it; other hidden rows stay hidden', () => {
+    const h = seedHousehold();
+    const p = prov(h, '2026-07-01', -2500, 'STARBUCKS'); markStale(h.db, '2026-10-06'); ignoreTransaction(h.db, p, 'pending charge never posted', 'user');
+    const q = prov(h, '2026-07-01', -1500, 'PAYPAL TRANSFER'); ignoreTransaction(h.db, q, 'rule: own transfer');
+    const csv = HDR + '07/03/2026,07/04/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n07/03/2026,07/04/2026,PAYPAL TRANSFER,Food,Sale,-15.00,\n';
+    expect(commitImport(h.db, 'Chase', csv, spec(csv)).supersededProvisionals).toBe(2);
+    const kinds = h.db.prepare("SELECT descriptor_raw d, kind, review_state r FROM transactions WHERE status='posted' ORDER BY id").all();
+    expect(kinds).toEqual([{ d: 'STARBUCKS #12 SEATTLE WA', kind: 'spending', r: 'needs_category' }, { d: 'PAYPAL TRANSFER', kind: 'ignored', r: 'not_needed' }]);
+  });
+  it('a stale pending charge is matched by date, not by when the file is uploaded: three months later is the same as a week later, and a posting date more than 5 days off is a separate charge', () => {
+    const h = seedHousehold();
+    const p = prov(h, '2026-07-01', -2500, 'STARBUCKS'); markStale(h.db, '2026-10-06');
+    setSplits(h.db, p, [{ categoryId: h.cats['Eating Out'], amountCents: -2500 }], 'user');
+    const near = HDR + '07/03/2026,07/04/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n';
+    expect(commitImport(h.db, 'Chase', near, spec(near)).supersededProvisionals).toBe(1);
+    expect(h.db.prepare("SELECT category_id c FROM transaction_splits WHERE transaction_id=(SELECT id FROM transactions WHERE status='posted')").get()).toEqual({ c: h.cats['Eating Out'] });
+    const h2 = seedHousehold(); prov(h2, '2026-07-01', -2500, 'STARBUCKS'); markStale(h2.db, '2026-10-06');
+    const far = HDR + '07/09/2026,07/10/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n';
+    expect(commitImport(h2.db, 'Chase', far, spec(far)).supersededProvisionals).toBe(0); // the stale row stays, flagged "never posted", until you hide it
+    expect(h2.db.prepare("SELECT status, COUNT(*) c FROM transactions GROUP BY status ORDER BY status").all()).toEqual([{ status: 'posted', c: 1 }, { status: 'stale', c: 1 }]);
   });
 });
 
