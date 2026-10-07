@@ -186,3 +186,28 @@ describe('Flagging for review', () => {
     await waitFor(() => $$('tbody tr[data-id]')[0]?.dataset.id === String(id), 'first on Transactions');
   });
 });
+
+describe('Split dialog shows the note', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('the note is in the dialog (editable) so you can split by what was bought; a changed note is saved with the split, an unchanged one is left alone', async () => {
+    const chase = (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id;
+    const made = await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'AMZN Mktp US*SPLITME', amountCents: -3000, note: 'cat food,dress shirt' } });
+    await mount('/backlog');
+    const row = await waitFor(() => $$('.trow.txn').find((r) => r.dataset.id === String(made.id)), 'the row');
+    $('.texpand', row).click(); byText('button', /^Split…$/, row).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && $('.splitsave', d)), 'split dialog');
+    expect($('input.splitnote', dlg).value, 'the note is present').to.equal('cat food,dress shirt');
+    const [c1, c2] = $$('hk-category-select', dlg); const [a1, a2] = $$('input.splitamt', dlg);
+    await pickCat(c1, 'Groceries'); await pickCat(c2, 'Eating Out');
+    setInput(a1, '12.00'); setInput(a2, '18.00');
+    await waitFor(() => !$('.splitsave', dlg).disabled, 'adds up');
+    setInput($('input.splitnote', dlg), 'cat food ($12), dress shirt ($18)');
+    $('.splitsave', dlg).click();
+    await waitFor(async () => (await api('/api/transactions?q=SPLITME'))[0]?.splits.length === 2, 'split saved');
+    const t = (await api('/api/transactions?q=SPLITME'))[0];
+    expect(t.note).to.equal('cat food ($12), dress shirt ($18)');
+  });
+});

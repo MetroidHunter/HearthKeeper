@@ -65,11 +65,12 @@ export async function showContext(t: TxnLike) {
  * Divide one transaction between categories (a Costco run that is half groceries, half household). Amounts are typed as positive money;
  * the sign of the original is applied on save. Save stays disabled until every part has a category and the parts add up exactly.
  */
-export function splitDialog(env: Env, t: TxnLike): Promise<{ categoryId: number; amountCents: number }[] | undefined> {
+export function splitDialog(env: Env, t: TxnLike): Promise<{ parts: { categoryId: number; amountCents: number }[]; note?: string } | undefined> {
   const sign = (t.effective_cents ?? t.amount_cents) < 0 ? -1 : 1; const total = Math.abs(t.effective_cents ?? t.amount_cents);
   const fmt = (c: number) => (c / 100).toFixed(2);
   const lines: { categoryId: number | null; cents: number; text: string }[] = [{ categoryId: null, cents: total, text: fmt(total) }, { categoryId: null, cents: 0, text: '0.00' }];
-  return showDialog<{ categoryId: number; amountCents: number }[]>((close) => {
+  const original = t.note ?? ''; let note = original;
+  return showDialog<{ parts: { categoryId: number; amountCents: number }[]; note?: string }>((close) => {
     const box = document.createElement('div'); box.className = 'splitbox';
     const draw = () => render(tpl(), box);
     const sum = () => lines.reduce((a, l) => a + l.cents, 0);
@@ -80,9 +81,10 @@ export function splitDialog(env: Env, t: TxnLike): Promise<{ categoryId: number;
       <div class="row" style="margin-top:8px"><button class="splitadd" @click=${() => { const rest = Math.max(0, total - sum()); lines.push({ categoryId: null, cents: rest, text: fmt(rest) }); draw(); }}>＋ Add a part</button>
         <button class="spliteven" @click=${() => { const n = lines.length, each = Math.floor(total / n); lines.forEach((l, i) => { l.cents = i === n - 1 ? total - each * (n - 1) : each; l.text = fmt(l.cents); }); draw(); }}>Split evenly</button>
         <span class="right splitleft ${sum() === total ? 'pos' : 'neg'}" aria-live="polite">${sum() === total ? (lines.some((l) => !l.categoryId) ? 'Amounts add up. Choose a category for each part.' : lines.some((l) => l.cents <= 0) ? 'Every part needs an amount.' : 'Adds up') : sum() < total ? `${money(total - sum())} left to place` : `${money(sum() - total)} too much`}</span></div>
-      <div class="actions"><button class="cancel" @click=${() => close(undefined)}>Cancel</button><button class="primary splitsave" ?disabled=${!valid()} @click=${() => close(lines.map((l) => ({ categoryId: l.categoryId!, amountCents: sign * l.cents })))}>Save split</button></div>`;
+      <div class="actions"><button class="cancel" @click=${() => close(undefined)}>Cancel</button><button class="primary splitsave" ?disabled=${!valid()} @click=${() => close({ parts: lines.map((l) => ({ categoryId: l.categoryId!, amountCents: sign * l.cents })), note: note.trim() !== original.trim() ? note.trim() : undefined })}>Save split</button></div>`;
     draw();
-    return html`<h3 class="title">Split ${t.descriptor_clean || t.descriptor_raw}</h3><p class="muted small">${fmtDate(t.occurred_on)} · total ${money(total)} ${sign < 0 ? 'out' : 'in'}. Divide it between categories; the parts must add up to the total.</p>${box}`;
+    return html`<h3 class="title">Split ${t.descriptor_clean || t.descriptor_raw}</h3><p class="muted small">${fmtDate(t.occurred_on)} · total ${money(total)} ${sign < 0 ? 'out' : 'in'}. Divide it between categories; the parts must add up to the total.</p>
+      <label class="stack splitnote-l"><span class="muted small">Note${t.note ? '' : ' (none yet)'}</span><input class="splitnote" placeholder="Note" aria-label="Note" .value=${note} @input=${(e: any) => { note = e.target.value; }} /></label>${box}`;
   }, { dismiss: false });
 }
 
@@ -196,6 +198,6 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
       ${fullLine(t)}
       <div class="row">${!catMissing ? html`<span class="muted small">Change category:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id); }, { placeholder: 'Search all categories…', reset: true })}` : nothing}
         ${!noteMissing ? html`<span class="muted small">${t.note ? 'Edit note:' : 'Add a note:'}</span><input class="note-edit" placeholder="Note" .value=${t.note ?? ''} @change=${(e: any) => saveNote(e.target.value)} />` : nothing}</div>
-      <div class="row"><button class="split-btn" ?hidden=${t.kind === 'greenlight_reclass'} @click=${async () => { const s = await splitDialog(env, t); if (s) await attempt(() => api.post(`/api/transactions/${t.id}/categorize`, { splits: s }), 'Split saved'); }}>Split…</button><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${() => attempt(() => env.ignore!(t), 'Marked: not a budget item')}>Not a budget item</button>` : nothing}</div>
+      <div class="row"><button class="split-btn" ?hidden=${t.kind === 'greenlight_reclass'} @click=${async () => { const s = await splitDialog(env, t); if (s) await attempt(async () => { if (s.note !== undefined) await patch({ note: s.note }); await api.post(`/api/transactions/${t.id}/categorize`, { splits: s.parts }); }, 'Split saved'); }}>Split…</button><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${() => attempt(() => env.ignore!(t), 'Marked: not a budget item')}>Not a budget item</button>` : nothing}</div>
     </div></div>`;
 }
