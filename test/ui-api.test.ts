@@ -82,13 +82,14 @@ describe('API: paging, favorites, merchants search', () => {
     for (let i = 0; i < 3; i++) createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-01', amountCents: -500, descriptor: `ZED ${i}` }), h.db.prepare('UPDATE transactions SET merchant_id=? WHERE descriptor_raw=?').run(z, `ZED ${i}`);
     const p1 = (await a.inject({ url: '/api/merchants?limit=50' })).json();
     expect(p1.rows).toHaveLength(50); expect(p1.total).toBe(121); expect(p1.unreviewed).toBe(1); expect(p1.rows[0].name).toBe('Zed Cafe'); // most transactions first
-    const nd = (await a.inject({ url: '/api/merchants?review=nodefault' })).json();
-    expect(nd.total).toBe(1); expect(nd.withoutDefault).toBe(1); // only shops you actually bought from
-    await a.inject({ method: 'PATCH', url: `/api/merchants/${z}`, headers: H, payload: { defaultCategoryId: h.cats['Eating Out'] } });
-    expect((await a.inject({ url: '/api/merchants?review=nodefault' })).json().total).toBe(0);
-    await a.inject({ method: 'PATCH', url: `/api/merchants/${z}`, headers: H, payload: { defaultMode: 'auto' } }); // mode on its own keeps the category
-    expect((await a.inject({ url: '/api/merchants?q=zed' })).json().rows[0]).toMatchObject({ default_mode: 'auto', default_category_id: h.cats['Eating Out'] });
-    expect((await a.inject({ method: 'PATCH', url: `/api/merchants/${z}`, headers: H, payload: { defaultMode: 'bogus' } })).json()).toMatchObject({ error: 'bad mode' });
+    const nd = (await a.inject({ url: '/api/merchants?review=nohistory' })).json();
+    expect(nd.total).toBe(1); expect(nd.withoutHistory).toBe(1); // only shops you actually bought from, and never categorized
+    // answering teaches the merchant: its history now shows it, and it leaves the "never categorized" list
+    const zt = (h.db.prepare("SELECT id FROM transactions WHERE merchant_id=? ORDER BY id").all(z) as any[]).map((r) => r.id);
+    for (const id of zt.slice(0, 2)) await a.inject({ method: 'POST', url: `/api/transactions/${id}/categorize`, headers: H, payload: { categoryId: h.cats['Eating Out'] } });
+    await a.inject({ method: 'POST', url: `/api/transactions/${zt[2]}/categorize`, headers: H, payload: { categoryId: h.cats['Groceries'] } });
+    expect((await a.inject({ url: '/api/merchants?review=nohistory' })).json().total).toBe(0);
+    expect((await a.inject({ url: '/api/merchants?q=zed' })).json().rows[0].history.map((x: any) => [x.name, x.n])).toEqual([['Eating Out', 2], ['Groceries', 1]]);
     expect((await a.inject({ url: '/api/merchants?q=shop 11' })).json().rows.length).toBeGreaterThan(0);
   });
 });

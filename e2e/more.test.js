@@ -16,46 +16,29 @@ describe('Rules and merchants', () => {
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('backtests a new rule before saving it, and the saved rule suggests next time', async () => {
-    await mount('/rules');
-    await waitFor(() => $$('tbody tr').length > 3, 'rules');
-    byText('button', /New rule/).click();
-    const card = await waitFor(() => $$('.card').find((c) => /Backtest/.test(text(c))), 'rule editor');
-    setInput($$('input', card).find((i) => i.placeholder === 'value'), 'chipotle');
-    await pickCat($('hk-category-select', card), 'Eating Out');
-    byText('button', /^Backtest$/, card).click();
-    await waitFor(() => /Would have matched/.test(text(card)), 'backtest result');
-    expect(text(card)).to.match(/matched \d+/);
-    byText('button', /^Save$/, card).click();
-    await waitFor(async () => (await api('/api/rules')).some((r) => /chipotle/i.test(r.match_json) && r.mode === 'suggest'), 'rule saved in suggest mode (verbose by default)');
-  });
-
   const mrows = () => $$('.mlist .mrow:not(.mhead)');
-  it('merchants: most-used first, paged; giving one a usual category keeps its row, confirms, and does not leak into the next row\'s picker', async () => {
+  it('merchants: most-used first, paged, showing what you have chosen for each; they only suggest and a rule can be made from one', async () => {
+    const waiting = (await api('/api/inbox')).needsCategory.find((t) => t.merchant && t.kind !== 'greenlight_reclass'); // one answer of yours gives that merchant a history
+    await api(`/api/transactions/${waiting.id}/categorize`, { method: 'POST', body: { categoryId: (await api('/api/categories')).find((c) => c.name === 'Groceries').id } });
     await mount('/rules');
     byText('button', /^Merchants/).click();
     await waitFor(() => mrows().length > 3, 'merchant rows');
     expect(mrows().length).to.be.at.most(50); // paged: never the whole merchant list
-    expect(text($('.card.muted.small'))).to.match(/A merchant is a shop/); // says what this page is
-    const before = (await api('/api/merchants?review=nodefault&limit=50')).withoutDefault;
-    const first = mrows()[0], second = mrows()[1];
-    const name1 = text($('.mname b', first));
-    await pickCat($('hk-category-select', first), 'Groceries');
-    await waitFor(() => /usual category|Future purchases/.test(text($$('.toast').at(-1))) || /→ Groceries/.test(text($$('.toast').at(-1))), 'confirmation toast');
-    await sleep(150);
-    expect(text($('.mname b', mrows()[0])), 'the row stays where it was').to.equal(name1);
-    expect($('input', mrows()[0]).value, 'its picker shows the category').to.match(/Groceries/);
-    expect($('input', mrows()[1]).value, 'the next row\'s picker is untouched').to.equal('');
-    const m = (await api('/api/merchants?q=' + encodeURIComponent(name1) + '&limit=5')).rows.find((r) => r.name === name1);
-    expect(m.default_category_id).to.be.a('number');
-    expect((await api('/api/merchants?review=nodefault&limit=50')).withoutDefault).to.equal(before - 1);
-    // reload the list (page change / filter): the row leaves the "no usual category" list and the next merchant is not mislabelled
+    expect(text($('.card.muted.small'))).to.match(/A merchant is a shop.*only ever suggests/);
+    expect($('select[aria-label="Mode"]'), 'no per-merchant mode any more').to.not.exist;
     choose($('select[aria-label="Which merchants"]'), 'All merchants');
-    await waitFor(() => mrows().length > 3, 'all merchants');
-    choose($('select[aria-label="Which merchants"]'), 'No usual category yet'); // back: the merchant we just filed is gone from this list
-    await waitFor(() => mrows().length > 3 && $('.mname b', mrows()[0]) && text($('.mname b', mrows()[0])) !== name1, 'filed merchant left the list');
-    expect(mrows().every((r) => $('input', r).value === ''), 'no leftover category on any remaining row').to.equal(true);
-    expect(second).to.exist;
+    setInput($('input[type=search]'), waiting.merchant);
+    await waitFor(() => $$('.mhist .chip').length > 0, 'history chips');
+    const withHist = mrows().find((r) => $('.mhist .chip.top', r));
+    expect(text($('.mhist .chip.top', withHist)), 'category and how many times').to.match(/×\d+/);
+    byText('button', /Make a rule/, withHist).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Make a rule for/.test(text(d))), 'rule dialog');
+    expect($('hk-category-select input', dlg).value, 'its usual category is pre-filled').to.equal($('.mhist .chip.top', withHist).dataset.cat);
+    await waitFor(() => /would have matched \d+/i.test(text($('.rf-bt', dlg))), 'backtest');
+    setInput($('input.rf-pri', dlg), '40');
+    $('button.rf-save', dlg).click();
+    await waitFor(async () => (await api('/api/rules')).some((r) => /from merchant/.test(r.notes ?? '') && r.priority === 40 && r.origin === 'user'), 'rule saved as yours');
+    expect(text($$('.toast').at(-1))).to.match(/Rule saved/);
   });
 
   it('Fix name… explains rename and merge', async () => {
@@ -331,7 +314,7 @@ describe('Backlog review (grouped by merchant)', () => {
     expect(badge.dataset.tip).to.match(/real-time alert.*bank has not posted it yet.*replaces this one and keeps your category/);
   });
 
-  it('one answer categorizes every transaction of a merchant and teaches a suggest-mode rule', async () => {
+  it('one answer categorizes every transaction of a merchant, teaches its history, and creates no rule by itself', async () => {
     const accts = await api('/api/accounts'); const chase = accts.find((a) => a.name === 'Chase Prime Visa').id;
     for (let i = 0; i < 4; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'BRAND NEW BAKERY', amountCents: -(500 + i) } });
     await mount('/backlog');
@@ -343,7 +326,7 @@ describe('Backlog review (grouped by merchant)', () => {
     await waitFor(() => /4 categorized/.test(text(document.body)), 'bulk result');
     const tx = await api('/api/transactions?q=BRAND%20NEW%20BAKERY');
     expect(tx).to.have.length(4); expect(tx.every((t) => t.splits[0]?.category === 'Eating Out')).to.equal(true);
-    expect((await api('/api/rules')).some((r) => /BRAND NEW BAKERY/i.test(r.match_json) && r.mode === 'suggest')).to.equal(true);
+    expect((await api('/api/rules')).some((r) => /BRAND NEW BAKERY/i.test(r.match_json)), 'no rule unless you ask for one').to.equal(false);
   });
 });
 
@@ -458,7 +441,7 @@ describe('Rule priority and splitting from the Backlog', () => {
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('priority is editable on every rule, explained, rejects nonsense, re-orders the list, and can be set on a new rule', async () => {
+  it('priority is editable on every rule, explained, rejects nonsense, and re-orders the list', async () => {
     await mount('/rules');
     const rows = () => $$('tbody tr'); await waitFor(() => rows().length > 2, 'rules');
     expect(text($$('p.muted.small').find((p) => /lowest priority number/.test(text(p))))).to.match(/more conditions|more specific/);
@@ -470,8 +453,6 @@ describe('Rule priority and splitting from the Backlog', () => {
     setInput(pri(second), '1'); pri(second).dispatchEvent(new Event('change', { bubbles: true }));
     await waitFor(() => nameOf(rows()[0]) === secondName && Number(pri(rows()[0]).value) === 1, 'second rule moved to the top');
     const saved = (await api('/api/rules')).find((r) => r.priority === 1); expect(saved).to.exist;
-    byText('button', /New rule/).click();
-    const pi = await waitFor(() => $('input.draft-pri'), 'priority box on the new-rule form'); expect(pi.value).to.equal('100');
   });
 
   it('a transaction can be split between categories from the Backlog, with the parts forced to add up', async () => {

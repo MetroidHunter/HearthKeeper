@@ -62,7 +62,6 @@ describe('migration worksheet (D32)', () => {
     const m = db.prepare("SELECT name, review_state FROM merchants WHERE name LIKE 'SAFEWAY%'").all() as any[];
     expect(m.length).toBe(1); expect(m[0].review_state).toBe('unreviewed');
     expect(db.prepare("SELECT COUNT(*) c FROM transactions t JOIN merchants m ON m.id=t.merchant_id WHERE m.name='SAFEWAY'").get()).toEqual({ c: 4 });
-    expect(db.prepare('SELECT COUNT(*) c FROM merchants WHERE default_category_id IS NOT NULL').get()).toEqual({ c: 0 });
   });
 });
 
@@ -78,7 +77,7 @@ describe('backlog mode', () => {
     setSplits(h.db, a[2], [{ categoryId: h.cats['Groceries'], amountCents: -900 }], 'user'); // answered by a human meanwhile
     const g = groupedInbox(h.db);
     expect(g[0]).toMatchObject({ name: 'CORNER BAKERY', count: 2, totalCents: -1200 });
-    const r = bulkAnswer(h.db, [...g[0].txnIds, a[2]], h.cats['Eating Out'], { makeRule: 'suggest' });
+    const r = bulkAnswer(h.db, [...g[0].txnIds, a[2]], h.cats['Eating Out'], { rule: { match: { all_of: [{ field: 'merchant', op: 'eq', value: 'CORNER BAKERY' }] }, mode: 'suggest' } });
     expect(r).toMatchObject({ applied: 2, skipped: 1 });
     expect(r.rule!.backtest.matched).toBeGreaterThanOrEqual(2);
     expect((h.db.prepare('SELECT category_id c FROM transaction_splits WHERE transaction_id=?').get(a[2]) as any).c).toBe(h.cats['Groceries']);

@@ -1,0 +1,95 @@
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, pickCat, confirmDialog, api, sleep } from './helpers.js';
+
+describe('Rules are made while categorizing, with AND / OR conditions', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+  const chaseId = async () => (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id;
+
+  it('the dialog has no "remember" box; ticking "Make a rule" opens a builder with a live backtest, AND and OR, and saves a rule of yours', async () => {
+    const chase = await chaseId();
+    await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'ZEBRA FEED STORE', amountCents: -2500 } });
+    await mount('/backlog');
+    const row = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((r) => /ZEBRA FEED/.test(text(r))), 'the row');
+    await pickCat($('.tcat hk-category-select', row), 'Groceries');
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'confirm dialog');
+    expect($('#remember', dlg), 'the learn checkbox is gone').to.not.exist;
+    expect($('.ruleform', dlg), 'no rule form until asked').to.not.exist;
+    $('#make-rule', dlg).click();
+    await waitFor(() => $('.ruleform', dlg), 'rule form');
+    expect($('.rf-value', dlg).value, 'seeded from the transaction').to.match(/ZEBRA FEED/i);
+    // AND another condition, and an OR alternative inside the first clause
+    byText('button', /and another condition/, dlg).click();
+    await waitFor(() => $$('.rb-clause', dlg).length === 2, 'second clause');
+    expect(text($('.rb-join.and', dlg))).to.equal('AND');
+    expect($('button.primary.confirm', dlg).disabled, 'an empty condition blocks saving').to.equal(true);
+    setInput($$('.rf-value', dlg)[1], 'feed');
+    byText('button', /or another way/, $$('.rb-clause', dlg)[0]).click();
+    await waitFor(() => $$('.rb-alt', dlg).length === 3, 'alternative added');
+    expect(text($('.rb-join.or', dlg))).to.equal('OR');
+    setInput($$('.rf-value', dlg)[1], 'zebra');       // the OR alternative of the first clause
+    setInput($$('.rf-value', dlg)[2], 'feed store');  // the AND clause
+    await waitFor(() => /would have matched \d+/i.test(text($('.rf-bt', dlg))), 'live backtest');
+    $('.rf-mode', dlg).value = 'auto'; $('.rf-mode', dlg).dispatchEvent(new Event('change', { bubbles: true }));
+    setInput($('.rf-pri', dlg), '25');
+    expect(text($('button.primary.confirm', dlg))).to.match(/make the rule/);
+    $('button.primary.confirm', dlg).click();
+    await waitFor(async () => (await api('/api/rules')).some((r) => r.origin === 'user' && r.priority === 25 && r.mode === 'auto' && /any_of/.test(r.match_json) && /feed store/i.test(r.match_json)), 'rule saved with an OR group');
+    const rule = (await api('/api/rules')).find((r) => /any_of/.test(r.match_json) && /feed store/i.test(r.match_json));
+    const m = JSON.parse(rule.match_json).all_of;
+    expect(m).to.have.length(2); expect(m[0].any_of).to.have.length(2); expect(m[1]).to.include({ value: 'feed store' });
+    // the rule is shown on the Rules page as readable AND / OR
+    await mount('/rules');
+    await waitFor(() => $$('tbody tr').some((r) => / OR /.test(text(r)) && / AND /.test(text(r))), 'AND / OR shown');
+  });
+
+  it('without ticking it, answering creates no rule; the category picker empties itself after the dialog (confirmed or cancelled)', async () => {
+    const chase = await chaseId(); const before = (await api('/api/rules')).length;
+    for (let i = 0; i < 2; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'QUOKKA SUPPLY', amountCents: -(900 + i) } });
+    await mount('/backlog');
+    const group = await waitFor(() => $$('.group').find((c) => /QUOKKA/.test(text(c))), 'group');
+    const picker = $('.bulkbar hk-category-select', group);
+    await pickCat(picker, 'Groceries');
+    byText('button', /^Cancel$/, await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'dialog')).click();
+    await sleep(80);
+    expect($('input', picker).value, 'cancelled: nothing left in the box').to.equal('');
+    await pickCat(picker, 'Groceries'); await confirmDialog(/Yes, categorize/);
+    await waitFor(() => /2 categorized/.test(text(document.body)), 'done');
+    expect((await api('/api/rules')).length).to.equal(before);
+    for (const input of $$('hk-category-select input')) expect(input.value, 'no picker keeps stale text').to.equal('');
+  });
+
+  it('a rule\'s answer and the merchant\'s usual answer are both offered, labelled, when they differ', async () => {
+    const chase = await chaseId();
+    const mk = (d, c) => api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: d, amountCents: c } });
+    const first = await mk('PELICAN BAKERY', -500); const id1 = first.id;
+    await api(`/api/transactions/${id1}/categorize`, { method: 'POST', body: { categoryId: (await api('/api/categories')).find((c) => c.name === 'Eating Out').id } });
+    await api('/api/rules', { method: 'POST', body: { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'pelican' }] }, action: { type: 'categorize', category: 'Groceries' }, mode: 'suggest' } });
+    await mk('PELICAN BAKERY', -600);
+    await mount('/backlog');
+    const row = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((r) => /PELICAN/.test(text(r))), 'row');
+    const qs = $$('button.quick', row);
+    expect(qs.map((q) => [q.dataset.why, text(q)])).to.deep.equal([['rule', 'Rule Groceries'], ['merchant history', 'Merchant Eating Out']]);
+  });
+
+  it('a merchant card stays where it is while you answer its rows one by one', async () => {
+    const chase = await chaseId();
+    for (let i = 0; i < 3; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'AAA BIG SHOP', amountCents: -(100 + i) } });
+    for (let i = 0; i < 2; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'BBB SMALL SHOP', amountCents: -(200 + i) } });
+    await mount('/backlog');
+    const names = () => $$('.group').map((g) => text($('.grouphead b', g)));
+    await waitFor(() => names().includes('AAA BIG SHOP') && names().includes('BBB SMALL SHOP'), 'both groups');
+    const order = names(); const big = $$('.group').find((g) => /AAA BIG SHOP/.test(text(g)));
+    // answer two of the big merchant's rows alone: it now has fewer than the small one
+    for (let i = 0; i < 2; i++) {
+      const g = $$('.group').find((x) => /AAA BIG SHOP/.test(text($('.grouphead b', x))));
+      const r = $$('.trow.txn[data-cat=missing]', g)[0];
+      await pickCat($('.tcat hk-category-select', r), 'Groceries'); await confirmDialog(/Yes, categorize/);
+      await waitFor(() => !document.querySelector('dialog.busy[open]'), 'saved');
+    }
+    await sleep(200);
+    expect(names().filter((n) => order.includes(n)), 'same order as before').to.deep.equal(order.filter((n) => names().includes(n)));
+    expect(names().indexOf('AAA BIG SHOP')).to.be.lessThan(names().indexOf('BBB SMALL SHOP'));
+    expect(big).to.exist;
+  });
+});

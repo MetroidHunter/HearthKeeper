@@ -1,3 +1,4 @@
+import { merchantHistory } from './merchants.js';
 import type { DB } from './db.js';
 import { categoryBalance, currentAllocation, periodTotals } from './balance.js';
 import { monthOf } from './time.js';
@@ -71,9 +72,8 @@ export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number 
   const out: { id: number; name: string; why: string }[] = [];
   const add = (id: number | null | undefined, why: string) => { if (id && out.length < 3 && !out.some((o) => o.id === id)) { const c = db.prepare("SELECT name FROM categories WHERE id=? AND status='active'").get(id) as any; if (c) out.push({ id, name: c.name, why }); } };
   if (t.decided_rule_id) { const r = db.prepare('SELECT action_json FROM rules WHERE id=?').get(t.decided_rule_id) as any; const n = r ? JSON.parse(r.action_json).category : null; if (n) add((db.prepare('SELECT id FROM categories WHERE name=? COLLATE NOCASE').get(n) as any)?.id, 'rule'); }
-  const past = db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN transactions me ON me.id=? AND me.merchant_id IS NOT NULL AND x.merchant_id=me.merchant_id
-    WHERE s.category_id IS NOT NULL AND x.id!=me.id GROUP BY s.category_id ORDER BY n DESC LIMIT 3`).all(t.id) as any[];
-  for (const p of past) add(p.id, 'merchant history');
+  const mid = (db.prepare('SELECT merchant_id m FROM transactions WHERE id=?').get(t.id) as { m: number | null } | undefined)?.m;
+  if (mid) for (const p of merchantHistory(db, mid, 3)) add(p.categoryId, 'merchant history'); // what you chose for it most often; never above a rule's answer
   if (t.descriptor_clean && out.length < 3) {
     const first = t.descriptor_clean.split(' ')[0];
     if (first.length >= 4) for (const r of db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id WHERE x.descriptor_clean LIKE ? AND s.category_id IS NOT NULL AND x.id!=? GROUP BY s.category_id ORDER BY n DESC LIMIT 3`).all(`${first}%`, t.id) as any[]) add(r.id, 'similar');
@@ -122,7 +122,7 @@ export const INBOX_WHERE = {
   stale: "t.kind!='ignored' AND t.status='stale'", // hiding a never-posted charge resolves it
   flagged: 't.kind!=\'ignored\' AND t.flagged=1',
 } as const;
-const INBOX_COLS = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, a.name account,
+const INBOX_COLS = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, (SELECT name FROM merchants WHERE id=t.merchant_id) merchant, a.name account,
     CASE WHEN t.kind='greenlight_reclass' THEN -COALESCE((SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id=t.id AND amount_cents>0),0) ELSE t.amount_cents END effective_cents,
     (SELECT s.memo FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
 const INBOX_BASE = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;

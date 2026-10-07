@@ -102,6 +102,8 @@ export class CategorySelect extends LitElement {
   @property() placeholder = 'Category';
   @property({ type: Boolean }) includeRetired = false;
   @property({ type: Boolean }) clearable = false;
+  /** An action picker ("pick a category to apply"): after a choice it empties itself, so a reused row or a cancelled dialog never leaves the old text behind. */
+  @property({ type: Boolean }) reset = false;
   @property() clearLabel = '';
   @state() private open = false; @state() private q = ''; @state() private idx = 0;
   private pop: HTMLElement | null = null;
@@ -113,7 +115,7 @@ export class CategorySelect extends LitElement {
       .sort((a, b) => (a.group_name ?? 'Other').localeCompare(b.group_name ?? 'Other') || a.name.localeCompare(b.name));
   }
   private choose(c: PickCat | null) {
-    this.value = c?.id ?? null; this.open = false; this.q = '';
+    this.value = this.reset ? null : c?.id ?? null; this.open = false; this.q = '';
     this.dispatchEvent(new CustomEvent('change', { detail: { id: c?.id ?? null, name: c?.name ?? '' }, bubbles: true }));
   }
   private place() {
@@ -154,8 +156,8 @@ export class CategorySelect extends LitElement {
 declare global { interface HTMLElementTagNameMap { 'hk-category-select': CategorySelect } }
 
 /** Template helper: <hk-category-select> wired to a callback. */
-export const catSelect = (cats: PickCat[], value: number | null | undefined, onPick: (id: number | null, name: string) => void, o: { placeholder?: string; includeRetired?: boolean } = {}) =>
-  html`<hk-category-select .cats=${cats} .value=${value ?? null} placeholder=${o.placeholder ?? 'Category'} ?includeRetired=${o.includeRetired} @change=${(e: CustomEvent) => { if (e.detail && e.target === e.currentTarget) onPick(e.detail.id, e.detail.name); }}></hk-category-select>`; // ignore stray native change events
+export const catSelect = (cats: PickCat[], value: number | null | undefined, onPick: (id: number | null, name: string) => void, o: { placeholder?: string; includeRetired?: boolean; reset?: boolean } = {}) =>
+  html`<hk-category-select .cats=${cats} .value=${value ?? null} placeholder=${o.placeholder ?? 'Category'} ?includeRetired=${o.includeRetired} ?reset=${o.reset} @change=${(e: CustomEvent) => { if (e.detail && e.target === e.currentTarget) onPick(e.detail.id, e.detail.name); }}></hk-category-select>`; // ignore stray native change events
 
 /** The "pending" badge, with what it means one tap/hover away. */
 export const PENDING_TIP = "Pending means this came from a real-time alert (Chase, Wells Fargo or Greenlight) and the bank has not posted it yet. The amount can still change (a tip, a hold). When the bank file arrives, the posted row replaces this one and keeps your category and note. If it never posts within a week it shows up as 'Never posted'.";

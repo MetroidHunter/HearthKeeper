@@ -9,7 +9,8 @@ import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, li
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
 import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetVsActual } from '../core/analytics.js';
 import { monthsOverview, NEEDS_WHERE } from '../core/months.js';
-import { answerCategory, promotable } from '../core/answers.js';
+import { answerCategory } from '../core/answers.js';
+import { merchantHistory } from '../core/merchants.js';
 import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
 import { addRule, backtest, type RuleMatch } from '../core/rules.js';
 import { categoryBalance, checkInvariants } from '../core/balance.js';
@@ -135,10 +136,10 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/inbox', async (req: any) => inbox(db, now(), { limit: req.query.limit ? Math.min(200, Math.max(1, Number(req.query.limit))) : undefined }));
   app.get('/api/backlog', async (req: any, reply) => { // one page of the Backlog (see backlogPage)
     const view = String(req.query.view ?? 'merchants'); if (!['merchants', 'flagged', 'notes'].includes(view)) return reply.code(400).send({ error: 'unknown view' });
-    return backlogPage(db, { view: view as any, limit: Math.min(100, Math.max(1, Number(req.query.limit ?? 10))), offset: Math.max(0, Number(req.query.offset ?? 0)), q: req.query.q ? String(req.query.q) : undefined, today: now() });
+    return backlogPage(db, { view: view as any, limit: Math.min(100, Math.max(1, Number(req.query.limit ?? 10))), offset: Math.max(0, Number(req.query.offset ?? 0)), q: req.query.q ? String(req.query.q) : undefined, today: now(), keys: req.query.keys ? String(req.query.keys).split(',').slice(0, 100) : undefined });
   });
   app.get('/api/inbox/grouped', async () => groupedInbox(db));
-  app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { makeRule: b.makeRule, actor: actor(req) }); });
+  app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { rule: b.rule, actor: actor(req) }); });
   app.get('/api/dashboard', async () => {
     const months = monthsOverview(db, now());
     return { monthsNeedingWork: months.filter((m) => m.todo > 0).length, monthsOpenItems: months.reduce((a, m) => a + m.todo, 0), months: months.length, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
@@ -224,7 +225,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const b = rec(req.body); const id = Number(req.params.id);
     const t = db.prepare('SELECT amount_cents FROM transactions WHERE id=?').get(id) as any;
     const splits = b.splits ?? [{ categoryId: b.categoryId, amountCents: t.amount_cents }];
-    const out = answerCategory(db, id, splits, { makeRule: b.makeRule, actor: actor(req) });
+    const out = answerCategory(db, id, splits, { rule: b.rule, actor: actor(req) });
     void opts.notifier?.retract(id, userIdOf(req)); // the first answer closes the prompt on the other phone
     return out;
   });
@@ -249,25 +250,26 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/audit', async (req: any) => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(Number(req.query.limit ?? 200)));
 
   /* ---------- rules & merchants ---------- */
-  app.get('/api/rules', async () => db.prepare('SELECT * FROM rules ORDER BY priority, id').all());
+  app.get('/api/rules', async () => db.prepare('SELECT id, enabled, priority, match_json, action_json, mode, origin, hit_count, last_hit_at, notes FROM rules ORDER BY priority, id').all());
   app.post('/api/rules/backtest', async (req) => backtest(db, { match: rec(req.body).match as RuleMatch }));
   app.post('/api/rules', async (req) => { const b = rec(req.body); return { id: addRule(db, b as any), backtest: backtest(db, { match: b.match }) }; });
   app.patch('/api/rules/:id', async (req: any) => { const b = rec(req.body); if (b.mode) db.prepare('UPDATE rules SET mode=? WHERE id=?').run(b.mode, req.params.id); if (b.enabled !== undefined) db.prepare('UPDATE rules SET enabled=? WHERE id=?').run(Number(b.enabled), req.params.id);
     if (b.priority !== undefined) { const n = Number(b.priority); if (!Number.isInteger(n) || n < 1 || n > 9999) throw Object.assign(new Error('priority must be a whole number from 1 to 9999'), { statusCode: 400 }); db.prepare('UPDATE rules SET priority=? WHERE id=?').run(n, req.params.id); }
     return { ok: true }; });
-  app.get('/api/rules/promotable', async () => promotable(db));
+  const NO_HISTORY = "NOT EXISTS (SELECT 1 FROM transactions h JOIN transaction_splits s ON s.transaction_id=h.id JOIN categories c ON c.id=s.category_id WHERE h.merchant_id=m.id AND h.status!='void' AND s.origin IN ('user','legacy') AND c.system=0) AND EXISTS (SELECT 1 FROM transactions t WHERE t.merchant_id=m.id)"; // shops you buy from that you have never categorized
   app.get('/api/merchants', async (req: any) => { // paged and searchable: the household has thousands, and the page must never render them all
     const q = req.query; const where: string[] = []; const args: unknown[] = [];
     if (q.q) { where.push('LOWER(m.name) LIKE ?'); args.push(`%${String(q.q).toLowerCase()}%`); }
     if (q.review === 'unreviewed') where.push("m.review_state='unreviewed'");
-    if (q.review === 'nodefault') where.push('m.default_category_id IS NULL AND EXISTS (SELECT 1 FROM transactions t WHERE t.merchant_id=m.id)'); // the useful to-do list: shops you actually bought from, with no usual category yet
+    if (q.review === 'nohistory') where.push(NO_HISTORY);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const limit = Math.min(200, Number(q.limit ?? 50)), offset = Number(q.offset ?? 0);
-    const rows = db.prepare(`SELECT m.*, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ${w} ORDER BY txns DESC, m.name LIMIT ? OFFSET ?`).all(...args, limit, offset);
+    const rows = (db.prepare(`SELECT m.id, m.name, m.review_state, (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) txns FROM merchants m ${w} ORDER BY txns DESC, m.name LIMIT ? OFFSET ?`).all(...args, limit, offset) as any[])
+      .map((m) => ({ ...m, history: merchantHistory(db, m.id, 4) })); // what you have chosen for it, most often first: this is its "merchant rule"
     const total = (db.prepare(`SELECT COUNT(*) c FROM merchants m ${w}`).get(...args) as { c: number }).c;
     const unreviewed = (db.prepare("SELECT COUNT(*) c FROM merchants WHERE review_state='unreviewed'").get() as { c: number }).c;
-    const withoutDefault = (db.prepare('SELECT COUNT(*) c FROM merchants m WHERE m.default_category_id IS NULL AND EXISTS (SELECT 1 FROM transactions t WHERE t.merchant_id=m.id)').get() as { c: number }).c;
-    return { rows, total, unreviewed, withoutDefault, limit, offset };
+    const withoutHistory = (db.prepare(`SELECT COUNT(*) c FROM merchants m WHERE ${NO_HISTORY}`).get() as { c: number }).c;
+    return { rows, total, unreviewed, withoutHistory, limit, offset };
   });
   app.post('/api/merchants/:id/merge', async (req: any) => {
     const into = rec(req.body).intoId; const id = Number(req.params.id);
@@ -276,9 +278,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
       db.prepare('DELETE FROM merchant_group_members WHERE merchant_id=?').run(id); db.prepare('DELETE FROM merchants WHERE id=?').run(id); })();
     return { ok: true };
   });
-  app.patch('/api/merchants/:id', async (req: any) => { const b = rec(req.body); if (b.name) db.prepare('UPDATE merchants SET name=?, review_state=\'reviewed\' WHERE id=?').run(b.name, req.params.id);
-    if (b.defaultMode !== undefined && b.defaultCategoryId === undefined) { if (!['auto', 'suggest', 'ask'].includes(b.defaultMode)) return { error: 'bad mode' }; db.prepare("UPDATE merchants SET default_mode=?, review_state='reviewed' WHERE id=?").run(b.defaultMode, req.params.id); }
-    if (b.defaultCategoryId !== undefined) db.prepare('UPDATE merchants SET default_category_id=?, default_mode=COALESCE(?, default_mode), review_state=\'reviewed\' WHERE id=?').run(b.defaultCategoryId, b.defaultMode ?? null, req.params.id); return { ok: true }; });
+  app.patch('/api/merchants/:id', async (req: any) => { const b = rec(req.body); if (b.name) db.prepare('UPDATE merchants SET name=?, review_state=\'reviewed\' WHERE id=?').run(b.name, req.params.id); return { ok: true }; });
   app.post('/api/merchant-groups', async (req) => { const b = rec(req.body); const id = Number(db.prepare('INSERT INTO merchant_groups(name) VALUES (?)').run(b.name).lastInsertRowid); for (const m of b.merchantIds ?? []) db.prepare('INSERT OR IGNORE INTO merchant_group_members VALUES (?,?)').run(id, m); return { id }; });
 
   /* ---------- transfers & months ---------- */

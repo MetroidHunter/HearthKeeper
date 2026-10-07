@@ -1,5 +1,6 @@
 import { audit, type DB } from './db.js';
 import { cleanDescriptor } from './descriptor.js';
+import { merchantHistory } from './merchants.js';
 import { decide, loadRules, type Candidate, type Rule } from './rules.js';
 
 export type Kind = 'spending' | 'income' | 'internal_transfer' | 'greenlight_allowance' | 'greenlight_return' | 'greenlight_reclass' | 'ignored';
@@ -92,7 +93,7 @@ export function classify(db: DB, txnId: number, extra: Partial<Candidate> = {}):
   if (t.review_state === 'user_confirmed' || t.kind === 'ignored' || t.kind === 'internal_transfer' && t.decided_by === 'user') return { outcome: 'untouched' };
   const merchantId = resolveMerchant(db, t.descriptor_clean, t.descriptor_raw);
   db.prepare('UPDATE transactions SET merchant_id=? WHERE id=?').run(merchantId, txnId);
-  const merchant = merchantId ? (db.prepare('SELECT name, default_category_id, default_mode FROM merchants WHERE id=?').get(merchantId) as any) : null;
+  const merchant = merchantId ? (db.prepare('SELECT name FROM merchants WHERE id=?').get(merchantId) as any) : null;
   const groups = merchantId ? (db.prepare('SELECT g.name FROM merchant_group_members m JOIN merchant_groups g ON g.id=m.group_id WHERE m.merchant_id=?').all(merchantId) as any[]).map((g) => g.name) : [];
   const cand: Candidate = { descriptor: `${t.descriptor_raw} ${t.descriptor_clean ?? ''}`, merchant: merchant?.name, merchant_group: groups, account: t.account_name, amount_cents: t.amount_cents,
     direction: t.amount_cents < 0 ? 'out' : 'in', note: t.note ?? undefined, ...extra };
@@ -110,7 +111,7 @@ export function classify(db: DB, txnId: number, extra: Partial<Candidate> = {}):
     if (cid && !d.conflicts.length) return applyCategory(db, t, txnId, cid, d.rule.mode, d.rule.id);
     if (d.conflicts.length) return { outcome: 'needs_category', ruleId: d.rule.id, conflict: true };
   }
-  if (merchant?.default_category_id) return applyCategory(db, t, txnId, merchant.default_category_id, merchant.default_mode, undefined);
+  // No rule: the merchant's history (what you chose for it most often) is only ever a suggestion, worked out when the row is shown, so it stays a plain "needs a category".
   return { outcome: 'needs_category' };
 }
 
@@ -133,7 +134,7 @@ export interface CategorySuggestion { categoryId: number | null; mode: 'auto' | 
 export function suggestCategory(db: DB, descriptorRaw: string, amountCents: number, accountName: string, source?: string, opts: ResolveOpts = {}): CategorySuggestion {
   const clean = cleanDescriptor(descriptorRaw);
   const merchantId = resolveMerchant(db, clean.clean, descriptorRaw, opts);
-  const merchant = merchantId ? (db.prepare('SELECT name, default_category_id, default_mode FROM merchants WHERE id=?').get(merchantId) as any) : null;
+  const merchant = merchantId ? (db.prepare('SELECT name FROM merchants WHERE id=?').get(merchantId) as any) : null;
   const groups = merchantId ? (db.prepare('SELECT g.name FROM merchant_group_members m JOIN merchant_groups g ON g.id=m.group_id WHERE m.merchant_id=?').all(merchantId) as any[]).map((g) => g.name) : [];
   const d = decide(opts.rules ?? loadRules(db), { descriptor: `${descriptorRaw} ${clean.clean}`, merchant: merchant?.name, merchant_group: groups, account: accountName, amount_cents: amountCents, direction: amountCents < 0 ? 'out' : 'in', source });
   if (d.rule) {
@@ -143,6 +144,6 @@ export function suggestCategory(db: DB, descriptorRaw: string, amountCents: numb
     const cid = a.category ? getCategoryId(db, a.category) : null;
     return { categoryId: d.conflicts.length ? null : cid, mode: d.rule.mode, ruleId: d.rule.id, conflict: d.conflicts.length > 0 };
   }
-  if (merchant?.default_category_id) return { categoryId: merchant.default_category_id, mode: merchant.default_mode };
-  return { categoryId: null, mode: 'ask' };
+  const top = merchantId ? merchantHistory(db, merchantId, 1)[0] : undefined;
+  return top ? { categoryId: top.categoryId, mode: 'suggest' } : { categoryId: null, mode: 'ask' };
 }

@@ -78,7 +78,7 @@ describe('api', () => {
     expect(shapes[0]).toMatchObject({ source: 'chase_alert', count: 1, unparsed: 1 });
   });
 
-  it('workflow: import -> inbox -> answer with learned rule -> budget page and pie', async () => {
+  it('workflow: import -> inbox -> answer (with a rule made in the same step) -> budget page and pie', async () => {
     const { h, app } = mk();
     const csv = 'Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n10/01/2026,10/02/2026,CHIPOTLE 1234,Food,Sale,-14.20,\n';
     const sug = (await app.inject({ method: 'POST', url: '/api/imports/suggest-mapping', headers: H, payload: { csv } })).json();
@@ -88,7 +88,7 @@ describe('api', () => {
     const inbox = (await app.inject({ url: '/api/inbox' })).json();
     expect(inbox.needsCategory).toHaveLength(1);
     const id = inbox.needsCategory[0].id;
-    const ans = await app.inject({ method: 'POST', url: `/api/transactions/${id}/categorize`, headers: H, payload: { categoryId: h.cats['Eating Out'], makeRule: 'suggest' } });
+    const ans = await app.inject({ method: 'POST', url: `/api/transactions/${id}/categorize`, headers: H, payload: { categoryId: h.cats['Eating Out'], rule: { match: { all_of: [{ field: 'merchant', op: 'eq', value: (h.db.prepare('SELECT m.name FROM transactions t JOIN merchants m ON m.id=t.merchant_id WHERE t.id=?').get(id) as any).name }] }, mode: 'suggest' } } });
     expect(ans.json().rule.backtest.matched).toBe(1);
     expect((await app.inject({ url: '/api/inbox' })).json().needsCategory).toHaveLength(0);
     const budget = (await app.inject({ url: '/api/budget' })).json();
@@ -98,7 +98,7 @@ describe('api', () => {
     const pie = (await app.inject({ url: '/api/budget/pie' })).json();
     expect(pie.groups.find((g: any) => g.name === 'Food').share).toBeGreaterThan(0);
     expect(Math.round(pie.groups.reduce((a: number, g: any) => a + g.share, 0) * 1000) / 1000).toBe(1);
-    // same merchant next time gets the learned suggestion
+    // same merchant next time gets the rule's suggestion
     const csv2 = csv.replace('10/01/2026', '10/03/2026').replace('10/02/2026', '10/03/2026');
     await app.inject({ method: 'POST', url: '/api/imports/commit', headers: H, payload: { institution: 'Chase', csv: csv2 } });
     const t = h.db.prepare("SELECT decided_rule_id r, review_state s FROM transactions WHERE occurred_on='2026-10-03'").get() as any;

@@ -280,3 +280,14 @@ input.rule-pri { width:4.5rem; padding:4px 6px; }
 .splitrow { display:flex; gap:var(--space-2); align-items:center; margin-top:8px; } .splitcat { flex:1; min-width:0; } .splitcat hk-category-select { display:block; } .splitamt { width:7.5rem; text-align:right; }
 @media (max-width:640px) { .splitrow { flex-wrap:wrap; } .splitamt { flex:1; } }
 @media (max-width:640px) { .splitrow { flex-wrap:wrap; row-gap:4px; padding-bottom:8px; border-bottom:1px solid var(--line); } .splitcat { flex:1 1 100%; } .splitamt { flex:1 1 auto; width:auto; text-align:left; } }
+
+/* rule builder: clauses joined by AND, alternatives within a clause joined by OR */
+.rulebuilder { display:flex; flex-direction:column; gap:6px; }
+.rb-clause { display:flex; flex-direction:column; gap:6px; padding:8px; border:1px solid var(--line, #8883); border-radius:10px; }
+.rb-join { font-size:11px; font-weight:700; letter-spacing:.06em; color:var(--muted, #888); }
+.rb-join.and { margin:-2px 0 2px; }
+.rb-alt { flex-wrap:nowrap; } .rb-alt select { max-width:46%; } .rb-alt input { min-width:0; }
+button.rb-or, button.rb-and-add { align-self:flex-start; }
+.mhist { display:flex; flex-wrap:wrap; gap:4px; }
+.chip.top { font-weight:600; }
+button.quick .qwhy { font-size:11px; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }

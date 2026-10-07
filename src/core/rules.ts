@@ -3,7 +3,16 @@ import type { DB } from './db.js';
 /** Rules engine (design §9.3). Numeric comparisons are on cents; no string compares of money. */
 export type Op = 'contains' | 'word' | 'starts_with' | 'regex' | 'eq' | 'between' | 'in';
 export interface Cond { field: string; op: Op; value: unknown }
-export interface RuleMatch { all_of: Cond[] }
+/** A rule's match is a list of clauses that must ALL hold (AND); a clause is one condition, or `any_of` several alternatives of which ONE must hold (OR). */
+export type Clause = Cond | { any_of: Cond[] };
+export interface RuleMatch { all_of: Clause[] }
+export const isGroup = (c: Clause): c is { any_of: Cond[] } => 'any_of' in c;
+/** Throws a plain-language error for a match that cannot work (empty, or a condition with nothing to compare). */
+export function validateMatch(m: RuleMatch | undefined): void {
+  const bad = (c: Cond) => c.value === undefined || c.value === null || (typeof c.value === 'string' && !c.value.trim()) || (Array.isArray(c.value) && !c.value.length);
+  if (!m?.all_of?.length) throw new Error('A rule needs something to match on');
+  for (const c of m.all_of) if (isGroup(c) ? !c.any_of.length || c.any_of.some(bad) : bad(c)) throw new Error('Every condition in a rule needs a value to match');
+}
 export interface RuleAction { type: 'categorize' | 'internal_transfer' | 'ignore'; category?: string; reason?: string }
 export interface Rule { id: number; enabled: number; priority: number; match: RuleMatch; action: RuleAction; mode: 'auto' | 'suggest' | 'ask'; origin: string }
 
@@ -47,7 +56,7 @@ export function evalCond(c: Cond, cand: Candidate): boolean {
 }
 
 export function ruleMatches(r: Pick<Rule, 'match'>, cand: Candidate): boolean {
-  return r.match.all_of.length > 0 && r.match.all_of.every((c) => evalCond(c, cand));
+  return r.match.all_of.length > 0 && r.match.all_of.every((c) => (isGroup(c) ? c.any_of.length > 0 && c.any_of.some((x) => evalCond(x, cand)) : evalCond(c, cand)));
 }
 
 export function loadRules(db: DB): Rule[] {
@@ -80,6 +89,7 @@ export function backtest(db: DB, rule: Pick<Rule, 'match'>): Backtest {
 }
 
 export function addRule(db: DB, r: { priority?: number; match: RuleMatch; action: RuleAction; mode?: Rule['mode']; origin?: string; notes?: string }): number {
+  validateMatch(r.match);
   if (r.action.type === 'categorize' && (db.prepare('SELECT system FROM categories WHERE name=? COLLATE NOCASE').get(r.action.category) as { system: number } | undefined)?.system) throw new Error('That category is reserved for imported history and cannot be used by a rule');
   return Number(db.prepare('INSERT INTO rules(priority, match_json, action_json, mode, origin, notes) VALUES (?,?,?,?,?,?)')
     .run(r.priority ?? 100, JSON.stringify(r.match), JSON.stringify(r.action), r.mode ?? 'suggest', r.origin ?? 'user', r.notes ?? null).lastInsertRowid);

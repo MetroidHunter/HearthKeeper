@@ -108,4 +108,14 @@ ALTER TABLE categories ADD COLUMN system INTEGER NOT NULL DEFAULT 0;
 -- the HTML part of an email, kept next to its plain text: Venmo/PayPal/Amazon only parse reliably from it
 ALTER TABLE raw_events ADD COLUMN html TEXT;
 `,
+`
+-- Merchant rules are no longer stored: a merchant's usual category is whatever you chose for it most often (see core/merchants.ts) and it only ever suggests.
+-- Anything you had set to "auto" was a real decision, so it becomes an ordinary rule of yours. Learned suggest-mode rules are dropped (the history says the same).
+INSERT INTO rules(priority, match_json, action_json, mode, origin, notes)
+  SELECT 100, json_object('all_of', json_array(json_object('field','merchant','op','eq','value',m.name))), json_object('type','categorize','category',c.name), 'auto', 'user', 'was the automatic category for ' || m.name
+  FROM merchants m JOIN categories c ON c.id=m.default_category_id WHERE m.default_mode='auto';
+UPDATE rules SET origin='user' WHERE origin='learned' AND mode='auto';
+UPDATE transactions SET decided_rule_id=NULL WHERE decided_rule_id IN (SELECT id FROM rules WHERE origin='learned');
+DELETE FROM rules WHERE origin='learned';
+`,
 ];
