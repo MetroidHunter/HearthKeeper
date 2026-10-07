@@ -110,13 +110,13 @@ export function runNoteMatcher(db: DB): MatchSummary {
   const pool = db.prepare('SELECT n.*, a.name account_name FROM external_notes n LEFT JOIN accounts a ON a.id=n.account_id WHERE matched_txn_id IS NULL').all() as any[];
   const feasible = (t: any, n: any): number => {
     const src = wrapperSourceOf(t.descriptor_raw);
-    if (!src || n.source !== src || t.amount_cents !== n.amount_cents) return INF;
+    if (!src || n.source !== src || Math.abs(t.amount_cents) !== Math.abs(n.amount_cents)) return INF; // the skills' exports carry the size of the charge (Amazon: "40.85"), while the bank row is negative: compare sizes
     const oh = ownerHint(t.descriptor_raw), no = n.account_name ? ownerHint(n.account_name) : null;
     if (oh && no && oh !== no) return INF;
     const d = daysBetween(n.occurred_on, t.occurred_on); // bank date - note date
     const w = WINDOWS[src];
     if (d < -w.before || d > w.after) return INF;
-    return Math.abs(d) + 0.001; // minimize total date distance
+    return Math.abs(d) + 0.001 + (Math.sign(t.amount_cents) === Math.sign(n.amount_cents) ? 0 : 0.6); // minimize total date distance; when two notes of the same size compete, the one with the same sign clearly wins
   };
   const cost = txns.map((t) => pool.map((n) => feasible(t, n)));
   const out: MatchSummary = { matched: 0, ambiguous: 0, needsNote: 0 };
@@ -131,13 +131,14 @@ export function runNoteMatcher(db: DB): MatchSummary {
       const altTotal = asg2[i] >= 0 ? total(alt, asg2) : Infinity;
       const margin = altTotal - best; // how much worse is the next-best way to assign this transaction
       const note = pool[j];
-      const q = note.source === 'venmo' ? noteQuality(note.note) : note.note ? 'sufficient' : 'none';
+      const unknown = /^\s*unknown\b/i.test(note.note); // the Amazon skill writes "UNKNOWN - no order number…" when it could not find the order: that is not a note
+      const q = unknown ? 'none' : note.source === 'venmo' ? noteQuality(note.note) : note.note ? 'sufficient' : 'none';
       if (margin < 0.5 && isFinite(margin)) {
         db.prepare("UPDATE transactions SET note_state='ambiguous' WHERE id=?").run(t.id); out.ambiguous++; // ambiguity is a state, not text in the note
         continue;
       }
       db.prepare('UPDATE external_notes SET matched_txn_id=? WHERE id=?').run(t.id, note.id);
-      if (q !== 'sufficient') { db.prepare("UPDATE transactions SET note_state='needs_note', note=?, flag_reason=? WHERE id=?").run(note.note || null, `vague note (${note.counterparty ?? 'unknown counterparty'})`, t.id); out.needsNote++; }
+      if (q !== 'sufficient') { db.prepare("UPDATE transactions SET note_state='needs_note', note=?, flag_reason=? WHERE id=?").run(unknown ? null : note.note || null, unknown ? `${note.source} export could not identify this order` : `vague note (${note.counterparty ?? 'unknown counterparty'})`, t.id); out.needsNote++; }
       else { db.prepare("UPDATE transactions SET note=?, note_state='auto_matched', note_source=? WHERE id=?").run(note.note, note.source, t.id); out.matched++; }
     }
   }
@@ -148,7 +149,7 @@ export function runNoteMatcher(db: DB): MatchSummary {
 export function noteCandidates(db: DB, txnId: number) {
   const t = db.prepare('SELECT id, occurred_on, amount_cents, descriptor_raw FROM transactions WHERE id=?').get(txnId) as any;
   const src = wrapperSourceOf(t.descriptor_raw);
-  return (db.prepare('SELECT * FROM external_notes WHERE matched_txn_id IS NULL AND amount_cents=? AND (? IS NULL OR source=?)').all(t.amount_cents, src, src) as any[])
+  return (db.prepare('SELECT * FROM external_notes WHERE matched_txn_id IS NULL AND ABS(amount_cents)=ABS(?) AND (? IS NULL OR source=?)').all(t.amount_cents, src, src) as any[])
     .map((n) => ({ ...n, days: Math.abs(daysBetween(n.occurred_on, t.occurred_on)) })).sort((a, b) => a.days - b.days);
 }
 export function pickNote(db: DB, txnId: number, noteId: number) {

@@ -81,3 +81,24 @@ describe('item-level splits', () => {
     expect(p.items[1].categoryId).toBeNull();
   });
 });
+
+describe('Amazon notes export with unsigned amounts', () => {
+  it("matches the skill's CSV (positive amounts) to negative bank charges, and does not take UNKNOWN as a note", () => {
+    const h = seedHousehold();
+    const a = tx(h, '2026-10-02', -4085, 'AMZN Mktp US*1AB'), b = tx(h, '2026-09-20', -3011, 'AMAZON.COM*XYZ'), c = tx(h, '2026-09-30', -1100, 'Amazon.com*Q1');
+    const csv = 'Date,Amount,Note\n2026-10-01,40.85,"skirt,deodorant,bow tie"\n2026-09-30,11.00,glitter makeup\n2026-09-20,30.11,"UNKNOWN - no order number on Payments page"\n';
+    const imp = importNotesCsv(h.db, csv, 'amazon'); expect(imp.imported).toBe(3);
+    const r = runNoteMatcher(h.db);
+    expect(r.matched).toBe(2);
+    const row = (id: number) => h.db.prepare('SELECT note, note_state, flag_reason FROM transactions WHERE id=?').get(id) as any;
+    expect(row(a)).toMatchObject({ note: 'skirt,deodorant,bow tie', note_state: 'auto_matched' });
+    expect(row(c)).toMatchObject({ note: 'glitter makeup', note_state: 'auto_matched' });
+    expect(row(b)).toMatchObject({ note: null, note_state: 'needs_note' });
+    expect(row(b).flag_reason).toMatch(/could not identify/);
+    // a signed export (negative amounts) still works, and an exact-sign match wins over a wrong-sign one of the same size
+    const h2 = seedHousehold(); const x = tx(h2, '2026-10-02', -500, 'AMZN Mktp US*9');
+    importNotesCsv(h2.db, 'Date,Amount,Note\n2026-10-01,5.00,wrong sign\n2026-10-01,-5.00,right sign\n', 'amazon');
+    expect(runNoteMatcher(h2.db).matched).toBe(1);
+    expect((h2.db.prepare('SELECT note FROM transactions WHERE id=?').get(x) as any).note).toBe('right sign');
+  });
+});
