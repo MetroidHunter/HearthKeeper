@@ -69,7 +69,10 @@ describe('Rules are made while categorizing, with AND / OR conditions', () => {
     await mount('/backlog');
     const row = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((r) => /PELICAN/.test(text(r))), 'row');
     const qs = $$('button.quick', row);
-    expect(qs.map((q) => [q.dataset.why, text(q)])).to.deep.equal([['rule', 'Rule Groceries'], ['merchant history', 'Merchant Eating Out']]);
+    expect(qs.map((q) => [q.dataset.why, text(q)])).to.deep.equal([['rule', 'Groceries'], ['merchant history', 'Eating Out']]); // no prefix: the category is what you read
+    expect(qs.map((q) => q.title)).to.deep.equal(['Suggested by your rule', 'Suggested by what you usually choose for this merchant']);
+    for (const q of qs) expect(q.scrollWidth, `"${text(q)}" is not clipped`).to.be.at.most(q.clientWidth + 1);
+    expect($('.tcat', row).getBoundingClientRect().width, 'Category gets more room than Note').to.be.greaterThan($('.tnote', row).getBoundingClientRect().width * 1.5);
   });
 
   it('a merchant card stays where it is while you answer its rows one by one', async () => {

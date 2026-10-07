@@ -48,7 +48,6 @@ export interface Env {
 
 export const NOT_A_BUDGET_ITEM = 'Use this when the transaction is not household spending or income: a transfer between your own accounts, a reimbursed or duplicate charge, a payment that belongs to someone else. It is hidden from budgets, charts and the inbox, but kept in your history. Restore it any time from Transactions with Show hidden.';
 const whyLabel: Record<string, string> = { rule: 'your rule', 'merchant history': 'what you usually choose for this merchant', similar: 'a similar merchant', 'frequently used': 'often used' };
-const whyShort: Record<string, string> = { rule: 'Rule', 'merchant history': 'Merchant' };
 
 /** The whole line as the bank sent it, plus everything we know, so a decision never has to be guessed. */
 export const fullLine = (t: TxnLike) => html`<div class="txn-line" title="Exactly as received">${fmtDate(t.occurred_on)} · ${t.account} · ${t.descriptor_raw}${t.note ? html` · note: ${t.note}` : nothing}</div>`;
@@ -169,7 +168,7 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
   const catMissing = !!has('needs_category'), noteMissing = !!has('needs_note');
   const shown = t.effective_cents ?? t.amount_cents;
   const catCell = catMissing
-    ? html`<span class="tcat-in">${catSelect(env.cats, null, (id) => { if (id) void decide(id); }, { placeholder: 'Category', reset: true })}${quick.map((q) => html`<button class="quick" data-why=${q.why} title=${`${whyLabel[q.why] ?? q.why}: use ${q.name}`} @click=${() => decide(q.id)}>${whyShort[q.why] ? html`<span class="qwhy">${whyShort[q.why]}</span> ` : nothing}${q.name}</button>`)}</span>`
+    ? html`<span class="tcat-in">${catSelect(env.cats, null, (id) => { if (id) void decide(id); }, { placeholder: 'Category', reset: true })}${quick.map((q) => html`<button class="quick" data-why=${q.why} title=${`Suggested by ${whyLabel[q.why] ?? q.why}`} @click=${() => decide(q.id)}>${q.name}</button>`)}</span>`
     : html`<span class="tval ${t.categories ? '' : 'empty'}" title=${t.categories ?? ''}>${t.categories ?? html`<span class="muted">–</span>`}</span>`;
   const noteCell = noteMissing
     ? html`<span class="tnote-in"><input class="note-input" placeholder="Note" aria-label="Note" @change=${(e: any) => saveNote(e.target.value)} />

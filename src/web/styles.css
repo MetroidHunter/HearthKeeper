@@ -242,13 +242,13 @@ details.month.done:not([open]) { padding-top:var(--space-2); padding-bottom:var(
 /* Needs-you rows (Home and Backlog): the Transactions table's columns, two lines high.  Date, Description, Amount, Category, Note. */
 .txnlist { display:flex; flex-direction:column; } .listtitle { display:flex; justify-content:space-between; align-items:baseline; padding:12px var(--space-3) 0; }
 .trow { border-top:1px solid var(--line); } .txnlist > .trow:first-child, .listtitle + .trow, .grouphead + .txnlist > .trow:first-child { border-top:0; }
-.tcells { display:grid; grid-template-columns:78px minmax(0,1.5fr) 96px minmax(0,1.5fr) minmax(0,1.6fr); gap:var(--space-3); align-items:center; padding:8px var(--space-3) 2px; }
+.tcells { display:grid; grid-template-columns:78px minmax(0,1.3fr) 96px minmax(0,2.6fr) minmax(0,0.9fr); gap:var(--space-3); align-items:center; padding:8px var(--space-3) 2px; }
 .trow.thead .tcells { padding-top:8px; padding-bottom:4px; color:var(--muted); font-size:13px; font-weight:600; } .trow.thead { border-top:0; border-bottom:1px solid var(--line); }
 .tdate { color:var(--muted); font-size:14px; white-space:nowrap; } .tamt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tdesc { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; } .tdesc .badge { margin-left:6px; font-weight:400; }
 .tval { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.tcat-in, .tnote-in { display:flex; gap:6px; align-items:center; min-width:0; } .tcat-in hk-category-select { flex:1 1 130px; min-width:0; display:block; }
-.tcat-in .quick { max-width:9.5em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:4px 10px; min-height:34px; background:var(--brand); color:var(--brand-ink); border-color:var(--brand); }
+.tcat-in, .tnote-in { display:flex; gap:6px; align-items:center; min-width:0; } .tcat-in { flex-wrap:wrap; } .tcat-in hk-category-select { flex:1 1 130px; min-width:0; display:block; }
+.tcat-in .quick { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:4px 10px; min-height:34px; background:var(--brand); color:var(--brand-ink); border-color:var(--brand); }
 .tnote-in .note-input { flex:1; min-width:0; } .tnote-in button.icon { padding:4px 9px; min-height:34px; min-width:34px; }
 .tsub { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; padding:0 var(--space-3) 6px; min-height:26px; }
 .texpand { background:none; border:0; padding:2px 6px; min-height:24px; color:var(--brand); font-size:13px; font-weight:600; } .texpand .caret { display:inline-block; transition:transform .12s; } .trow.open .texpand .caret { transform:rotate(90deg); }
@@ -290,7 +290,6 @@ input.rule-pri { width:4.5rem; padding:4px 6px; }
 button.rb-or, button.rb-and-add { align-self:flex-start; }
 .mhist { display:flex; flex-wrap:wrap; gap:4px; }
 .chip.top { font-weight:600; }
-button.quick .qwhy { font-size:11px; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }
 .rf-money { width:6.5rem; min-width:0; } .rb-alt { flex-wrap:wrap; } .rb-alt .rf-op { max-width:none; }
 tr.flagged > td { background: color-mix(in srgb, var(--bad, #c0392b) 9%, transparent); }
 button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=true] { color: var(--bad, #c0392b); }
