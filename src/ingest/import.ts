@@ -6,7 +6,7 @@ import { captureEvent } from './events.js';
 import { pairTransfers } from './pairing.js';
 import { runNoteMatcher } from '../notes/matcher.js';
 
-export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; total: number; new: number; alreadyImported: number; matchesProvisional: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
+export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; total: number; new: number; alreadyImported: number; matchesProvisional: number; movedToThisAccount?: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
 
 export function getOrCreateProfile(db: DB, institution: string, rows: string[][], spec?: ProfileSpec): { id: number; spec: ProfileSpec; signature: string } | { id: null; signature: string; suggested: ReturnType<typeof suggestMapping> } {
   const hasHeader = spec ? spec.columnMap.hasHeader : suggestMapping(rows).columnMap.hasHeader;
@@ -44,15 +44,40 @@ export function diffAgainstDb(db: DB, scope: string, rows: ParsedRow[]): { fresh
   return { fresh, already };
 }
 
+/**
+ * Before accounts could be chosen, every CSV was filed under the institution's first account with an institution-wide fingerprint. When a file is imported
+ * again with an account named, the rows it holds that were stored that way are adopted: moved to the named account and re-fingerprinted into its scope, so
+ * nothing is duplicated and nothing stays on the wrong account. Returns how many were adopted (or would be, with `dryRun`).
+ */
+export function adoptMisfiled(db: DB, institution: string, accountId: number | undefined, rows: ParsedRow[], dryRun = false): number {
+  if (!accountId) return 0;
+  const scope = importScope(institution, accountId);
+  const groups = new Map<string, ParsedRow[]>();
+  for (const r of rows) { const k = rowFingerprint(institution, r.date, r.amountCents, r.description); (groups.get(k) ?? groups.set(k, []).get(k)!).push(r); }
+  let n = 0;
+  for (const [legacy, list] of groups) {
+    const found = db.prepare("SELECT id FROM transactions WHERE fingerprint=? AND status!='void' ORDER BY id LIMIT ?").all(legacy, list.length) as { id: number }[];
+    if (!found.length) continue;
+    if (!dryRun) {
+      const fp = rowFingerprint(scope, list[0].date, list[0].amountCents, list[0].description);
+      for (const f of found) db.prepare('UPDATE transactions SET account_id=?, fingerprint=? WHERE id=?').run(accountId, fp, f.id);
+    }
+    n += found.length;
+  }
+  return n;
+}
+
 export function previewImport(db: DB, institution: string, csv: string, spec?: ProfileSpec, opts: { accountId?: number } = {}): ImportPreview {
   const rows = parseCsv(csv);
   const prof = getOrCreateProfile(db, institution, rows, spec);
   if (prof.id === null) return { profileId: null, signature: prof.signature, suggested: prof.suggested, total: rows.length, new: 0, alreadyImported: 0, matchesProvisional: 0, errors: [], willAutoCategorize: 0, needsAttention: 0 };
   const parsed = applyProfile(rows, prof.spec);
+  const adopted = adoptMisfiled(db, institution, opts.accountId, parsed.rows, true);
   const { fresh, already } = diffAgainstDb(db, importScope(institution, opts.accountId), parsed.rows);
   const accountId = defaultAccount(db, institution, opts.accountId);
   const provMatches = assignProvisionals(db, accountId, fresh).size;
-  return { profileId: prof.id, signature: prof.signature, total: parsed.rows.length, new: fresh.length, alreadyImported: already, matchesProvisional: provMatches, errors: parsed.errors, willAutoCategorize: 0, needsAttention: fresh.length - provMatches };
+  const moved = Math.min(adopted, fresh.length); // rows an earlier import filed under the wrong account: they are moved, not added again
+  return { profileId: prof.id, signature: prof.signature, total: parsed.rows.length, new: fresh.length - moved, alreadyImported: already + moved, movedToThisAccount: moved, matchesProvisional: provMatches, errors: parsed.errors, willAutoCategorize: 0, needsAttention: fresh.length - moved - provMatches };
 }
 
 function defaultAccount(db: DB, institution: string, accountId?: number): number {
@@ -62,7 +87,7 @@ function defaultAccount(db: DB, institution: string, accountId?: number): number
   return a.id;
 }
 
-export interface ImportResult { imported: number; alreadyImported: number; supersededProvisionals: number; categorized: number; needsCategory: number; errors: { line: number; error: string }[]; transferPairs: number; waitingOnNotes: number; notesMatched: number }
+export interface ImportResult { imported: number; alreadyImported: number; movedToThisAccount: number; supersededProvisionals: number; categorized: number; needsCategory: number; errors: { line: number; error: string }[]; transferPairs: number; waitingOnNotes: number; notesMatched: number }
 
 export function commitImport(db: DB, institution: string, csv: string, spec?: ProfileSpec, opts: { accountId?: number; filename?: string } = {}): ImportResult {
   const rows = parseCsv(csv);
@@ -73,6 +98,7 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
   const ev = captureEvent(db, { source: institution.toLowerCase().includes('chase') ? 'chase_csv' : 'wf_csv', channel: 'upload', payload: csv, headers: { filename: opts.filename ?? '' } });
   return db.transaction(() => {
     const scope = importScope(institution, opts.accountId);
+    const adopted = adoptMisfiled(db, institution, opts.accountId, parsed.rows);
     const { fresh, already } = diffAgainstDb(db, scope, parsed.rows);
     const provFor = assignProvisionals(db, accountId, fresh); // exact matches first, then unique tolerance matches over what is left
     let superseded = 0, categorized = 0, needs = 0;
@@ -90,7 +116,7 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
     // Amazon / Venmo / PayPal charges need a note: flag them now (and match any notes already received), not whenever the 10-minute timer next runs
     const nm = runNoteMatcher(db);
     const waitingOnNotes = (db.prepare("SELECT COUNT(*) c FROM transactions WHERE account_id=? AND status!='void' AND note_state IN ('awaiting_note','needs_note','ambiguous')").get(accountId) as { c: number }).c;
-    return { imported: fresh.length, alreadyImported: already, supersededProvisionals: superseded, categorized, needsCategory: needs, errors: parsed.errors, transferPairs: pairs.paired, waitingOnNotes, notesMatched: nm.matched };
+    return { imported: fresh.length, alreadyImported: already + adopted, movedToThisAccount: adopted, supersededProvisionals: superseded, categorized, needsCategory: needs, errors: parsed.errors, transferPairs: pairs.paired, waitingOnNotes, notesMatched: nm.matched };
   })();
 }
 

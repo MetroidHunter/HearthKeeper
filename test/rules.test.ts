@@ -81,3 +81,66 @@ describe('rule priority over the API', () => {
     expect((await app.inject({ url: '/api/rules' })).json().map((r: any) => [r.id, r.priority])).toEqual([[b, 10], [a, 100]]); // listed in priority order
   });
 });
+
+describe('Wells Fargo checking descriptors (real exports)', () => {
+  const c = (raw: string) => cleanDescriptor(raw, { year: 2026 });
+  const cases: [string, string][] = [
+    ['MONEY TRANSFER                          AUTHORIZED ON   09/09 CASH APP*JAMEEL WI        Oakland       CA  S586252798384996   CARD 6978', 'CASH APP*JAMEEL WI'],
+    ['MONEY TRANSFER                          AUTHORIZED ON   09/16 CASH APP*CHRISTOPH        Oakland       CA  S306259641610654   CARD 0414', 'CASH APP*CHRISTOPH'],
+    ['PURCHASE                                AUTHORIZED ON   09/22 ORC*00YP28X REGION        888-988-6722  WA  S586266089684427   CARD 0414', 'ORCA'],
+    ['PURCHASE                                AUTHORIZED ON   07/09 ORCA                      888-988-6722  WA  S386190780974092   CARD 0414', 'ORCA'],
+    ['PURCHASE                                AUTHORIZED ON   09/29 ACE PARKING 3286          BELLVUE       WA  S306273081194346   CARD 6978', 'ACE PARKING 3286'],
+    ['ROCKET MORTGAGE  LOAN       261003 4288057         BRYS *SEPULVEDA', 'ROCKET MORTGAGE LOAN'],
+    ['GREENLIGHT       APP        261004 GREENLIGHT      BRYS SEPULVEDA', 'GREENLIGHT APP'],
+    ['CHASE CREDIT CRD EPAY       261002 9760590069      BRYS K SEPULVEDA', 'CHASE CREDIT CRD EPAY'],
+    ['T-MOBILE         PCS SVC    260920 9677020         BRYS SEPULVEDA', 'T-MOBILE PCS SVC'],
+    ['Subscription     Acorns     092126 5970Y9          Brys Sepulveda', 'SUBSCRIPTION ACORNS'],
+    ['Sequoia One PEO, PAYROLL           121000240001095 SEPULVEDA BRYS K', 'SEQUOIA ONE PEO, PAYROLL'],
+    ['Maison de V LLC  Receivable        996IEOXIR1CBS2A 996IEOXIR1CBS2A Maison de V LLC Bill.com 9/29/26', 'MAISON DE V LLC RECEIVABLE'],
+    ['BILL.COM         Receivable        996QCTOID1A90BA 996QCTOID1A90BA Langston Bill.com Inv SBNF6', 'BILL.COM RECEIVABLE'],
+    ['Haus of Horn Pro BILL PMT   092326 1010240375843   MIRACLE SEPULVED', 'HAUS OF HORN PRO BILL PMT'],
+    ['STATE FARM RO 27 SFPP              19 S 1309172619 MIRACLE THOMAS', 'STATE FARM RO 27 SFPP'],
+    ['STATE FARM RO 27 CPC-CLIENT        15 J 1780939870 BRYS SEPULVEDA', 'STATE FARM RO 27 CPC-CLIENT'],
+    ['DEPT EDUCATION   STUDENT LN 260708 6S3ETSMA321     BRYS SEPULVEDA', 'DEPT EDUCATION STUDENT LN'],
+    ['SQUARESPACE PAYM SQUARESPAC        ST-I9D1O1K6J0L7 MIRACLE SEPULVEDA', 'SQUARESPACE PAYM SQUARESPAC'],
+    ['MOBILE DEPOSIT : REF NUMBER :801210363925', 'MOBILE DEPOSIT'],
+    ['Cash eWithdrawal in Branch 09/30/2026 11:13 AM 625 5TH AVE S SEATTLE WA 6978', 'CASH EWITHDRAWAL IN BRANCH'],
+    // unchanged: the P2P / transfer handling
+    ['VENMO            PAYMENT    260914 1053050634846   BRYS SEPULVEDA', 'VENMO PAYMENT'],
+    ['PAYPAL           PURCHASE   260928 HULU            BRYS SEPULVEDA', 'PAYPAL PURCHASE HULU'],
+    ['ZELLE FROM PREMIER VOCAL ENTERTAINMENT LLC ON 08/28 REF # WFCT22L6S4DQ PAY WEEK ENDING 8.22.26  TOTEM LAKE 8.19.26', 'ZELLE FROM PREMIER VOCAL ENTERTAINMENT LLC'],
+    ['ONLINE TRANSFER TO SEPULVEDA B EVERYDAY CHECKING XXXXXXXXX3053 REF #IB0ZH5P6P9 ON 08/22/26', 'ONLINE TRANSFER TO SEPULVEDA B EVERYDAY CHECKING'],
+    ['RECURRING TRANSFER TO THOMAS M WAY2SAVE SAVINGS REF #OP037X77KQ XXXXXX8702', 'RECURRING TRANSFER TO THOMAS M WAY2SAVE SAVINGS'],
+  ];
+  for (const [raw, want] of cases) it(want, () => expect(c(raw).clean).toBe(want));
+  it('keeps the authorized-on date and card of a money transfer', () => {
+    const d = c('MONEY TRANSFER                          AUTHORIZED ON   09/09 CASH APP*JAMEEL WI        Oakland       CA  S586252798384996   CARD 6978');
+    expect(d).toMatchObject({ authorizedOn: '2026-09-09', cardLast4: '6978' });
+  });
+});
+
+describe('re-cleaning stored descriptors after the cleaner improves', () => {
+  it('moves changed rows to the right merchant, keeps your answers, removes empty unreviewed merchants, and runs once', async () => {
+    const { seedHousehold } = await import('./helpers.js');
+    const { createTransaction, classify, setSplits } = await import('../src/core/transactions.js');
+    const { recleanDescriptors } = await import('../src/core/reclean.js');
+    const h = seedHousehold();
+    const raw = 'MONEY TRANSFER                          AUTHORIZED ON   09/09 CASH APP*JAMEEL WI        Oakland       CA  S586252798384996   CARD 6978';
+    const a = createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-09-10', amountCents: -12500, descriptor: raw }); classify(h.db, a);
+    const b = createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-09-11', amountCents: -3000, descriptor: raw }); classify(h.db, b);
+    setSplits(h.db, b, [{ categoryId: h.cats['Groceries'], amountCents: -3000 }], 'user');
+    // pretend both were stored by the old cleaner
+    const old = h.db.prepare("INSERT INTO merchants(name, review_state) VALUES ('MONEY TRANSFER AUTHORIZED','unreviewed')").run().lastInsertRowid;
+    h.db.prepare("UPDATE transactions SET descriptor_clean='MONEY TRANSFER AUTHORIZED', merchant_id=? WHERE id IN (?,?)").run(old, a, b);
+    h.db.prepare("DELETE FROM settings WHERE key='descriptor_version'").run();
+    const r = recleanDescriptors(h.db);
+    expect(r.changed).toBe(2);
+    const row = (id: number) => h.db.prepare('SELECT t.descriptor_clean c, m.name m FROM transactions t JOIN merchants m ON m.id=t.merchant_id WHERE t.id=?').get(id) as any;
+    expect(row(a)).toEqual({ c: 'CASH APP*JAMEEL WI', m: 'CASH APP*JAMEEL WI' });
+    expect(row(b).m).toBe('CASH APP*JAMEEL WI');
+    expect((h.db.prepare('SELECT category_id c FROM transaction_splits WHERE transaction_id=?').get(b) as any).c).toBe(h.cats['Groceries']); // your answer is untouched
+    expect(h.db.prepare("SELECT COUNT(*) c FROM merchants WHERE name='MONEY TRANSFER AUTHORIZED'").get()).toEqual({ c: 0 });
+    expect(r.merchantsRemoved).toBeGreaterThanOrEqual(1);
+    expect(recleanDescriptors(h.db)).toEqual({ changed: 0, merchantsRemoved: 0 }); // once
+  });
+});

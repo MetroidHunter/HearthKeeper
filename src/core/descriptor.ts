@@ -6,6 +6,24 @@ const US_STATES = 'AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD M
 const AMAZON_MKT = /^(?:AMZN MKTP US|AMAZON\.COM|AMAZON MKTPL|AMZN MKTP)\s*\*\s*([A-Z0-9]{6,})\s*$/i;
 const P2P = /\b(VENMO|PAYPAL|ZELLE|CASH APP|CASHOUT)\b/i;
 
+/**
+ * Bank ACH / wire lines: "COMPANY  TYPE  YYMMDD  ID  INDIVIDUAL NAME", e.g. "ROCKET MORTGAGE LOAN 261003 4288057 BRYS *SEPULVEDA" or
+ * "Sequoia One PEO, PAYROLL 121000240001095 SEPULVEDA BRYS K". Keep the company and type; drop the date code, the ids and the account holder's own name,
+ * so every payment from the same company is the same merchant.
+ */
+function achMerchant(s: string): string {
+  let m: RegExpExecArray | null;
+  if ((m = /^(CASH EWITHDRAWAL IN BRANCH)\b/i.exec(s))) return m[1];
+  s = s.replace(/\s*:?\s*REF NUMBER\s*:?\s*\d+\s*$/i, '');
+  const cut = [
+    /\s(?:\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])|(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{2})\s+\S/, // YYMMDD or MMDDYY date code followed by something
+    /\s\d{9,}\b/,                                                    // long numeric id
+    /\s(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9-]{10,}\b/i,        // long mixed letter/digit reference
+  ].map((re) => re.exec(s)?.index ?? -1).filter((i) => i > 0);
+  if (!cut.length) return s;
+  return s.slice(0, Math.min(...cut)).replace(/\s+\d{1,2}\s+[A-Z]$/, '').trim(); // "STATE FARM RO 27 SFPP 19 S <id>": the trailing "19 S" is a batch code
+}
+
 export function decodeEntities(s: string): string {
   return s.replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'");
 }
@@ -16,7 +34,7 @@ export function cleanDescriptor(raw: string, opts: { year?: number } = {}): Clea
   let m: RegExpExecArray | null;
 
   // Wells Fargo debit rows: "PURCHASE AUTHORIZED ON 07/07 <merchant> ... S301189151997605 CARD 4481" (the authorized-on date is the true purchase date)
-  if ((m = /^(?:PURCHASE|RECURRING PAYMENT|ATM WITHDRAWAL|PURCHASE RETURN)(?: AUTHORIZED ON)?\s+(\d{2})\/(\d{2})\s+/i.exec(s))) {
+  if ((m = /^(?:PURCHASE|RECURRING PAYMENT|ATM WITHDRAWAL|PURCHASE RETURN|MONEY TRANSFER)(?: AUTHORIZED ON)?\s+(\d{2})\/(\d{2})\s+/i.exec(s))) {
     authorizedOn = `${opts.year ?? new Date().getUTCFullYear()}-${m[1]}-${m[2]}`;
     s = s.slice(m[0].length);
   }
@@ -32,7 +50,7 @@ export function cleanDescriptor(raw: string, opts: { year?: number } = {}): Clea
     s = s.replace(/\s+\d{6}\b/g, '').replace(/\s+\d{9,}\b/g, ' ');
     const own = /\s+(?:BRYS(?: KRISTO\w*)?(?: SEPULVEDA)?|MIRACLE(?: C)?(?: SEPULVEDA| THOMAS)?|BUNMIRA)\s*$/i.exec(s);
     if (own) { ownerHint = /MIRACLE|BUNMIRA/i.test(own[0]) ? 'miracle' : 'brys'; s = s.slice(0, own.index); }
-  }
+  } else s = achMerchant(s);
 
   for (const p of PREFIXES) s = s.replace(p, '');
   let locationHint: string | null = null;
@@ -51,5 +69,6 @@ export function cleanDescriptor(raw: string, opts: { year?: number } = {}): Clea
     s = toks.join(' ');
   }
   s = s.replace(/[\s*\-_.]+$/, '').trim();
+  if (/^ORC\*\w+(?: REGION)?$/i.test(s)) s = 'ORCA'; // the transit card: every top-up carries a different reference after "ORC*"
   return { clean: s.toUpperCase(), locationHint, authorizedOn, cardLast4, ownerHint, refCode };
 }

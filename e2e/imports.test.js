@@ -51,3 +51,35 @@ describe('Imports', () => {
     expect(cov.find((c) => c.institution === 'Chase').stale).to.equal(false);
   });
 });
+
+const WF = `"DATE","DESCRIPTION","AMOUNT","CHECK #","STATUS"
+"09/23/2026","PURCHASE                                AUTHORIZED ON   09/22 ORC*00YP28X REGION        888-988-6722  WA  S586266089684427   CARD 0414","-25.00","","Posted"
+"09/17/2026","MONEY TRANSFER                          AUTHORIZED ON   09/16 CASH APP*CHRISTOPH        Oakland       CA  S306259641610654   CARD 0414","-20.00","","Posted"
+"10/05/2026","ROCKET MORTGAGE  LOAN       261003 4288057         BRYS *SEPULVEDA","-4844.92","","Posted"
+`;
+
+describe('Imports: Wells Fargo has several accounts', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('each file must be assigned to an account, lands on it, and the merchants are cleaned (ORCA, CASH APP*…, ROCKET MORTGAGE LOAN)', async () => {
+    const app = await mount('/imports');
+    choose($('select', $('.card[style*="dashed"]')), 'Wells Fargo');
+    drop(app, 'Checking_1.csv', WF);
+    await waitFor(() => /map the columns once/i.test(text(document.body)) || $('.file-account'), 'file list');
+    if (/map the columns once/i.test(text(document.body))) byText('button', /Save mapping/).click();
+    const sel = await waitFor(() => $('.file-account'), 'account chooser');
+    expect($$('option', sel).map((o) => text(o))).to.include.members(['Choose the account…', 'Wells Fargo Brys', 'Wells Fargo Miracle', 'Wells Fargo Home']);
+    await waitFor(() => byText('button', /^Import/), 'import button');
+    expect(byText('button', /^Import/).disabled, 'cannot import until an account is chosen').to.equal(true);
+    choose(sel, 'Wells Fargo Home');
+    await waitFor(() => !byText('button', /^Import/).disabled, 'enabled after choosing');
+    byText('button', /^Import/).click();
+    await waitFor(() => /Done/.test(text(document.body)), 'done');
+    const accts = await api('/api/accounts'); const home = accts.find((a) => a.name === 'Wells Fargo Home').id;
+    const tx = await api('/api/transactions?q=&limit=50');
+    const mine = tx.filter((t) => t.account_id === home);
+    expect(mine.map((t) => t.descriptor_clean).sort()).to.deep.equal(['CASH APP*CHRISTOPH', 'ORCA', 'ROCKET MORTGAGE LOAN']);
+  });
+});

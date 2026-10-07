@@ -77,3 +77,24 @@ describe('CSV import', () => {
     expect(pairTransfers(h.db).paired).toBe(0);
   });
 });
+
+describe('importing a file again with an account named', () => {
+  it('moves rows an earlier import filed under the first account, and never duplicates them', async () => {
+    const { seedHousehold } = await import('./helpers.js');
+    const { commitImport, previewImport } = await import('../src/ingest/import.js');
+    const h = seedHousehold();
+    h.db.prepare("INSERT INTO accounts(name,institution,type) VALUES ('Wells Fargo Home','Wells Fargo','bank')").run();
+    const accts = h.db.prepare("SELECT id FROM accounts WHERE institution='Wells Fargo' ORDER BY id").all() as { id: number }[];
+    const csv = '"DATE","DESCRIPTION","AMOUNT","CHECK #","STATUS"\n"09/23/2026","ROCKET MORTGAGE  LOAN       261003 4288057         BRYS *SEPULVEDA","-25.00","","Posted"\n"09/24/2026","VENMO            PAYMENT    260924 1053527923194   MIRACLE SEPULVEDA","-5.00","","Posted"\n';
+    const spec = { columnMap: { hasHeader: true, date: 'DATE', amount: 'AMOUNT', description: 'DESCRIPTION' }, dateFormat: 'M/d/yyyy', signRule: 'as_is' as const, skipRows: 0 };
+    const first = commitImport(h.db, 'Wells Fargo', csv, spec); // the old way: no account named, so the first one
+    expect(first.imported).toBe(2);
+    const second = accts[1].id;
+    const p = previewImport(h.db, 'Wells Fargo', csv, spec, { accountId: second });
+    expect(p).toMatchObject({ new: 0, alreadyImported: 2, movedToThisAccount: 2 });
+    const r = commitImport(h.db, 'Wells Fargo', csv, spec, { accountId: second });
+    expect(r).toMatchObject({ imported: 0, movedToThisAccount: 2 });
+    expect(h.db.prepare('SELECT COUNT(*) c, MIN(account_id) a, MAX(account_id) b FROM transactions WHERE descriptor_raw LIKE ? OR descriptor_raw LIKE ?').get('ROCKET%', 'VENMO%')).toEqual({ c: 2, a: second, b: second });
+    expect(commitImport(h.db, 'Wells Fargo', csv, spec, { accountId: second }).imported).toBe(0); // and now it is an ordinary re-import
+  });
+});
