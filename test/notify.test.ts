@@ -149,3 +149,20 @@ describe('notifications (verbose first, design §15.3)', () => {
     expect((await app.inject({ url: '/api/push/devices' })).json()).toHaveLength(mine.length - 1);
   });
 });
+
+describe('uploading a bank CSV is silent', () => {
+  it('importing hundreds of rows that all need a category sends no push at all (the morning digest is where they show up)', async () => {
+    const s = setup();
+    const { commitImport } = await import('../src/ingest/import.js'); const { suggestMapping, parseCsv } = await import('../src/ingest/csv.js');
+    const rows = Array.from({ length: 300 }, (_, i) => `10/${String(1 + (i % 28)).padStart(2, '0')}/2026,10/${String(2 + (i % 27)).padStart(2, '0')}/2026,NEVER SEEN SHOP ${i},Shopping,Sale,-${(5 + i).toFixed(2)},`).join('\n');
+    const csv = 'Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n' + rows + '\n';
+    const m = suggestMapping(parseCsv(csv));
+    const r = commitImport(s.db, 'Chase', csv, { columnMap: m.columnMap, dateFormat: m.dateFormat, signRule: m.signRule, skipRows: 0 });
+    await Promise.all(pending);
+    expect(r.imported).toBe(300); expect(r.needsCategory).toBeGreaterThan(250);
+    expect(s.t.sent).toHaveLength(0);
+    expect(s.db.prepare("SELECT COUNT(*) c FROM notification_log WHERE kind='needs_you'").get()).toEqual({ c: 0 });
+    // and the one daily digest does count them
+    expect(s.n.digest().text).toMatch(/\d+/);
+  });
+});
