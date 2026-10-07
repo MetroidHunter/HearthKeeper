@@ -134,3 +134,52 @@ describe('Rules page: New rule, with amount conditions', () => {
     await waitFor(() => $$('tbody tr').some((row) => /amount between \$50\.00 and \$200\.00/.test(text(row)) && /qantas/.test(text(row))), 'readable on the Rules page');
   });
 });
+
+describe('Flagging for review', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+  const chaseId = async () => (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id;
+
+  it('Transactions: flag from a row (with a reason), it jumps to the top and stays there; unflag puts it back', async () => {
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr[data-id]').length > 5, 'rows');
+    const rows = () => $$('tbody tr[data-id]');
+    const target = rows()[4]; const id = target.dataset.id;
+    expect(rows()[0].classList.contains('flagged')).to.equal(false);
+    $('button.flag-btn', target).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Flag for review/.test(text(d))), 'reason prompt');
+    setInput($('input', dlg), 'ask about this');
+    byText('button', /^Flag it$/, dlg).click();
+    await waitFor(() => rows()[0].dataset.id === id, 'flagged row first');
+    expect(rows()[0].classList.contains('flagged')).to.equal(true);
+    expect(text($('[data-flag]', rows()[0]))).to.match(/ask about this/);
+    expect($('button.flag-btn', rows()[0]).getAttribute('aria-pressed')).to.equal('true');
+    // still first after reload; pager keeps it on page one
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr[data-id]')[0]?.dataset.id === id, 'still first after reload');
+    $('button.flag-btn', rows()[0]).click();
+    await waitFor(() => !rows().some((r) => r.classList.contains('flagged')), 'unflagged');
+    expect((await api(`/api/transactions?limit=1&q=`))[0].id).to.not.equal(Number(id));
+  });
+
+  it('the categorize dialog can flag at the same time (Backlog and Home), with a reason', async () => {
+    const chase = await chaseId();
+    await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'HMM STORE', amountCents: -4200 } });
+    await mount('/backlog');
+    const row = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((r) => /HMM STORE/.test(text(r))), 'row');
+    const id = Number(row.dataset.id);
+    await pickCat($('.tcat hk-category-select', row), 'Groceries');
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'confirm dialog');
+    expect($('.flag-reason', dlg), 'reason box only when flagging').to.not.exist;
+    $('#flag-it', dlg).click();
+    setInput(await waitFor(() => $('.flag-reason', dlg), 'reason box'), 'too high?');
+    $('button.primary.confirm', dlg).click();
+    await waitFor(async () => (await api('/api/transactions?q=HMM%20STORE'))[0]?.flagged === 1, 'flagged on save');
+    const t = (await api('/api/transactions?q=HMM%20STORE'))[0];
+    expect(t.flag_reason).to.equal('too high?'); expect(t.splits[0].category).to.equal('Groceries'); expect(t.id).to.equal(id);
+    // flagged transactions are shown first on Transactions
+    await mount('/transactions');
+    await waitFor(() => $$('tbody tr[data-id]')[0]?.dataset.id === String(id), 'first on Transactions');
+  });
+});

@@ -199,7 +199,7 @@ describe('Home (phone view)', () => {
     await waitFor(() => $$('tbody tr').some((r) => /birthday gift for Sam/.test(text(r))), 'the note column');
     expect($$('thead th').map((t) => text(t))).to.include('Note');
     expect($$('thead th').map((t) => text(t))).to.not.include('Account');
-    expect($$('thead th').map((t) => text(t)).filter(Boolean)).to.deep.equal(['Date', 'Description', 'Amount', 'Category', 'Note']); // the same order as the rows on Home
+    expect($$('thead th').map((t) => text(t)).filter(Boolean)).to.deep.equal(['Date', 'Description', 'Amount', 'Category', 'Note', 'Flag']); // the same order as the rows on Home, then the flag button
     expect(id).to.exist;
   });
 });

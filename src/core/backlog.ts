@@ -2,6 +2,7 @@ import { audit, type DB } from './db.js';
 import { suggestionsFor, inboxCounts, inboxItemsByIds, INBOX_WHERE } from './reports.js';
 import { createRuleFor, type RuleSpec } from './merchants.js';
 import { setSplits } from './transactions.js';
+import { flagTransaction } from './answers.js';
 
 /**
  * Backlog mode (design §8.3): a large import opens a batch review grouped by merchant instead of sending a push per row.
@@ -24,7 +25,7 @@ export function groupedInbox(db: DB): BacklogGroup[] {
 
 export interface BulkResult { applied: number; skipped: number; rule?: ReturnType<typeof createRuleFor> }
 /** Apply one category to many transactions (only ones still waiting; a human decision made meanwhile is never overwritten). */
-export function bulkAnswer(db: DB, txnIds: number[], categoryId: number, opts: { rule?: RuleSpec; actor?: string } = {}): BulkResult {
+export function bulkAnswer(db: DB, txnIds: number[], categoryId: number, opts: { rule?: RuleSpec; flag?: { reason?: string }; actor?: string } = {}): BulkResult {
   const cat = db.prepare('SELECT name FROM categories WHERE id=?').get(categoryId) as { name: string } | undefined;
   if (!cat) throw new Error('unknown category');
   let applied = 0, skipped = 0;
@@ -32,7 +33,7 @@ export function bulkAnswer(db: DB, txnIds: number[], categoryId: number, opts: {
     for (const id of txnIds) {
       const t = db.prepare("SELECT amount_cents a, review_state rs, kind, merchant_id m, status FROM transactions WHERE id=?").get(id) as any;
       if (!t || t.rs !== 'needs_category' || t.status === 'void' || ['ignored', 'internal_transfer', 'greenlight_reclass'].includes(t.kind)) { skipped++; continue; }
-      setSplits(db, id, [{ categoryId, amountCents: t.a }], 'user'); applied++;
+      setSplits(db, id, [{ categoryId, amountCents: t.a }], 'user'); applied++; if (opts.flag) flagTransaction(db, id, opts.flag.reason);
     }
     audit(db, 'backlog', txnIds.length, 'bulk_categorize', undefined, { categoryId, applied, skipped }, opts.actor ?? 'user');
   })();

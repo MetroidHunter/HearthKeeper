@@ -23,7 +23,7 @@ export class Home extends Page {
   private env(): Env {
     return {
       cats: this.cats, rows: this.budget?.rows ?? [],
-      categorize: async (ids, categoryId, rule) => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, rule }); }, // errors surface in a dialog (txn.ts)
+      categorize: async (ids, categoryId, rule, flag) => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, rule, flag }); }, // errors surface in a dialog (txn.ts)
       ignore: async (t) => { await api.post(`/api/transactions/${t.id}/ignore`, { reason: 'not a budget item' }); },
     };
   }

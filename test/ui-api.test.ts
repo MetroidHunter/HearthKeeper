@@ -157,4 +157,15 @@ describe('inbox items: one entry per transaction with every open reason', () => 
     await a.inject({ method: 'POST', url: `/api/ingest/events/${id}/noise`, headers: H });
     expect((await a.inject({ url: '/api/ingest/list?status=noise' })).json().total).toBe(1);
   });
+  it('flagged transactions come first in the Transactions list, ahead of newer ones, until unflagged', async () => {
+    const h = seedHousehold(); const a = app(h);
+    const old = createTransaction(h.db, { accountId: h.chase, occurredOn: '2020-01-01', amountCents: -100, descriptor: 'OLD ONE' });
+    createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-01', amountCents: -100, descriptor: 'NEW ONE' });
+    await a.inject({ method: 'PATCH', url: `/api/transactions/${old}`, headers: H, payload: { flagged: 1, flagReason: 'look again' } });
+    let rows = (await a.inject({ url: '/api/transactions?limit=5' })).json();
+    expect(rows[0]).toMatchObject({ id: old, flagged: 1, flag_reason: 'look again' });
+    await a.inject({ method: 'PATCH', url: `/api/transactions/${old}`, headers: H, payload: { flagged: 0 } });
+    rows = (await a.inject({ url: '/api/transactions?limit=5' })).json();
+    expect(rows[0].id).not.toBe(old);
+  });
 });

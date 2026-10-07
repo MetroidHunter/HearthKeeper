@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney, fmtDate } from '../api.js';
 import { amt, type Cat } from '../shared.js';
-import { pageHead, th, catSelect, clickedBackdrop, pendingBadge } from '../ui.js';
+import { pageHead, th, catSelect, clickedBackdrop, pendingBadge, promptBox, toast } from '../ui.js';
 
 @customElement('hk-transactions')
 export class Transactions extends Page {
@@ -47,14 +47,27 @@ export class Transactions extends Page {
         <label><input type="checkbox" .checked=${this.hidden} @change=${(e: any) => { this.hidden = e.target.checked; this.load(true); }} /> Show hidden</label></div>
       ${this.sel.size ? html`<div class="card row"><b>${this.sel.size} selected</b>${catSelect(this.cats, null, (id) => { if (id) void this.bulk(id); }, { placeholder: 'Set category for all…' })}<button @click=${() => { this.sel = new Set(); }}>Clear selection</button></div>` : nothing}
       ${this.pager()}
-      <div class="card flush" style="overflow-x:auto"><table><thead><tr><th></th>${th('Date', 'The day it happened, in Pacific time.')}${th('Description', 'As the bank sent it. Badges: pending (not posted yet), hidden reason, flag (needs follow-up).')}${th('Amount', 'Negative is money out.', 'num')}${th('Category', 'Where the money was counted. "Splits" means it is divided between categories.')}${th('Note', 'What it was for: from an Amazon, Venmo or PayPal match, or typed by you. The account is in the details when you open a row.')}</tr></thead><tbody>
-        ${this.rows.map((t) => html`<tr class="clickable" @click=${() => this.openTxn(t)}>
+      <div class="card flush" style="overflow-x:auto"><table><thead><tr><th></th>${th('Date', 'The day it happened, in Pacific time.')}${th('Description', 'As the bank sent it. Badges: pending (not posted yet), hidden reason, flag (needs follow-up).')}${th('Amount', 'Negative is money out.', 'num')}${th('Category', 'Where the money was counted. "Splits" means it is divided between categories.')}${th('Note', 'What it was for: from an Amazon, Venmo or PayPal match, or typed by you. The account is in the details when you open a row.')}${th('Flag', 'Flag a transaction to come back to it. Flagged transactions stay at the top of this list until you unflag them.')}</tr></thead><tbody>
+        ${this.rows.map((t) => html`<tr class="clickable ${t.flagged ? 'flagged' : ''}" data-id=${t.id} @click=${() => this.openTxn(t)}>
           <td @click=${(e: Event) => e.stopPropagation()}><input type="checkbox" .checked=${this.sel.has(t.id)} @change=${(e: any) => { e.target.checked ? this.sel.add(t.id) : this.sel.delete(t.id); this.requestUpdate(); }} /></td>
-          <td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? pendingBadge() : ''}${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<span class="badge">${t.ignored_reason ?? t.kind}</span>` : ''}${t.flagged ? html`<span class="badge bad">flag</span>` : ''}</td>
-          <td class="num">${amt(t.amount_cents)}</td><td>${t.splits.length > 1 ? `${t.splits.length} splits` : t.splits[0]?.category ?? html`<span class="badge warn">needs category</span>`}</td><td class="muted" style="max-width:260px">${t.note ?? ''}</td></tr>`)}
-        ${this.rows.length === 0 ? html`<tr><td colspan="6" class="muted">No transactions match.</td></tr>` : nothing}
+          <td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? pendingBadge() : ''}${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<span class="badge">${t.ignored_reason ?? t.kind}</span>` : ''}${t.flagged ? html`<span class="badge bad" data-flag>⚑ ${t.flag_reason ?? 'flagged'}</span>` : ''}</td>
+          <td class="num">${amt(t.amount_cents)}</td><td>${t.splits.length > 1 ? `${t.splits.length} splits` : t.splits[0]?.category ?? html`<span class="badge warn">needs category</span>`}</td><td class="muted" style="max-width:260px">${t.note ?? ''}</td>
+          <td @click=${(e: Event) => e.stopPropagation()}><button class="icon flag-btn" aria-pressed=${t.flagged ? 'true' : 'false'} aria-label=${t.flagged ? 'Remove the flag' : 'Flag for review'} title=${t.flagged ? 'Flagged: click to unflag' : 'Flag for review'} @click=${() => this.toggleFlag(t)}>${t.flagged ? '⚑' : '⚐'}</button></td></tr>`)}
+        ${this.rows.length === 0 ? html`<tr><td colspan="7" class="muted">No transactions match.</td></tr>` : nothing}
       </tbody></table></div>
       ${this.pager()}${this.open ? this.detail() : nothing}`;
+  }
+  /** Flagging asks for an optional reason and jumps to the top of the list, where flagged transactions stay until unflagged. */
+  async toggleFlag(t: any) {
+    if (t.flagged) { await this.run(() => api.patch(`/api/transactions/${t.id}`, { flagged: 0 })); toast('Flag removed'); }
+    else {
+      const reason = await promptBox({ title: 'Flag for review', label: 'Why? (optional)', confirm: 'Flag it' });
+      if (reason === undefined) return;
+      await this.run(() => api.patch(`/api/transactions/${t.id}`, { flagged: 1, flagReason: reason.trim() || null }));
+      this.page = 0; window.scrollTo({ top: 0 }); toast('Flagged. It stays at the top of the list until you unflag it.');
+    }
+    if (this.open) this.open = null;
+    await this.load();
   }
   updated() { const d = this.querySelector('dialog.txn-detail') as HTMLDialogElement | null; if (d && !d.open) d.showModal(); }
   /** Draft splits live in component state so re-renders (adding a row, typing an amount) never discard edits. */
@@ -80,7 +93,7 @@ export class Transactions extends Page {
       <div class="row" style="margin-top:6px"><button id="assign-items" @click=${() => this.loadItems(t)}>Assign items…</button></div>
       ${this.items ? (this.items.status === 'proposed' ? html`<p class="muted">Items allocated with tax and shipping so the splits add up to the charge. Review, then Save.</p>${this.items.items.map((i: any) => html`<div class="muted">${i.name} ${i.suggestedBy ? `· ${i.suggestedBy}` : ''}</div>`)}` : html`<p class="muted">This charge covers only part of the order (${this.items.status === 'pick_subset' ? 'several item combinations match' : 'no combination matches'}); split by hand.</p>`) : ''}
       <h2>Note</h2><input style="width:100%" .value=${t.note ?? ''} @change=${async (e: any) => { await this.run(() => api.patch(`/api/transactions/${t.id}`, { note: e.target.value })); }} />`}
-      <div class="row" style="margin-top:12px"><button @click=${() => (this.open = null)}>Close</button>
+      <div class="row" style="margin-top:12px"><button @click=${() => (this.open = null)}>Close</button><button class="flag-detail" @click=${() => this.toggleFlag(t)}>${t.flagged ? '⚑ Remove the flag' : '⚐ Flag for review'}</button>
         ${t.kind === 'ignored' || t.kind === 'internal_transfer' ? '' : html`<button class="danger" @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/ignore`, { reason: 'user' })); this.open = null; this.load(); }}>Hide</button>
         <button class="primary" @click=${async () => { if (sum() !== t.amount_cents) { this.err = 'Splits must equal the amount'; this.requestUpdate(); return; } await this.run(() => api.post(`/api/transactions/${t.id}/categorize`, { splits: rows.map((r: any) => ({ categoryId: r.categoryId, amountCents: r.cents })) })); this.open = null; this.load(); }}>Save</button>`}</div>
       ${this.hist.length ? html`<details style="margin-top:10px"><summary class="muted">History (${this.hist.length})</summary>${this.hist.map((h: any) => html`<div class="muted" style="font-size:12px">${h.at} · ${h.actor} · ${h.action}</div>`)}</details>` : ''}

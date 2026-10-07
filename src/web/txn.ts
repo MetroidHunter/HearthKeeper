@@ -42,7 +42,7 @@ export interface TxnLike { kind?: string; id: number; occurred_on: string; amoun
 export interface Env {
   cats: PickCat[]; rows: BudgetRow[];
   /** Apply the decision (and the rule made in the same step, if any). Return a promise; the page reloads itself afterwards. */
-  categorize: (txnIds: number[], categoryId: number, rule?: RuleSpec) => Promise<void>;
+  categorize: (txnIds: number[], categoryId: number, rule?: RuleSpec, flag?: { reason: string }) => Promise<void>;
   ignore?: (t: TxnLike) => Promise<void>;
 }
 
@@ -92,18 +92,18 @@ export function splitDialog(env: Env, t: TxnLike): Promise<{ categoryId: number;
  * tick "Make a rule" and say what it should match, how it applies (suggest or auto) and its priority; the backtest shows what it would have done.
  * Merchants are never learned silently any more: what you choose is counted (that is the merchant's suggestion), and rules are always your own decision.
  */
-export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: number, opts: { groupName?: string; count?: number; seed?: { merchant?: string | null; descriptor: string } } = {}): Promise<{ ok: boolean; rule?: RuleSpec }> {
+export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: number, opts: { groupName?: string; count?: number; seed?: { merchant?: string | null; descriptor: string } } = {}): Promise<{ ok: boolean; rule?: RuleSpec; flag?: { reason: string } }> {
   const cat = env.cats.find((c) => c.id === categoryId);
   const row = env.rows.find((r) => r.id === categoryId);
   const delta = txns.reduce((a, t) => a + (t.effective_cents ?? t.amount_cents), 0); // a Greenlight reclass is booked at its real spend, not its zero total
   const before = row?.currentCents ?? null, after = before === null ? null : before + delta;
   const spendDelta = -delta; // negative transactions are spending
   const seed = opts.seed ?? { merchant: txns[0]?.merchant, descriptor: txns[0]?.descriptor_clean || txns[0]?.descriptor_raw || '' };
-  const draft = { on: false, clauses: [{ alts: [seed.merchant ? { field: 'merchant', value: seed.merchant } : { field: 'descriptor', value: seed.descriptor }] }] as RuleClause[], mode: 'suggest' as 'suggest' | 'auto', priority: 100 };
+  const draft = { on: false, clauses: [{ alts: [seed.merchant ? { field: 'merchant', value: seed.merchant } : { field: 'descriptor', value: seed.descriptor }] }] as RuleClause[], mode: 'suggest' as 'suggest' | 'auto', priority: 100, flagOn: false, flagReason: '' };
   let bt: { matched: number; byCategory: Record<string, number> } | null = null, btTimer: any, btSeq = 0;
   const matchOf = () => matchFromClauses(draft.clauses);
   const ruleOk = () => !draft.on || (clausesValid(draft.clauses) && Number.isInteger(draft.priority) && draft.priority >= 1 && draft.priority <= 9999);
-  return new Promise<{ ok: boolean; rule?: RuleSpec }>((resolve) => {
+  return new Promise<{ ok: boolean; rule?: RuleSpec; flag?: { reason: string } }>((resolve) => {
     void showDialog<boolean>((close) => {
       const box = document.createElement('div');
       const draw = () => render(tpl(), box);
@@ -123,10 +123,12 @@ export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: n
             <label class="muted small" data-tip="Lower numbers are checked first. If two rules match, the lower number wins." tabindex="0">Priority <input class="rf-pri" type="number" min="1" max="9999" step="1" style="width:5rem" .value=${String(draft.priority)} @input=${(e: any) => { draft.priority = Number(e.target.value); draw(); }} /></label></div>
           <p class="muted small rf-bt" style="margin:8px 0 0" aria-live="polite">${bt ? html`This rule would have matched <b>${bt.matched}</b> past transaction${bt.matched === 1 ? '' : 's'}${bt.matched ? `: ${Object.entries(bt.byCategory).map(([k, v]) => `${v} ${k}`).join(', ')}` : ''}.` : clausesValid(draft.clauses) ? 'Checking your history…' : 'Fill in every condition.'}
             Rules you make always come before the merchant's usual category, which only ever suggests.</p></div>` : nothing}
+        <label class="row flagrow" style="margin-top:8px"><input type="checkbox" id="flag-it" .checked=${draft.flagOn} @change=${(e: any) => { draft.flagOn = e.target.checked; draw(); }} /> <span>Flag for review <span class="muted small">(it stays flagged until you unflag it)</span></span></label>
+        ${draft.flagOn ? html`<input class="flag-reason" style="width:100%;margin-top:6px" placeholder="Why? (optional)" aria-label="Reason for the flag" .value=${draft.flagReason} @input=${(e: any) => { draft.flagReason = e.target.value; }} />` : nothing}
         <div class="actions"><button class="cancel" @click=${() => close(false)}>Cancel</button><button class="primary confirm" autofocus ?disabled=${!ruleOk()} @click=${() => close(true)}>${draft.on ? 'Yes, categorize and make the rule' : 'Yes, categorize'}</button></div>`;
       draw();
       return html`${box}`;
-    }, { dismiss: false }).then((ok) => resolve({ ok: ok === true, rule: ok === true && draft.on && ruleOk() ? { match: matchOf(), mode: draft.mode, priority: draft.priority } : undefined }));
+    }, { dismiss: false }).then((ok) => resolve({ ok: ok === true, rule: ok === true && draft.on && ruleOk() ? { match: matchOf(), mode: draft.mode, priority: draft.priority } : undefined, flag: ok === true && draft.flagOn ? { reason: draft.flagReason.trim() } : undefined }));
   });
 }
 
@@ -150,9 +152,9 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
     catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); await hooks.reload(); }
   };
   const decide = async (categoryId: number) => {
-    const { ok, rule } = await confirmCategorize(env, [t], categoryId);
+    const { ok, rule, flag } = await confirmCategorize(env, [t], categoryId);
     if (!ok) return;
-    await attempt(() => env.categorize([t.id], categoryId, rule), `Categorized as ${env.cats.find((c) => c.id === categoryId)?.name ?? 'the category'}${rule ? ' and rule saved' : ''}`);
+    await attempt(() => env.categorize([t.id], categoryId, rule, flag), `Categorized as ${env.cats.find((c) => c.id === categoryId)?.name ?? 'the category'}${rule ? ' and rule saved' : ''}${flag ? ', flagged for review' : ''}`);
   };
   const patch = (body: unknown) => api.patch(`/api/transactions/${t.id}`, body);
   const saveNote = (v: string) => { const n = v.trim(); if (n) void attempt(() => patch({ note: n }), 'Note saved'); };

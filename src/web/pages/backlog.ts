@@ -39,17 +39,17 @@ export class Backlog extends Page {
   }
   private env(): Env {
     return { cats: this.cats, rows: this.rows,
-      categorize: async (ids, categoryId, rule) => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, rule }); },
+      categorize: async (ids, categoryId, rule, flag) => { for (const id of ids) await api.post(`/api/transactions/${id}/categorize`, { categoryId, rule, flag }); },
       ignore: async (t) => { await api.post(`/api/transactions/${t.id}/ignore`, { reason: 'not a budget item' }); } };
   }
   async answer(g: any, categoryId: number) {
     const first = g.items[0];
-    const { ok, rule } = await confirmCategorize(this.env(), [{ id: g.txnIds[0], occurred_on: first?.occurred_on ?? '', amount_cents: g.totalCents, descriptor_raw: g.name, account: '' }], categoryId, { groupName: g.name, count: g.count, seed: { merchant: g.merchantId ? g.name : null, descriptor: first?.descriptor_clean || g.name } });
+    const { ok, rule, flag } = await confirmCategorize(this.env(), [{ id: g.txnIds[0], occurred_on: first?.occurred_on ?? '', amount_cents: g.totalCents, descriptor_raw: g.name, account: '' }], categoryId, { groupName: g.name, count: g.count, seed: { merchant: g.merchantId ? g.name : null, descriptor: first?.descriptor_clean || g.name } });
     if (!ok) return;
     try {
       await withBusy(`Categorizing ${g.count} transaction${g.count === 1 ? '' : 's'} from ${g.name}…`, async () => {
-        const r = await api.post('/api/inbox/bulk', { txnIds: g.txnIds, categoryId, rule });
-        this.last = `${g.name}: ${r.applied} categorized${r.skipped ? `, ${r.skipped} skipped (already answered)` : ''}${r.rule ? `; rule saved (it would have matched ${r.rule.backtest.matched} past transactions)` : ''}`;
+        const r = await api.post('/api/inbox/bulk', { txnIds: g.txnIds, categoryId, rule, flag });
+        this.last = `${g.name}: ${r.applied} categorized${r.skipped ? `, ${r.skipped} skipped (already answered)` : ''}${flag ? `; flagged for review` : ''}${r.rule ? `; rule saved (it would have matched ${r.rule.backtest.matched} past transactions)` : ''}`;
         await this.refresh();
       });
     } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); await this.refresh(); }

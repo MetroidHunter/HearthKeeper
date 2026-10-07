@@ -7,7 +7,7 @@ import { setSplits, type SplitIn } from './transactions.js';
  * A user's category answer (design §9.6, §15.4). Answering also teaches the merchant history (see merchantHistory), which needs no bookkeeping here;
  * a rule is created only when the person asks for one in the same step (`rule`), with its backtest returned.
  */
-export function answerCategory(db: DB, txnId: number, splits: SplitIn[], opts: { rule?: RuleSpec; actor?: string } = {}) {
+export function answerCategory(db: DB, txnId: number, splits: SplitIn[], opts: { rule?: RuleSpec; flag?: { reason?: string }; actor?: string } = {}) {
   const t = db.prepare('SELECT kind FROM transactions WHERE id=?').get(txnId) as any;
   let effective = splits;
   if (t.kind === 'greenlight_reclass' && splits.length === 1 && splits[0].categoryId) {
@@ -19,6 +19,12 @@ export function answerCategory(db: DB, txnId: number, splits: SplitIn[], opts: {
   setSplits(db, txnId, effective, 'user');
   let rule: ReturnType<typeof createRuleFor> | undefined;
   if (opts.rule && splits.length === 1 && splits[0].categoryId) rule = createRuleFor(db, opts.rule, splits[0].categoryId, `made while categorizing transaction ${txnId}`);
+  if (opts.flag) flagTransaction(db, txnId, opts.flag.reason);
   audit(db, 'transaction', txnId, 'answer_category', undefined, { splits, rule: rule?.id }, opts.actor ?? 'user');
   return { rule };
+}
+
+/** Flag a transaction for review. It stays flagged (and at the top of the Transactions list, and in Needs attention) until someone unflags it. */
+export function flagTransaction(db: DB, txnId: number, reason?: string | null) {
+  db.prepare('UPDATE transactions SET flagged=1, flag_reason=?, version=version+1 WHERE id=?').run(reason?.trim() ? reason.trim().slice(0, 200) : null, txnId);
 }

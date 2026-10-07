@@ -292,3 +292,5 @@ button.rb-or, button.rb-and-add { align-self:flex-start; }
 .chip.top { font-weight:600; }
 button.quick .qwhy { font-size:11px; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }
 .rf-money { width:6.5rem; min-width:0; } .rb-alt { flex-wrap:wrap; } .rb-alt .rf-op { max-width:none; }
+tr.flagged > td { background: color-mix(in srgb, var(--bad, #c0392b) 9%, transparent); }
+button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=true] { color: var(--bad, #c0392b); }

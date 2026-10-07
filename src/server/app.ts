@@ -139,7 +139,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     return backlogPage(db, { view: view as any, limit: Math.min(100, Math.max(1, Number(req.query.limit ?? 10))), offset: Math.max(0, Number(req.query.offset ?? 0)), q: req.query.q ? String(req.query.q) : undefined, today: now(), keys: req.query.keys ? String(req.query.keys).split(',').slice(0, 100) : undefined });
   });
   app.get('/api/inbox/grouped', async () => groupedInbox(db));
-  app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { rule: b.rule, actor: actor(req) }); });
+  app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { rule: b.rule, flag: b.flag, actor: actor(req) }); });
   app.get('/api/dashboard', async () => {
     const months = monthsOverview(db, now());
     return { monthsNeedingWork: months.filter((m) => m.todo > 0).length, monthsOpenItems: months.reduce((a, m) => a + m.todo, 0), months: months.length, invariants: checkInvariants(db), coverage: coverage(db, now()), silentSources: silentTokens(db) };
@@ -211,7 +211,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/transactions/count', async (req: any) => { const { where, args } = txnFilter(req.query); return { total: (db.prepare(`SELECT COUNT(*) c FROM transactions t WHERE ${where.join(' AND ')}`).get(...args) as { c: number }).c }; });
   app.get('/api/transactions', async (req: any) => {
     const q = req.query; const { where, args } = txnFilter(q);
-    const rows = db.prepare(`SELECT t.*, a.name account FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE ${where.join(' AND ')} ORDER BY t.occurred_on DESC, t.id DESC LIMIT ? OFFSET ?`).all(...args, Number(q.limit ?? 100), Number(q.offset ?? 0)) as any[];
+    const rows = db.prepare(`SELECT t.*, a.name account FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE ${where.join(' AND ')} ORDER BY t.flagged DESC, t.occurred_on DESC, t.id DESC LIMIT ? OFFSET ?`).all(...args, Number(q.limit ?? 100), Number(q.offset ?? 0)) as any[];
     const sp = db.prepare('SELECT s.*, c.name category FROM transaction_splits s LEFT JOIN categories c ON c.id=s.category_id WHERE transaction_id=?');
     return rows.map((r) => ({ ...r, splits: sp.all(r.id) }));
   });
@@ -225,7 +225,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const b = rec(req.body); const id = Number(req.params.id);
     const t = db.prepare('SELECT amount_cents FROM transactions WHERE id=?').get(id) as any;
     const splits = b.splits ?? [{ categoryId: b.categoryId, amountCents: t.amount_cents }];
-    const out = answerCategory(db, id, splits, { rule: b.rule, actor: actor(req) });
+    const out = answerCategory(db, id, splits, { rule: b.rule, flag: b.flag, actor: actor(req) });
     void opts.notifier?.retract(id, userIdOf(req)); // the first answer closes the prompt on the other phone
     return out;
   });

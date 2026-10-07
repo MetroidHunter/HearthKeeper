@@ -132,3 +132,18 @@ describe('migration: merchant rules are retired', () => {
     expect(rows.filter((r) => r.mode === 'auto' && r.origin === 'user').length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('flagging', () => {
+  it('can be set while categorizing (single and bulk), and flagged transactions sort first in the list', async () => {
+    const { h, mk } = setup();
+    const { bulkAnswer } = await import('../src/core/backlog.js');
+    const a = mk('FLAG ONE', -100, '2026-09-01'), b = mk('FLAG TWO', -200, '2026-09-02'), c = mk('FLAG THREE', -300, '2026-09-03'), d = mk('PLAIN', -400, '2026-10-01');
+    answerCategory(h.db, a, [{ categoryId: h.cats['Groceries'], amountCents: -100 }], { flag: { reason: '  check the receipt ' } });
+    bulkAnswer(h.db, [b, c], h.cats['Groceries'], { flag: { reason: '' } });
+    answerCategory(h.db, d, [{ categoryId: h.cats['Groceries'], amountCents: -400 }]);
+    const q = (id: number) => h.db.prepare('SELECT flagged, flag_reason FROM transactions WHERE id=?').get(id);
+    expect(q(a)).toEqual({ flagged: 1, flag_reason: 'check the receipt' });
+    expect(q(b)).toEqual({ flagged: 1, flag_reason: null });
+    expect(q(d)).toEqual({ flagged: 0, flag_reason: null });
+  });
+});
