@@ -12,7 +12,7 @@ const PAGE = 50;
 export class Rules extends Page {
   @state() rules: any[] = []; @state() merch: { rows: any[]; total: number; unreviewed: number; withoutDefault: number } = { rows: [], total: 0, unreviewed: 0, withoutDefault: 0 }; @state() promotable: any[] = []; @state() cats: Cat[] = [];
   @state() tab: 'rules' | 'merchants' = 'rules'; @state() draft: any = null; @state() bt: any = null;
-  @state() rq = ''; @state() rpage = 0; @state() mq = ''; @state() mpage = 0; @state() onlyNew = true; /* true = only shops with no usual category yet */
+  @state() rq = ''; @state() rpage = 0; @state() showOff = false; @state() mq = ''; @state() mpage = 0; @state() onlyNew = true; /* true = only shops with no usual category yet */
   private timer: any;
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { [this.rules, this.promotable, this.cats] = await Promise.all([api.get('/api/rules'), api.get('/api/rules/promotable'), api.get('/api/categories')]); await this.loadMerchants(); }); }
@@ -24,7 +24,7 @@ export class Rules extends Page {
   render() {
     return html`${pageHead('Rules & merchants', 'How transactions get categorized without you. A rule says "when the description contains X, use category Y"; a merchant remembers its usual category.', 'Rules start in suggest mode: they offer an answer but you confirm. After enough clean confirmations a rule can be promoted to auto. Backtest a new rule to see what it would have done to your history before saving it.')}
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
-      <div class="tabs"><button aria-pressed=${this.tab === 'rules'} @click=${() => (this.tab = 'rules')}>Rules (${this.rules.length})</button><button aria-pressed=${this.tab === 'merchants'} @click=${() => (this.tab = 'merchants')}>Merchants</button></div>
+      <div class="tabs"><button aria-pressed=${this.tab === 'rules'} @click=${() => (this.tab = 'rules')}>Rules (${this.rules.filter((r) => r.enabled).length}${this.rules.some((r) => !r.enabled) ? ` of ${this.rules.length}` : ''})</button><button aria-pressed=${this.tab === 'merchants'} @click=${() => (this.tab = 'merchants')}>Merchants</button></div>
       ${this.tab === 'rules' ? this.rulesTab() : this.merchantsTab()}`;
   }
   pager(page: number, total: number, set: (n: number) => void) {
@@ -33,15 +33,17 @@ export class Rules extends Page {
   }
   rulesTab() {
     const q = this.rq.toLowerCase();
-    const list = this.rules.filter((r) => !q || `${this.summary(r)} ${this.act(r)} ${r.notes ?? ''}`.toLowerCase().includes(q));
+    const off = this.rules.filter((r) => !r.enabled).length;
+    // disabled rules are hidden unless asked for, and always sort below the active ones (the API already orders by priority within each group)
+    const list = this.rules.filter((r) => (this.showOff || r.enabled) && (!q || `${this.summary(r)} ${this.act(r)} ${r.notes ?? ''}`.toLowerCase().includes(q))).sort((a, b) => Number(!!b.enabled) - Number(!!a.enabled));
     const rows = list.slice(this.rpage * PAGE, (this.rpage + 1) * PAGE);
     return html`${this.promotable.length ? html`<div class="card"><h3>Ready to promote to auto</h3><div class="list">${this.promotable.map((p) => html`<div class="list-row"><span class="grow">${p.notes ?? `rule #${p.id}`} · ${p.clean_confirmations} clean confirmations, 0 overrides</span><button class="primary" @click=${async () => { await api.patch(`/api/rules/${p.id}`, { mode: 'auto' }); this.load(); }}>Promote</button></div>`)}</div></div>` : nothing}
-      <div class="row"><input class="grow" type="search" placeholder="Filter rules" .value=${this.rq} @input=${(e: any) => { this.rq = e.target.value; this.rpage = 0; }} /><button class="primary" @click=${() => (this.draft = { field: 'descriptor', op: 'contains', value: '', category: 0, mode: 'suggest', priority: 100 })}>＋ New rule</button></div>
+      <div class="row"><input class="grow" type="search" placeholder="Filter rules" .value=${this.rq} @input=${(e: any) => { this.rq = e.target.value; this.rpage = 0; }} />${off ? html`<label><input type="checkbox" id="show-off" .checked=${this.showOff} @change=${(e: any) => { this.showOff = e.target.checked; this.rpage = 0; }} /> Show disabled (${off})</label>` : nothing}<button class="primary" @click=${() => (this.draft = { field: 'descriptor', op: 'contains', value: '', category: 0, mode: 'suggest', priority: 100 })}>＋ New rule</button></div>
       ${this.draft ? this.draftCard() : nothing}
       <div class="card flush" style="overflow-x:auto"><table><thead><tr>${th('Pri', 'Priority: lower numbers are checked first; the most specific rule wins ties.')}${th('Match', 'The condition on the transaction.')}${th('→', 'The category it assigns.')}${th('Mode', 'auto: applies silently. suggest: offers it. ask: always asks.')}${th('Hits', 'How many transactions this rule has matched.', 'num')}${th('✓ / ✗', 'Times you accepted its answer / changed it.', 'num hide-sm')}<th></th></tr></thead><tbody>
         ${rows.map((r) => html`<tr style=${r.enabled ? '' : 'opacity:.5'}><td>${r.priority}</td><td>${this.summary(r)}<div class="muted small">${r.origin}${r.notes ? ` · ${String(r.notes).slice(0, 60)}` : ''}</div></td><td>${this.act(r)}</td>
           <td><select @change=${async (e: any) => { await api.patch(`/api/rules/${r.id}`, { mode: e.target.value }); this.load(); }}>${['auto', 'suggest', 'ask'].map((m) => html`<option ?selected=${m === r.mode}>${m}</option>`)}</select></td>
-          <td class="num">${r.hit_count}</td><td class="num hide-sm">${r.clean_confirmations} / ${r.override_count}</td><td><button @click=${async () => { await api.patch(`/api/rules/${r.id}`, { enabled: !r.enabled }); this.load(); }}>${r.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)}</tbody></table></div>
+          <td class="num">${r.hit_count}</td><td class="num hide-sm">${r.clean_confirmations} / ${r.override_count}</td><td><button class=${r.enabled ? 'rule-off' : 'rule-on'} @click=${async () => { await api.patch(`/api/rules/${r.id}`, { enabled: !r.enabled }); if (r.enabled && !this.showOff) toast('Rule disabled and hidden. Tick "Show disabled" to see it again.'); await this.load(); }}>${r.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)}</tbody></table></div>
       ${this.pager(this.rpage, list.length, (n) => (this.rpage = n))}`;
   }
   draftCard() {

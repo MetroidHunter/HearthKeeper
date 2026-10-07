@@ -346,3 +346,30 @@ describe('Backlog review (grouped by merchant)', () => {
     expect((await api('/api/rules')).some((r) => /BRAND NEW BAKERY/i.test(r.match_json) && r.mode === 'suggest')).to.equal(true);
   });
 });
+
+describe('Rules: disabled rules can be hidden and sort last', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('disabling a rule hides it by default; Show disabled brings it back at the bottom, dimmed; Enable returns it to its place', async () => {
+    const before = await api('/api/rules'); const active = before.filter((r) => r.enabled).length;
+    await mount('/rules');
+    const rows = () => $$('tbody tr');
+    await waitFor(() => rows().length === Math.min(50, active), 'only active rules');
+    expect($('#show-off'), 'no checkbox while nothing is disabled').to.not.exist;
+    const nameOf = (r) => text(r.children[1]); const firstName = nameOf(rows()[0]);
+    byText('button', /^Disable$/, rows()[0]).click();
+    await waitFor(() => rows().length === active - 1 && $('#show-off'), 'rule hidden and the checkbox offered');
+    expect(text($$('button').find((b) => /^Rules/.test(text(b))))).to.match(new RegExp(`Rules \\(${active - 1} of ${before.length}\\)`));
+    expect(text($$('.toast').at(-1))).to.match(/disabled and hidden/);
+    $('#show-off').click();
+    await waitFor(() => rows().length === active, 'disabled rule shown');
+    const last = rows().at(-1); expect(nameOf(last)).to.equal(firstName); // sorted below every active rule
+    expect(last.style.opacity).to.equal('0.5');
+    expect(rows().slice(0, -1).every((r) => r.style.opacity !== '0.5')).to.equal(true);
+    byText('button', /^Enable$/, last).click();
+    await waitFor(() => nameOf(rows()[0]) === firstName, 'enabled rule back at the top by priority');
+    expect($('#show-off'), 'checkbox gone again').to.not.exist;
+  });
+});
