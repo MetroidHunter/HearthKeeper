@@ -45,10 +45,13 @@ function forwardNewMail() {
     });
     if (ok) { thread.addLabel(doneLabel); thread.moveToArchive(); }
   });
-  // heartbeat so silence alerts work even when no mail arrives (signed like ingest: no secret ever appears in a URL)
-  var hts = String(Math.floor(Date.now() / 1000)), hn = Utilities.getUuid();
-  UrlFetchApp.fetch(props.getProperty('HK_URL') + '/ingest/heartbeat', { method: 'post', muteHttpExceptions: true,
-    headers: { 'x-hk-token': label, 'x-hk-timestamp': hts, 'x-hk-nonce': hn, 'x-hk-signature': hex(Utilities.computeHmacSha256Signature(hts + '.' + hn + '.', secret)) } });
+  // heartbeat so silence alerts work even when no mail arrives (signed like ingest: no secret ever appears in a URL).
+  // It must never make the run fail (the mail above is already handled), and it signs explicit UTF-8 bytes just like post().
+  try {
+    var hts = String(Math.floor(Date.now() / 1000)), hn = Utilities.getUuid();
+    UrlFetchApp.fetch(props.getProperty('HK_URL') + '/ingest/heartbeat', { method: 'post', muteHttpExceptions: true,
+      headers: { 'x-hk-token': label, 'x-hk-timestamp': hts, 'x-hk-nonce': hn, 'x-hk-signature': hex(Utilities.computeHmacSha256Signature(Utilities.newBlob(hts + '.' + hn + '.').getBytes(), Utilities.newBlob(secret).getBytes())) } });
+  } catch (e) { console.error('heartbeat failed: ' + e); }
 }
 // Exact sender-domain match (never a substring: "purchases@" contains "chase"). The display name is ignored. DKIM/SPF must pass.
 var SENDERS = [[/@([a-z0-9-]+\.)*chase\.com$/, 'chase_alert'], [/@([a-z0-9-]+\.)*amazon\.com$/, 'amazon_receipt'], [/@([a-z0-9-]+\.)*venmo\.com$/, 'venmo_receipt'],
