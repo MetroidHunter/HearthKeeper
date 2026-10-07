@@ -73,4 +73,18 @@ describe('Budget on a phone (390px wide)', () => {
     const open = $$('details.month').find((c) => c.open && $('a.mfix', c));
     if (open) { const a = $('a.mfix', open).getBoundingClientRect(); expect(a.height, 'tap target').to.be.at.least(28); expect(a.right).to.be.at.most(window.innerWidth); }
   });
+
+  it('Backlog rows fit a phone: description and amount on top, then date, category dropdown and note input, all inside the screen', async () => {
+    await mount('/backlog');
+    const rows = await waitFor(() => { const r = $$('.trow.txn'); return r.length > 2 && r; }, 'rows');
+    expect(document.documentElement.scrollWidth, 'no horizontal page scroll').to.be.at.most(window.innerWidth);
+    expect($('.trow.thead'), 'column labels are hidden on a phone').to.exist; expect(shown($('.trow.thead'))).to.equal(false);
+    for (const r of rows) {
+      const b = r.getBoundingClientRect(); expect(b.left).to.be.at.least(0); expect(b.right).to.be.at.most(window.innerWidth);
+      if (r.dataset.cat === 'missing') { const d = $('.tcat hk-category-select', r).getBoundingClientRect(); expect(d.width, 'a usable dropdown').to.be.at.least(140); expect(d.right).to.be.at.most(window.innerWidth); }
+    }
+    const withNote = rows.find((r) => r.dataset.note === 'missing');
+    if (withNote) { const i = $('input.note-input', withNote).getBoundingClientRect(); expect(i.width, 'a usable note box').to.be.at.least(120); expect(i.right).to.be.at.most(window.innerWidth); for (const b of $$('button.icon', withNote)) expect(b.getBoundingClientRect().right).to.be.at.most(window.innerWidth); }
+    const top = rows[0]; expect($('.tdesc', top).getBoundingClientRect().top).to.be.below($('.tcat', top).getBoundingClientRect().top);
+  });
 });

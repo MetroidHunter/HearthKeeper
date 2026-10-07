@@ -4,7 +4,7 @@ import { Page } from '../base.js';
 import { api, money, fmtDate } from '../api.js';
 import { amt, type Cat } from '../shared.js';
 import { pageHead, catSelect, alertBox } from '../ui.js';
-import { txnCard, confirmCategorize, showContext, fullLine, type Env } from '../txn.js';
+import { txnRow, txnHead, confirmCategorize, type Env } from '../txn.js';
 
 /** Backlog (design §8.3): the same decisions as Home, in bulk. Uncategorized items by merchant, plus flagged and note items one by one. */
 @customElement('hk-backlog')
@@ -37,31 +37,30 @@ export class Backlog extends Page {
   }
   items(list: any[], empty: string) {
     const env = this.env();
-    return html`${list.length === 0 ? html`<div class="card muted">${empty}</div>` : list.slice(0, 50).map((t) => txnCard(env, t, { reload: () => this.load() }))}
+    return html`${list.length === 0 ? html`<div class="card muted">${empty}</div>` : html`<div class="card flush txnlist">${txnHead()}${list.slice(0, 50).map((t) => txnRow(env, t, { reload: () => this.load() }))}</div>`}
       ${list.length > 50 ? html`<p class="muted">Showing 50 of ${list.length}; the rest appear as you resolve these.</p>` : nothing}`;
   }
   merchants() {
     const gs = this.groups.filter((g) => !this.filter || g.name.toLowerCase().includes(this.filter.toLowerCase()));
     const n = this.groups.reduce((a, g) => a + g.count, 0);
+    const env = this.env(); const byId = new Map<number, any>((this.inbox?.items ?? []).map((t: any) => [t.id, t]));
+    const rowFor = (g: any, t: any) => txnRow(env, byId.get(t.id) ?? { ...t, reasons: [{ reason: 'needs_category', why: '' }], suggestions: g.suggestions }, { reload: () => this.load() });
+    const many = gs.filter((g) => g.count > 1), ones = gs.filter((g) => g.count === 1);
     return html`<div class="card row"><b>${n} transactions in ${this.groups.length} merchants</b><input class="grow" type="search" placeholder="Filter merchants" @input=${(e: any) => (this.filter = e.target.value)} /></div>
-      ${gs.length === 0 ? html`<div class="card muted">Nothing waiting.</div>` : gs.slice(0, 40).map((g) => this.group(g))}
-      ${gs.length > 40 ? html`<p class="muted">Showing the 40 biggest of ${gs.length} merchants. Filter, or settle these first.</p>` : nothing}`;
+      ${gs.length === 0 ? html`<div class="card muted">Nothing waiting.</div>` : nothing}
+      ${many.slice(0, 40).map((g) => this.group(g, rowFor))}
+      ${ones.length ? html`<div class="card flush txnlist" data-ones><div class="listtitle"><b>One transaction each</b><span class="muted small">${ones.length} merchant${ones.length === 1 ? '' : 's'}</span></div>${txnHead()}${ones.slice(0, 60).map((g) => rowFor(g, g.txns[0]))}</div>` : nothing}
+      ${many.length > 40 ? html`<p class="muted">Showing the 40 biggest of ${many.length} merchants with several transactions. Filter, or settle these first.</p>` : nothing}`;
   }
-  /**
-   * One merchant: a bulk bar (one answer for all of them) above the same per-transaction cards Home uses, so a single transaction can still be
-   * handled on its own (its own category, note or "not a budget item") without leaving the group.
-   */
-  group(g: any) {
-    const expanded = this.open.has(g.key); const byId = new Map<number, any>((this.inbox?.items ?? []).map((t: any) => [t.id, t]));
-    const lines = (expanded ? g.txns : g.txns.slice(0, 3)) as any[]; const env = this.env();
+  /** One merchant with several transactions: a bulk bar (one answer for all of them) above the same rows Home uses, so any one can still be handled alone. */
+  group(g: any, rowFor: (g: any, t: any) => unknown) {
+    const expanded = this.open.has(g.key); const lines = (expanded ? g.txns : g.txns.slice(0, 3)) as any[];
     const best = g.suggestions[0];
-    const only = g.count === 1 ? byId.get(g.txnIds[0]) : null;
-    if (only) return txnCard(env, only, { reload: () => this.load() }); // one transaction: just the card, exactly as on Home
-    return html`<div class="card group" data-key=${g.key}><div class="row"><b class="grow">${g.name}</b><span class="badge">${g.count} transaction${g.count === 1 ? '' : 's'}</span>${amt(g.totalCents)}</div>
-      <div class="bulkbar"><span class="muted small">${g.count === 1 ? 'Category for this one:' : `One answer for all ${g.count}:`}</span>
+    return html`<div class="card group flush" data-key=${g.key}><div class="grouphead"><div class="row"><b class="grow">${g.name}</b><span class="badge">${g.count} transactions</span>${amt(g.totalCents)}</div>
+      <div class="bulkbar"><span class="muted small">One answer for all ${g.count}:</span>
         ${catSelect(this.cats, null, (id) => { if (id) void this.answer(g, id); }, { placeholder: 'Search all categories…' })}
-        ${best ? html`<button class="primary" title=${best.why} @click=${() => this.answer(g, best.id, best)}>Use ${best.name}${g.count > 1 ? ` for all ${g.count}` : ''}</button>` : nothing}</div>
-      <div class="stack" style="margin-top:10px">${lines.map((t: any) => { const full = byId.get(t.id); return full ? txnCard(env, full, { reload: () => this.load() }) : html`<div class="row"><div class="grow">${fullLine({ ...t, account: t.account })}</div><button class="icon" title="Show the transactions around this one" @click=${() => showContext({ ...t, account: t.account })}>Nearby</button></div>`; })}
-        ${g.count > 3 ? html`<button class="link" @click=${() => { expanded ? this.open.delete(g.key) : this.open.add(g.key); this.requestUpdate(); }}>${expanded ? 'Show fewer' : `Show all ${Math.min(g.count, g.txns.length)}${g.count > g.txns.length ? ` of ${g.count}` : ''} transactions`}</button>` : nothing}</div></div>`;
+        ${best ? html`<button class="primary" title=${best.why} @click=${() => this.answer(g, best.id, best)}>Use ${best.name} for all ${g.count}</button>` : nothing}</div></div>
+      <div class="txnlist">${txnHead()}${lines.map((t: any) => rowFor(g, t))}</div>
+      ${g.count > 3 ? html`<div class="grouptail"><button class="link" @click=${() => { expanded ? this.open.delete(g.key) : this.open.add(g.key); this.requestUpdate(); }}>${expanded ? 'Show fewer' : `Show all ${Math.min(g.count, g.txns.length)}${g.count > g.txns.length ? ` of ${g.count}` : ''} transactions`}</button></div>` : nothing}</div>`;
   }
 }

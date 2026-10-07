@@ -311,16 +311,17 @@ describe('Backlog review (grouped by merchant)', () => {
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('uses the same per-transaction cards as Home: a lone transaction is just the card; a merchant group holds cards under one bulk bar', async () => {
+  it('uses the same rows as Home: one-off merchants share a list; a merchant with several holds rows under one bulk bar', async () => {
     const accts = await api('/api/accounts'); const chase = accts.find((a) => a.name === 'Chase Prime Visa').id;
     for (let i = 0; i < 3; i++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'TWINS CAFE', amountCents: -(700 + i) } });
     await mount('/backlog');
     const group = await waitFor(() => $$('.group').find((c) => /TWINS CAFE/.test(text(c))), 'group');
-    expect($$('.card.txn', group).length, 'one card per transaction').to.equal(3);
+    expect($$('.trow.txn', group).length, 'one row per transaction').to.equal(3);
     expect($('.bulkbar', group), 'one bulk bar').to.exist;
-    expect($$('.check.missing, .check', $('.card.txn', group)).length).to.be.greaterThan(0); // the Home checklist
-    const lone = $$('.card.txn').find((c) => /SEQUOIA PAYROLL/.test(text(c)));
-    expect(lone, 'a single-transaction merchant is just the card').to.exist;
+    expect($('.tcat hk-category-select', $('.trow.txn', group)), 'each row has its own category dropdown').to.exist;
+    const ones = $('[data-ones]'); expect(ones, 'a list of one-off merchants').to.exist;
+    const lone = $$('.trow.txn', ones).find((c) => /SEQUOIA PAYROLL/.test(text(c)));
+    expect(lone, 'a single-transaction merchant is just a row').to.exist;
     expect(lone.closest('.group')).to.equal(null);
   });
 

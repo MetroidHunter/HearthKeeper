@@ -23,14 +23,15 @@ describe('Dialogs and pop-ups', () => {
 
   it('clicking outside an informational dialog closes it; padding clicks and decision dialogs stay', async () => {
     await mount('/');
-    const card = await waitFor(() => $('.card.txn'), 'a card');
+    const card = await waitFor(() => $('.trow.txn[data-cat=missing]'), 'a row');
+    $('.texpand', card).click();
     byText('button', /Show nearby transactions/, card).click();
     let dlg = await waitFor(() => $$('dialog').find((d) => d.open && $('.ctx-row', d)), 'context dialog');
     paddingClick(dlg); await sleep(50);
     expect(dlg.open).to.equal(true); // inside the dialog's own padding is not "outside"
     backdropClick(dlg); await waitFor(() => !dlg.isConnected || !dlg.open, 'closed by outside click');
     // a dialog that asks for a decision does not dismiss on an outside click
-    $('button.option', card).click();
+    await pickCat($('.tcat hk-category-select', card), 'Gas');
     dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'confirm dialog');
     backdropClick(dlg); await sleep(100);
     expect(dlg.open).to.equal(true);
