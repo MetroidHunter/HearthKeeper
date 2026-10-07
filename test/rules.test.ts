@@ -65,3 +65,19 @@ describe('descriptor cleaning: shapes seen in real bank history (names are fake)
     expect(c('SAFEWAY #1551').clean).toBe('SAFEWAY');
   });
 });
+
+describe('rule priority over the API', () => {
+  it('PATCH validates, and a lower number wins when two rules match', async () => {
+    const { addRule } = await import('../src/core/rules.js'); const { seedHousehold } = await import('./helpers.js'); const { buildApp } = await import('../src/server/app.js'); const { classify, createTransaction } = await import('../src/core/transactions.js');
+    const h = seedHousehold(); const app = buildApp(h.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 'x' } }); const H = { 'x-requested-with': 'hearthkeeper' };
+    const a = addRule(h.db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'cafe' }] }, action: { type: 'categorize', category: 'Eating Out' }, mode: 'auto', priority: 100 });
+    const b = addRule(h.db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'cafe' }] }, action: { type: 'categorize', category: 'Groceries' }, mode: 'auto', priority: 200 });
+    const mk = (d: string) => { const id = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-01', amountCents: -500, descriptor: d }); classify(h.db, id); return id; };
+    const cat = (id: number) => (h.db.prepare('SELECT c.name n FROM transaction_splits s JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=?').get(id) as any)?.n;
+    expect(cat(mk('NEW CAFE 1'))).toBe('Eating Out'); // 100 beats 200
+    for (const bad of [0, 10000, 1.5, 'x', -3]) expect((await app.inject({ method: 'PATCH', url: `/api/rules/${a}`, headers: H, payload: { priority: bad } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PATCH', url: `/api/rules/${b}`, headers: H, payload: { priority: 10 } })).statusCode).toBe(200);
+    expect(cat(mk('NEW CAFE 2'))).toBe('Groceries'); // now 10 beats 100
+    expect((await app.inject({ url: '/api/rules' })).json().map((r: any) => [r.id, r.priority])).toEqual([[b, 10], [a, 100]]); // listed in priority order
+  });
+});

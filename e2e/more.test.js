@@ -452,3 +452,64 @@ describe('Backlog: paged, with a loading state and a blocking "working" modal', 
     expect($$('.trow.txn').every((x) => x.dataset.note === 'missing')).to.equal(true);
   });
 });
+
+describe('Rule priority and splitting from the Backlog', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('priority is editable on every rule, explained, rejects nonsense, re-orders the list, and can be set on a new rule', async () => {
+    await mount('/rules');
+    const rows = () => $$('tbody tr'); await waitFor(() => rows().length > 2, 'rules');
+    expect(text($$('p.muted.small').find((p) => /lowest priority number/.test(text(p))))).to.match(/more conditions|more specific/);
+    const pri = (r) => $('input.rule-pri', r); const nameOf = (r) => text(r.children[1]);
+    const first = rows()[0], second = rows()[1]; const secondName = nameOf(second);
+    expect(Number(pri(first).value)).to.be.at.most(Number(pri(second).value));
+    setInput(pri(first), '0'); pri(first).dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => /whole number from 1 to 9999/.test(text($$('.toast').at(-1))), 'rejected'); expect(Number(pri(rows()[0]).value)).to.be.greaterThan(0);
+    setInput(pri(second), '1'); pri(second).dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => nameOf(rows()[0]) === secondName && Number(pri(rows()[0]).value) === 1, 'second rule moved to the top');
+    const saved = (await api('/api/rules')).find((r) => r.priority === 1); expect(saved).to.exist;
+    byText('button', /New rule/).click();
+    const pi = await waitFor(() => $('input.draft-pri'), 'priority box on the new-rule form'); expect(pi.value).to.equal('100');
+  });
+
+  it('a transaction can be split between categories from the Backlog, with the parts forced to add up', async () => {
+    await mount('/backlog');
+    const row = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((r) => /NEW CAFE|SEPHORA/.test(text(r))), 'a row');
+    const id = row.dataset.id; const before = (await api(`/api/transactions?q=${encodeURIComponent(text($('.tdesc', row)))}`)).find((t) => String(t.id) === id);
+    const total = Math.abs(before.amount_cents);
+    $('.texpand', row).click(); byText('button', /^Split…$/, row).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /^Split /.test(text($('h3', d) ?? d))), 'split dialog');
+    const save = $('button.splitsave', dlg); expect(save.disabled, 'nothing chosen yet').to.equal(true);
+    const [c1, c2] = $$('hk-category-select', dlg); const [a1, a2] = $$('input.splitamt', dlg);
+    expect(a1.value).to.equal((total / 100).toFixed(2)); expect(a2.value).to.equal('0.00');
+    await pickCat(c1, 'Groceries'); await pickCat(c2, 'Eating Out');
+    expect(save.disabled, 'the second part is 0.00').to.equal(true);
+    const first = Math.floor(total / 2);
+    setInput(a1, (first / 100).toFixed(2)); a1.dispatchEvent(new Event('input', { bubbles: true }));
+    await waitFor(() => /left to place/.test(text($('.splitleft', dlg))), 'remaining shown'); expect(save.disabled).to.equal(true);
+    setInput(a2, ((total - first) / 100).toFixed(2)); a2.dispatchEvent(new Event('input', { bubbles: true }));
+    await waitFor(() => /Adds up/.test(text($('.splitleft', dlg))) && !save.disabled, 'adds up and enabled');
+    save.click();
+    await waitFor(() => !$$('.trow.txn').some((r) => r.dataset.id === id), 'the row left the backlog');
+    const after = (await api(`/api/transactions?q=${encodeURIComponent(before.descriptor_raw)}`)).find((t) => String(t.id) === id);
+    expect(after.splits.map((s) => s.category).sort()).to.deep.equal(['Eating Out', 'Groceries']);
+    expect(after.splits.reduce((a, s) => a + s.amount_cents, 0)).to.equal(before.amount_cents);
+    expect(after.splits.every((s) => Math.sign(s.amount_cents) === Math.sign(before.amount_cents))).to.equal(true);
+  });
+
+  it('"Split evenly" and extra parts work, and Cancel changes nothing', async () => {
+    await mount('/backlog');
+    const row = await waitFor(() => $('.trow.txn[data-cat=missing]'), 'a row'); const id = row.dataset.id;
+    $('.texpand', row).click(); byText('button', /^Split…$/, row).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && $('.splitsave', d)), 'split dialog');
+    $('button.splitadd', dlg).click(); await waitFor(() => $$('.splitrow', dlg).length === 3, 'third part');
+    $('button.spliteven', dlg).click();
+    await waitFor(() => /Amounts add up/.test(text($('.splitleft', dlg))), 'even split adds up (categories still to choose)'); expect($('button.splitsave', dlg).disabled).to.equal(true);
+    const cents = $$('input.splitamt', dlg).map((i) => Math.round(parseFloat(i.value) * 100)); expect(Math.max(...cents) - Math.min(...cents)).to.be.at.most(2);
+    byText('button', /^Cancel$/, dlg).click();
+    await waitFor(() => !dlg.open, 'closed');
+    expect($$('.trow.txn').some((r) => r.dataset.id === id)).to.equal(true); // untouched
+  });
+});

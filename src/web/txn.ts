@@ -1,11 +1,11 @@
-import { html, nothing, type TemplateResult } from 'lit';
-import { api, money, fmtDate } from './api.js';
+import { html, nothing, render, type TemplateResult } from 'lit';
+import { api, money, fmtDate, parseMoney } from './api.js';
 import { amt, pace } from './shared.js';
 import { showDialog, alertBox, promptBox, toast, catSelect, pendingBadge, withBusy, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
 export interface Suggestion { id: number; name: string; why: string }
-export interface TxnLike { id: number; occurred_on: string; amount_cents: number; effective_cents?: number; descriptor_raw: string; descriptor_clean?: string | null; account: string; status?: string; note?: string | null; note_state?: string; flag_reason?: string | null; why?: string; suggestions?: Suggestion[] }
+export interface TxnLike { kind?: string; id: number; occurred_on: string; amount_cents: number; effective_cents?: number; descriptor_raw: string; descriptor_clean?: string | null; account: string; status?: string; note?: string | null; note_state?: string; flag_reason?: string | null; why?: string; suggestions?: Suggestion[] }
 
 export interface Env {
   cats: PickCat[]; rows: BudgetRow[];
@@ -27,6 +27,31 @@ export async function showContext(t: TxnLike) {
     <div class="card flush">${c.rows.map((r: any) => html`<div class="ctx-row ${r.isTarget ? 'target' : ''}"><span class="muted">${fmtDate(r.occurred_on)}</span>
       <span>${r.descriptor_raw}${r.status === 'provisional' ? pendingBadge() : nothing}<div class="muted small">${r.categories || '(no category)'}${r.note ? ` · ${r.note}` : ''}</div></span>${amt(r.amount_cents)}</div>`)}</div>
     <div class="actions"><button class="primary" @click=${() => close()}>Close</button></div>`, { wide: true });
+}
+
+/**
+ * Divide one transaction between categories (a Costco run that is half groceries, half household). Amounts are typed as positive money;
+ * the sign of the original is applied on save. Save stays disabled until every part has a category and the parts add up exactly.
+ */
+export function splitDialog(env: Env, t: TxnLike): Promise<{ categoryId: number; amountCents: number }[] | undefined> {
+  const sign = (t.effective_cents ?? t.amount_cents) < 0 ? -1 : 1; const total = Math.abs(t.effective_cents ?? t.amount_cents);
+  const fmt = (c: number) => (c / 100).toFixed(2);
+  const lines: { categoryId: number | null; cents: number; text: string }[] = [{ categoryId: null, cents: total, text: fmt(total) }, { categoryId: null, cents: 0, text: '0.00' }];
+  return showDialog<{ categoryId: number; amountCents: number }[]>((close) => {
+    const box = document.createElement('div'); box.className = 'splitbox';
+    const draw = () => render(tpl(), box);
+    const sum = () => lines.reduce((a, l) => a + l.cents, 0);
+    const valid = () => lines.length >= 2 && sum() === total && lines.every((l) => l.categoryId && l.cents > 0);
+    const tpl = () => html`${lines.map((l, i) => html`<div class="splitrow" data-i=${i}><span class="splitcat">${catSelect(env.cats, l.categoryId, (id) => { l.categoryId = id; draw(); }, { placeholder: 'Category' })}</span>
+        <input class="splitamt" inputmode="decimal" aria-label="Amount" .value=${l.text} @input=${(e: any) => { l.text = e.target.value; const v = parseMoney(l.text || '0'); l.cents = Number.isFinite(v) ? Math.max(0, v) : 0; draw(); }} />
+        ${lines.length > 2 ? html`<button class="icon splitdel" aria-label="Remove this part" @click=${() => { lines.splice(i, 1); draw(); }}>✕</button>` : nothing}</div>`)}
+      <div class="row" style="margin-top:8px"><button class="splitadd" @click=${() => { const rest = Math.max(0, total - sum()); lines.push({ categoryId: null, cents: rest, text: fmt(rest) }); draw(); }}>＋ Add a part</button>
+        <button class="spliteven" @click=${() => { const n = lines.length, each = Math.floor(total / n); lines.forEach((l, i) => { l.cents = i === n - 1 ? total - each * (n - 1) : each; l.text = fmt(l.cents); }); draw(); }}>Split evenly</button>
+        <span class="right splitleft ${sum() === total ? 'pos' : 'neg'}" aria-live="polite">${sum() === total ? (lines.some((l) => !l.categoryId) ? 'Amounts add up. Choose a category for each part.' : lines.some((l) => l.cents <= 0) ? 'Every part needs an amount.' : 'Adds up') : sum() < total ? `${money(total - sum())} left to place` : `${money(sum() - total)} too much`}</span></div>
+      <div class="actions"><button class="cancel" @click=${() => close(undefined)}>Cancel</button><button class="primary splitsave" ?disabled=${!valid()} @click=${() => close(lines.map((l) => ({ categoryId: l.categoryId!, amountCents: sign * l.cents })))}>Save split</button></div>`;
+    draw();
+    return html`<h3 class="title">Split ${t.descriptor_clean || t.descriptor_raw}</h3><p class="muted small">${fmtDate(t.occurred_on)} · total ${money(total)} ${sign < 0 ? 'out' : 'in'}. Divide it between categories; the parts must add up to the total.</p>${box}`;
+  }, { dismiss: false });
 }
 
 /** Before a category sticks, show what it does to that category's budget. Resolves {ok, remember}. */
@@ -114,6 +139,6 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
       ${fullLine(t)}
       <div class="row">${!catMissing ? html`<span class="muted small">Change category:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id, null); }, { placeholder: 'Search all categories…' })}` : nothing}
         ${!noteMissing ? html`<span class="muted small">${t.note ? 'Edit note:' : 'Add a note:'}</span><input class="note-edit" placeholder="Note" .value=${t.note ?? ''} @change=${(e: any) => saveNote(e.target.value)} />` : nothing}</div>
-      <div class="row"><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${() => attempt(() => env.ignore!(t), 'Marked: not a budget item')}>Not a budget item</button>` : nothing}</div>
+      <div class="row"><button class="split-btn" ?hidden=${t.kind === 'greenlight_reclass'} @click=${async () => { const s = await splitDialog(env, t); if (s) await attempt(() => api.post(`/api/transactions/${t.id}/categorize`, { splits: s }), 'Split saved'); }}>Split…</button><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${() => attempt(() => env.ignore!(t), 'Marked: not a budget item')}>Not a budget item</button>` : nothing}</div>
     </div></div>`;
 }

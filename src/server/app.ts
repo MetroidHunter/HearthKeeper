@@ -252,7 +252,9 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/rules', async () => db.prepare('SELECT * FROM rules ORDER BY priority, id').all());
   app.post('/api/rules/backtest', async (req) => backtest(db, { match: rec(req.body).match as RuleMatch }));
   app.post('/api/rules', async (req) => { const b = rec(req.body); return { id: addRule(db, b as any), backtest: backtest(db, { match: b.match }) }; });
-  app.patch('/api/rules/:id', async (req: any) => { const b = rec(req.body); if (b.mode) db.prepare('UPDATE rules SET mode=? WHERE id=?').run(b.mode, req.params.id); if (b.enabled !== undefined) db.prepare('UPDATE rules SET enabled=? WHERE id=?').run(Number(b.enabled), req.params.id); return { ok: true }; });
+  app.patch('/api/rules/:id', async (req: any) => { const b = rec(req.body); if (b.mode) db.prepare('UPDATE rules SET mode=? WHERE id=?').run(b.mode, req.params.id); if (b.enabled !== undefined) db.prepare('UPDATE rules SET enabled=? WHERE id=?').run(Number(b.enabled), req.params.id);
+    if (b.priority !== undefined) { const n = Number(b.priority); if (!Number.isInteger(n) || n < 1 || n > 9999) throw Object.assign(new Error('priority must be a whole number from 1 to 9999'), { statusCode: 400 }); db.prepare('UPDATE rules SET priority=? WHERE id=?').run(n, req.params.id); }
+    return { ok: true }; });
   app.get('/api/rules/promotable', async () => promotable(db));
   app.get('/api/merchants', async (req: any) => { // paged and searchable: the household has thousands, and the page must never render them all
     const q = req.query; const where: string[] = []; const args: unknown[] = [];
