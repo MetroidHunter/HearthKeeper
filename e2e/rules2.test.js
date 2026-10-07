@@ -93,3 +93,44 @@ describe('Rules are made while categorizing, with AND / OR conditions', () => {
     expect(big).to.exist;
   });
 });
+
+describe('Rules page: New rule, with amount conditions', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('"New rule" is on the Rules tab; amount (exactly / at least / at most / between) and direction are conditions; the rule saves and reads back', async () => {
+    await mount('/rules');
+    await waitFor(() => $$('tbody tr').length > 2, 'rules');
+    const before = (await api('/api/rules')).length;
+    byText('button', /New rule/).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /New rule/.test(text($('h3', d) ?? d))), 'dialog');
+    expect($('button.rf-save', dlg).disabled, 'nothing filled in').to.equal(true);
+    setInput($('.rf-value', dlg), 'qantas');
+    byText('button', /and another condition/, dlg).click();
+    await waitFor(() => $$('.rb-clause', dlg).length === 2, 'clause 2');
+    const sel = $$('.rf-field', dlg)[1]; sel.value = 'amount'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => $('.rf-op', dlg), 'amount comparison');
+    expect($$('.rf-op option', dlg).map((o) => text(o))).to.deep.equal(['is exactly', 'is at least', 'is at most', 'is between']);
+    const op = $('.rf-op', dlg); op.value = 'between'; op.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => $('.rf-value2', dlg), 'second amount box');
+    setInput($('.rf-money', dlg), '50'); setInput($('.rf-value2', dlg), '20');
+    expect($('button.rf-save', dlg).disabled, 'low is higher than high').to.equal(true);
+    setInput($('.rf-value2', dlg), '$200.00');
+    byText('button', /and another condition/, dlg).click();
+    await waitFor(() => $$('.rb-clause', dlg).length === 3, 'clause 3');
+    const sel3 = $$('.rf-field', dlg)[2]; sel3.value = 'direction'; sel3.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => $('.rf-dir', dlg), 'direction picker');
+    expect($('button.rf-save', dlg).disabled, 'direction not chosen').to.equal(true);
+    const dir = $('.rf-dir', dlg); dir.value = 'out'; dir.dispatchEvent(new Event('change', { bubbles: true }));
+    await pickCat($('hk-category-select', dlg), 'Travel').catch(() => pickCat($('hk-category-select', dlg), 'Groceries'));
+    await waitFor(() => /would have matched \d+/i.test(text($('.rf-bt', dlg))), 'backtest');
+    await waitFor(() => !$('button.rf-save', dlg).disabled, 'save enabled');
+    $('button.rf-save', dlg).click();
+    await waitFor(async () => (await api('/api/rules')).length === before + 1, 'saved');
+    const r = (await api('/api/rules')).find((x) => /qantas/i.test(x.match_json));
+    expect(JSON.parse(r.match_json).all_of).to.deep.equal([{ field: 'descriptor', op: 'contains', value: 'qantas' }, { field: 'amount_abs', op: 'between', value: [5000, 20000] }, { field: 'direction', op: 'eq', value: 'out' }]);
+    expect(r.origin).to.equal('user');
+    await waitFor(() => $$('tbody tr').some((row) => /amount between \$50\.00 and \$200\.00/.test(text(row)) && /qantas/.test(text(row))), 'readable on the Rules page');
+  });
+});

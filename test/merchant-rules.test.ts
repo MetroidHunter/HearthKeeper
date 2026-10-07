@@ -81,6 +81,28 @@ describe('AND / OR conditions', () => {
   });
 });
 
+describe('amount conditions', () => {
+  const rule = (c: any) => ({ match: { all_of: [c] } });
+  it('amount_abs compares the size whichever way the money moves; amount_cents stays signed', () => {
+    const out = { amount_cents: -2500, direction: 'out' as const }, inn = { amount_cents: 2500, direction: 'in' as const };
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'eq', value: 2500 }), out)).toBe(true);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'eq', value: 2500 }), inn)).toBe(true);
+    expect(ruleMatches(rule({ field: 'amount_cents', op: 'eq', value: 2500 }), out)).toBe(false);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'gte', value: 2500 }), out)).toBe(true);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'gte', value: 2501 }), out)).toBe(false);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'lte', value: 2500 }), inn)).toBe(true);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'between', value: [2000, 3000] }), out)).toBe(true);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'between', value: [2600, 3000] }), out)).toBe(false);
+    expect(ruleMatches({ match: { all_of: [{ field: 'amount_abs', op: 'gte', value: 1000 }, { field: 'direction', op: 'eq', value: 'in' }] } }, out)).toBe(false);
+    expect(ruleMatches(rule({ field: 'amount_abs', op: 'eq', value: 1 }), {})).toBe(false);
+  });
+  it('rejects amounts that cannot work', () => {
+    const { h } = setup(); const act = { type: 'categorize' as const, category: 'Groceries' };
+    for (const value of [[3000, 2000], [1], 'abc', NaN, -5]) expect(() => addRule(h.db, { match: { all_of: [{ field: 'amount_abs', op: Array.isArray(value) ? 'between' : 'eq', value } as any] }, action: act })).toThrow();
+    expect(() => addRule(h.db, { match: { all_of: [{ field: 'amount_abs', op: 'between', value: [2000, 3000] }] }, action: act })).not.toThrow();
+  });
+});
+
 describe('backlog keeps merchant cards in place', () => {
   it('pinned keys keep their order even when counts change', () => {
     const { h, mk } = setup();

@@ -1,7 +1,7 @@
 import type { DB } from './db.js';
 
 /** Rules engine (design §9.3). Numeric comparisons are on cents; no string compares of money. */
-export type Op = 'contains' | 'word' | 'starts_with' | 'regex' | 'eq' | 'between' | 'in';
+export type Op = 'contains' | 'word' | 'starts_with' | 'regex' | 'eq' | 'between' | 'in' | 'gte' | 'lte';
 export interface Cond { field: string; op: Op; value: unknown }
 /** A rule's match is a list of clauses that must ALL hold (AND); a clause is one condition, or `any_of` several alternatives of which ONE must hold (OR). */
 export type Clause = Cond | { any_of: Cond[] };
@@ -9,7 +9,7 @@ export interface RuleMatch { all_of: Clause[] }
 export const isGroup = (c: Clause): c is { any_of: Cond[] } => 'any_of' in c;
 /** Throws a plain-language error for a match that cannot work (empty, or a condition with nothing to compare). */
 export function validateMatch(m: RuleMatch | undefined): void {
-  const bad = (c: Cond) => c.value === undefined || c.value === null || (typeof c.value === 'string' && !c.value.trim()) || (Array.isArray(c.value) && !c.value.length);
+  const bad = (c: Cond) => c.value === undefined || c.value === null || (typeof c.value === 'string' && !c.value.trim()) || (Array.isArray(c.value) && !c.value.length) || (typeof c.value === 'number' && !Number.isFinite(c.value)) || (c.field === 'amount_abs' && (c.op === 'between' ? !Array.isArray(c.value) || c.value.length !== 2 || !c.value.every(Number.isFinite) || c.value[0] > c.value[1] : typeof c.value !== 'number' || c.value < 0));
   if (!m?.all_of?.length) throw new Error('A rule needs something to match on');
   for (const c of m.all_of) if (isGroup(c) ? !c.any_of.length || c.any_of.some(bad) : bad(c)) throw new Error('Every condition in a rule needs a value to match');
 }
@@ -29,11 +29,15 @@ function wordMatch(hay: string, needle: string): boolean {
 
 export function evalCond(c: Cond, cand: Candidate): boolean {
   let fv: unknown = (cand as Record<string, unknown>)[c.field];
-  if (c.field === 'amount_cents') {
-    const n = fv as number | undefined;
-    if (n === undefined) return false;
+  // `amount_cents` compares the signed amount (spending is negative); `amount_abs` compares its size, whichever way the money moves (what the rule builder uses).
+  if (c.field === 'amount_cents' || c.field === 'amount_abs') {
+    const raw = (cand as Candidate).amount_cents;
+    if (raw === undefined) return false;
+    const n = c.field === 'amount_abs' ? Math.abs(raw) : raw;
     switch (c.op) {
       case 'eq': return n === c.value;
+      case 'gte': return n >= (c.value as number);
+      case 'lte': return n <= (c.value as number);
       case 'between': { const [lo, hi] = c.value as [number, number]; return n >= lo && n <= hi; }
       case 'in': return (c.value as number[]).includes(n);
       default: return false;

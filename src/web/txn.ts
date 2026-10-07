@@ -4,24 +4,36 @@ import { amt, pace } from './shared.js';
 import { showDialog, alertBox, promptBox, toast, catSelect, pendingBadge, withBusy, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
-type WireCond = { field: string; op: string; value: string };
+type WireCond = { field: string; op: string; value: string | number | number[] };
 export interface RuleSpec { match: { all_of: (WireCond | { any_of: WireCond[] })[] }; mode: 'suggest' | 'auto'; priority: number }
 
 /** The rule builder: clauses joined by AND, each clause one condition or several alternatives joined by OR. */
-export interface RuleClause { alts: { field: string; value: string }[] }
-const RULE_FIELDS: [string, string][] = [['merchant', 'Merchant is'], ['descriptor', 'Description contains'], ['note', 'Note contains'], ['account', 'Account is']];
+export interface RuleAlt { field: string; value: string; op?: string; value2?: string }
+export interface RuleClause { alts: RuleAlt[] }
+const RULE_FIELDS: [string, string][] = [['merchant', 'Merchant is'], ['descriptor', 'Description contains'], ['note', 'Note contains'], ['account', 'Account is'], ['amount', 'Amount'], ['direction', 'Money']];
+const AMOUNT_OPS: [string, string][] = [['eq', 'is exactly'], ['gte', 'is at least'], ['lte', 'is at most'], ['between', 'is between']];
 const exactField = (f: string) => f === 'merchant' || f === 'account';
-export const clausesValid = (cs: RuleClause[]) => cs.length > 0 && cs.every((c) => c.alts.length > 0 && c.alts.every((a) => a.value.trim()));
-export const matchFromClauses = (cs: RuleClause[]): RuleSpec['match'] => ({ all_of: cs.map((c) => { const conds = c.alts.map((a) => ({ field: a.field, op: exactField(a.field) ? 'eq' : 'contains', value: a.value.trim() })); return conds.length === 1 ? conds[0] : { any_of: conds }; }) });
+const dollars = (v: string) => { const n = parseMoney(v || ''); return Number.isFinite(n) && n >= 0 ? n : NaN; };
+const altValid = (a: RuleAlt) => a.field === 'amount' ? (a.op === 'between' ? Number.isFinite(dollars(a.value)) && Number.isFinite(dollars(a.value2 ?? '')) && dollars(a.value) <= dollars(a.value2 ?? '') : Number.isFinite(dollars(a.value)))
+  : a.field === 'direction' ? a.value === 'out' || a.value === 'in' : !!a.value.trim();
+export const clausesValid = (cs: RuleClause[]) => cs.length > 0 && cs.every((c) => c.alts.length > 0 && c.alts.every(altValid));
+const condOf = (a: RuleAlt): WireCond => a.field === 'amount' ? { field: 'amount_abs', op: a.op ?? 'eq', value: (a.op === 'between' ? [dollars(a.value), dollars(a.value2 ?? '')] : dollars(a.value)) as any }
+  : a.field === 'direction' ? { field: 'direction', op: 'eq', value: a.value } : { field: a.field, op: exactField(a.field) ? 'eq' : 'contains', value: a.value.trim() };
+export const matchFromClauses = (cs: RuleClause[]): RuleSpec['match'] => ({ all_of: cs.map((c) => { const conds = c.alts.map(condOf); return conds.length === 1 ? conds[0] : { any_of: conds }; }) });
 /** Edits `cs` in place and calls `changed` after every edit (the caller redraws and refreshes its backtest). */
 export function ruleBuilder(cs: RuleClause[], changed: () => void, fields: [string, string][] = RULE_FIELDS): TemplateResult {
   const total = () => cs.reduce((a, c) => a + c.alts.length, 0);
+  const inputs = (a: RuleAlt) => a.field === 'amount' ? html`<select class="rf-op" aria-label="Amount comparison" @change=${(e: any) => { a.op = e.target.value; changed(); }}>${AMOUNT_OPS.map(([o, l]) => html`<option value=${o} ?selected=${(a.op ?? 'eq') === o}>${l}</option>`)}</select>
+      <input class="rf-value rf-money" inputmode="decimal" placeholder="$0.00" aria-label=${a.op === 'between' ? 'Lowest amount' : 'Amount'} .value=${a.value} @input=${(e: any) => { a.value = e.target.value; changed(); }} />
+      ${a.op === 'between' ? html`<span class="muted small">and</span><input class="rf-value2 rf-money" inputmode="decimal" placeholder="$0.00" aria-label="Highest amount" .value=${a.value2 ?? ''} @input=${(e: any) => { a.value2 = e.target.value; changed(); }} />` : nothing}`
+    : a.field === 'direction' ? html`<select class="rf-value rf-dir" aria-label="Direction" @change=${(e: any) => { a.value = e.target.value; changed(); }}><option value="" ?selected=${!a.value} disabled>Choose…</option><option value="out" ?selected=${a.value === 'out'}>going out (spending)</option><option value="in" ?selected=${a.value === 'in'}>coming in (income, refunds)</option></select>`
+    : html`<input class="grow rf-value" aria-label="Value to match" .value=${a.value} @input=${(e: any) => { a.value = e.target.value; changed(); }} />`;
   return html`<div class="rulebuilder">${cs.map((c, i) => html`<div class="rb-clause" data-clause=${i}>${i > 0 ? html`<div class="rb-join and">AND</div>` : nothing}
     ${c.alts.map((a, j) => html`${j > 0 ? html`<div class="rb-join or">OR</div>` : nothing}<div class="row rb-alt">
-      <select class="rf-field" aria-label="Match on" @change=${(e: any) => { a.field = e.target.value; changed(); }}>${fields.map(([f, l]) => html`<option value=${f} ?selected=${a.field === f}>${l}</option>`)}</select>
-      <input class="grow rf-value" aria-label="Value to match" .value=${a.value} @input=${(e: any) => { a.value = e.target.value; changed(); }} />
+      <select class="rf-field" aria-label="Match on" @change=${(e: any) => { const f = e.target.value; a.field = f; a.value = ''; a.value2 = ''; a.op = f === 'amount' ? 'eq' : undefined; changed(); }}>${fields.map(([f, l]) => html`<option value=${f} ?selected=${a.field === f}>${l}</option>`)}</select>
+      ${inputs(a)}
       ${total() > 1 ? html`<button class="icon rb-del" aria-label="Remove this condition" @click=${() => { c.alts.splice(j, 1); if (!c.alts.length) cs.splice(i, 1); changed(); }}>✕</button>` : nothing}</div>`)}
-    <button class="link rb-or" @click=${() => { c.alts.push({ field: c.alts[0]?.field ?? 'descriptor', value: '' }); changed(); }}>＋ or another way to match</button></div>`)}
+    <button class="link rb-or" @click=${() => { c.alts.push({ field: c.alts[0]?.field ?? 'descriptor', value: '', op: c.alts[0]?.field === 'amount' ? 'eq' : undefined }); changed(); }}>＋ or another way to match</button></div>`)}
     <button class="rb-and-add" @click=${() => { cs.push({ alts: [{ field: 'descriptor', value: '' }] }); changed(); }}>＋ and another condition</button></div>`;
 }
 export interface Suggestion { id: number; name: string; why: string }
