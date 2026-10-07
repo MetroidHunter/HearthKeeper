@@ -264,3 +264,12 @@ details.month.done:not([open]) { padding-top:var(--space-2); padding-bottom:var(
   .tcat-in { flex-wrap:wrap; } .tcat-in .quick { max-width:100%; } .tval { white-space:normal; }
   .tval.empty { display:none; } .tcat .tval::before, .tnote .tval::before { color:var(--muted); font-size:12px; margin-right:6px; } .tcat .tval::before { content:'Category'; } .tnote .tval::before { content:'Note'; }
 }
+
+/* "working" modal: invisible for the first moment so quick saves do not flash it, then a card with a spinner */
+dialog.busy { width:min(340px,90vw); text-align:center; display:flex; flex-direction:column; align-items:center; gap:var(--space-2); opacity:0; animation:busy-in .15s .35s forwards; } dialog.busy::backdrop { background:#0004; }
+dialog.busy .busy-label { font-weight:700; font-size:17px; }
+.spinner { width:30px; height:30px; border-radius:50%; border:4px solid var(--line); border-top-color:var(--brand); animation:spin .8s linear infinite; }
+@keyframes busy-in { to { opacity:1; } } @keyframes spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .spinner { animation-duration:2.4s; } }
+.loadingcard { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-4); } .listbusy { opacity:.55; pointer-events:none; transition:opacity .1s; }
+@media (max-width:640px) { .pager { gap:var(--space-2); } .pager button.first, .pager button.last { display:none; } .pager > span { order:-1; flex:1 1 100%; } .pager .right { margin-left:auto; } .pager button { min-height:40px; } }

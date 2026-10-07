@@ -4,6 +4,7 @@ import { classify, createTransaction } from '../core/transactions.js';
 import { applyProfile, layoutSignature, normalizeDescriptor, parseCsv, rowFingerprint, suggestMapping, type ParsedRow, type ProfileSpec } from './csv.js';
 import { captureEvent } from './events.js';
 import { pairTransfers } from './pairing.js';
+import { runNoteMatcher } from '../notes/matcher.js';
 
 export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; total: number; new: number; alreadyImported: number; matchesProvisional: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
 
@@ -61,7 +62,7 @@ function defaultAccount(db: DB, institution: string, accountId?: number): number
   return a.id;
 }
 
-export interface ImportResult { imported: number; alreadyImported: number; supersededProvisionals: number; categorized: number; needsCategory: number; errors: { line: number; error: string }[]; transferPairs: number }
+export interface ImportResult { imported: number; alreadyImported: number; supersededProvisionals: number; categorized: number; needsCategory: number; errors: { line: number; error: string }[]; transferPairs: number; waitingOnNotes: number; notesMatched: number }
 
 export function commitImport(db: DB, institution: string, csv: string, spec?: ProfileSpec, opts: { accountId?: number; filename?: string } = {}): ImportResult {
   const rows = parseCsv(csv);
@@ -86,7 +87,10 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
     const pairs = pairTransfers(db);
     db.prepare("UPDATE accounts SET last_synced_at=datetime('now') WHERE id=?").run(accountId);
     audit(db, 'import', prof.id, 'commit', undefined, { institution, imported: fresh.length, already });
-    return { imported: fresh.length, alreadyImported: already, supersededProvisionals: superseded, categorized, needsCategory: needs, errors: parsed.errors, transferPairs: pairs.paired };
+    // Amazon / Venmo / PayPal charges need a note: flag them now (and match any notes already received), not whenever the 10-minute timer next runs
+    const nm = runNoteMatcher(db);
+    const waitingOnNotes = (db.prepare("SELECT COUNT(*) c FROM transactions WHERE account_id=? AND status!='void' AND note_state IN ('awaiting_note','needs_note','ambiguous')").get(accountId) as { c: number }).c;
+    return { imported: fresh.length, alreadyImported: already, supersededProvisionals: superseded, categorized, needsCategory: needs, errors: parsed.errors, transferPairs: pairs.paired, waitingOnNotes, notesMatched: nm.matched };
   })();
 }
 

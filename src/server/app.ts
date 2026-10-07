@@ -21,7 +21,7 @@ import { extractText } from '../greenlight/parser.js';
 import { Notifier, getPrefs, setPrefs } from '../notify/notifier.js';
 import { vapidKeys } from '../notify/push.js';
 import { registerAllParsers } from '../ingest/parsers.js';
-import { groupedInbox, bulkAnswer } from '../core/backlog.js';
+import { backlogPage, groupedInbox, bulkAnswer } from '../core/backlog.js';
 import { worksheetItems, applyWorksheet, loadReport } from '../migration/worksheet.js';
 import { bootstrapMerchants } from '../migration/merchants.js';
 import { noteCandidates, pickNote, proposeItemSplits } from '../notes/matcher.js';
@@ -132,7 +132,11 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/analytics/year-pivot', async (req) => yearPivot(db, Number(q(req).from ?? Number(mon().slice(0, 4)) - 4), Number(q(req).to ?? mon().slice(0, 4))));
   app.get('/api/analytics/budget-vs-actual', async (req) => budgetVsActual(db, q(req).month ?? mon()));
   app.get('/api/explore', async (req: any) => explore(db, String(req.query.q ?? ''), { from: req.query.from ?? '2020-01-01', to: req.query.to ?? now() }));
-  app.get('/api/inbox', async () => inbox(db, now()));
+  app.get('/api/inbox', async (req: any) => inbox(db, now(), { limit: req.query.limit ? Math.min(200, Math.max(1, Number(req.query.limit))) : undefined }));
+  app.get('/api/backlog', async (req: any, reply) => { // one page of the Backlog (see backlogPage)
+    const view = String(req.query.view ?? 'merchants'); if (!['merchants', 'flagged', 'notes'].includes(view)) return reply.code(400).send({ error: 'unknown view' });
+    return backlogPage(db, { view: view as any, limit: Math.min(100, Math.max(1, Number(req.query.limit ?? 10))), offset: Math.max(0, Number(req.query.offset ?? 0)), q: req.query.q ? String(req.query.q) : undefined, today: now() });
+  });
   app.get('/api/inbox/grouped', async () => groupedInbox(db));
   app.post('/api/inbox/bulk', async (req) => { const b = rec(req.body); return bulkAnswer(db, b.txnIds ?? [], b.categoryId, { makeRule: b.makeRule, actor: actor(req) }); });
   app.get('/api/dashboard', async () => {

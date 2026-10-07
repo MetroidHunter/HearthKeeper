@@ -17,6 +17,7 @@ export function startScheduler(db: DB, notifier?: Notifier, onAlert: (kind: stri
       await notifier?.sendDueDigests();
     } catch (e) { console.error('scheduler tick failed', e); }
   };
+  void tick(); // once at start too, so a deploy never leaves charges waiting for the first timer
   const h = setInterval(() => void tick(), 10 * 60_000);
   h.unref();
   return () => clearInterval(h);

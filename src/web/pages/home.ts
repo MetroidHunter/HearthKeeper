@@ -17,7 +17,7 @@ export class Home extends Page {
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() {
     await this.run(async () => {
-      [this.inbox, this.budget, this.recent, this.cats, this.accounts] = await Promise.all([api.get('/api/inbox'), api.get('/api/budget'), api.get('/api/transactions?limit=20'), api.get('/api/categories'), api.get('/api/accounts')]);
+      [this.inbox, this.budget, this.recent, this.cats, this.accounts] = await Promise.all([api.get('/api/inbox?limit=10'), api.get('/api/budget'), api.get('/api/transactions?limit=20'), api.get('/api/categories'), api.get('/api/accounts')]);
     });
   }
   private env(): Env {
@@ -54,7 +54,7 @@ export class Home extends Page {
           ${unc && unc.count ? html`<div class="stat"><span class="label">Sitting in "Needs category"</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions with no category (${money(unc.spendCents)} out, ${money(unc.incomeCents)} in). Categorizing one moves its amount out of here and into that category.</span></div>` : nothing}
           ${this.inbox.greenlightRequests.map((r: any) => html`<div class="card row"><div class="grow"><b>${r.display_name}</b> requests ${money(r.amount_cents)}</div><a href="#/greenlight"><button>Review</button></a></div>`)}
           ${need.length === 0 ? html`<div class="card muted">All caught up.</div>` : html`<div class="card flush txnlist">${txnHead()}${need.slice(0, 10).map((t: any) => txnRow(env, t, { reload: () => this.load() }))}</div>`}
-          ${need.length > 10 ? html`<div class="card row"><span class="grow muted">Showing the 10 most recent of ${need.length}${c.total > need.length ? ` (${c.total} in total)` : ''}.</span><a href="#/backlog"><button class="primary">Keep going in Backlog</button></a></div>` : nothing}
+          ${c.total > need.length ? html`<div class="card row"><span class="grow muted">Showing the ${need.length} most recent of ${c.total}.</span><a href="#/backlog"><button class="primary">Keep going in Backlog</button></a></div>` : nothing}
         </div>
       </details>
 

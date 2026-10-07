@@ -67,7 +67,7 @@ export function explore(db: DB, q: string, p: Period) {
 }
 
 /** Ranked top-3 category suggestions (design §9.5): the suggesting rule, the merchant's past categories, then categories of similar descriptors. */
-export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number | null; descriptor_clean: string | null }): { id: number; name: string; why: string }[] {
+export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number | null; descriptor_clean: string | null }, memo?: Map<string, unknown>): { id: number; name: string; why: string }[] {
   const out: { id: number; name: string; why: string }[] = [];
   const add = (id: number | null | undefined, why: string) => { if (id && out.length < 3 && !out.some((o) => o.id === id)) { const c = db.prepare("SELECT name FROM categories WHERE id=? AND status='active'").get(id) as any; if (c) out.push({ id, name: c.name, why }); } };
   if (t.decided_rule_id) { const r = db.prepare('SELECT action_json FROM rules WHERE id=?').get(t.decided_rule_id) as any; const n = r ? JSON.parse(r.action_json).category : null; if (n) add((db.prepare('SELECT id FROM categories WHERE name=? COLLATE NOCASE').get(n) as any)?.id, 'rule'); }
@@ -80,11 +80,16 @@ export function suggestionsFor(db: DB, t: { id: number; decided_rule_id: number 
   }
   if (out.length < 3) { // still short: the categories you use most for this kind of money, so a brand-new merchant is never a blank prompt
     const amount = (db.prepare('SELECT amount_cents a FROM transactions WHERE id=?').get(t.id) as { a: number } | undefined)?.a ?? -1;
-    const rows = amount > 0
+    const key = amount > 0 ? 'freq:in' : 'freq:out'; // the same answer for every transaction of that sign: one query per request, not per row
+    let rows = memo?.get(key) as any[] | undefined;
+    if (!rows) {
+      rows = amount > 0
       ? db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN categories c ON c.id=s.category_id
-          WHERE c.status='active' AND c.kind!='expense' AND s.amount_cents>0 AND x.occurred_on >= date('now','-400 day') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all()
+          WHERE c.status='active' AND c.kind!='expense' AND s.amount_cents>0 AND x.occurred_on >= date('now','-400 day') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all() as any[]
       : db.prepare(`SELECT s.category_id id, COUNT(*) n FROM transaction_splits s JOIN transactions x ON x.id=s.transaction_id JOIN categories c ON c.id=s.category_id
-          WHERE c.status='active' AND c.kind='expense' AND x.occurred_on >= date('now','-120 day') AND x.kind IN ('spending','greenlight_reclass') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all();
+          WHERE c.status='active' AND c.kind='expense' AND x.occurred_on >= date('now','-120 day') AND x.kind IN ('spending','greenlight_reclass') GROUP BY s.category_id ORDER BY n DESC LIMIT 6`).all() as any[];
+      memo?.set(key, rows);
+    }
     for (const r of rows as any[]) add(r.id, 'frequently used');
   }
   return out;
@@ -117,28 +122,62 @@ export const INBOX_WHERE = {
   stale: "t.kind!='ignored' AND t.status='stale'", // hiding a never-posted charge resolves it
   flagged: 't.kind!=\'ignored\' AND t.flagged=1',
 } as const;
-export function inbox(db: DB, today = new Date().toISOString().slice(0, 10)) {
-  const cols = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, a.name account,
+const INBOX_COLS = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, a.name account,
     CASE WHEN t.kind='greenlight_reclass' THEN -COALESCE((SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id=t.id AND amount_cents>0),0) ELSE t.amount_cents END effective_cents,
     (SELECT s.memo FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
-  const base = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;
+const INBOX_BASE = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;
+
+/** The numbers in the tab labels and on Home: cheap (counts only, no suggestions). */
+export function inboxCounts(db: DB) {
   const W = INBOX_WHERE;
-  const rows = (reason: InboxReason) => (db.prepare(`SELECT ${cols} ${base(W[reason])} ORDER BY t.occurred_on DESC LIMIT 200`).all() as any[]).map((t) => ({ ...t, reason, why: whyNeedsYou(t, reason, today) }));
-  const count = (w: string) => (db.prepare(`SELECT COUNT(*) c ${base(w)}`).get() as { c: number }).c;
-  const unique = (db.prepare(`SELECT COUNT(*) c ${base(`(${Object.values(W).map((w) => `(${w})`).join(' OR ')})`)}`).get() as { c: number }).c;
-  const needsCategory = rows('needs_category').map((t) => ({ ...t, suggestions: suggestionsFor(db, t) }));
+  const count = (w: string) => (db.prepare(`SELECT COUNT(*) c ${INBOX_BASE(w)}`).get() as { c: number }).c;
+  const unique = (db.prepare(`SELECT COUNT(*) c ${INBOX_BASE(`(${Object.values(W).map((w) => `(${w})`).join(' OR ')})`)}`).get() as { c: number }).c;
+  return { total: unique, needsCategory: count(W.needs_category), needsNote: count(W.needs_note), stale: count(W.stale), flagged: count(W.flagged) };
+}
+
+/**
+ * Full inbox items (with every open reason and, for a missing category, the suggestions) for exactly these transactions.
+ * Used by the paged Backlog, so a page only ever pays for the rows it shows. `memo` shares the expensive lookups across rows.
+ */
+export function inboxItemsByIds(db: DB, ids: number[], today: string, memo = new Map<string, unknown>(), suggestionsOverride?: (t: any) => { id: number; name: string; why: string }[]) {
+  if (!ids.length) return [];
+  const ph = ids.map(() => '?').join(',');
+  const byId = new Map((db.prepare(`SELECT ${INBOX_COLS} FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.id IN (${ph})`).all(...ids) as any[]).map((t) => [t.id, t]));
+  const reasons = new Map<number, { reason: InboxReason; why: string }[]>();
+  for (const reason of Object.keys(INBOX_WHERE) as InboxReason[]) {
+    for (const r of db.prepare(`SELECT t.id FROM transactions t WHERE t.id IN (${ph}) AND t.status!='void' AND ${INBOX_WHERE[reason]}`).all(...ids) as { id: number }[]) {
+      const t = byId.get(r.id); (reasons.get(r.id) ?? reasons.set(r.id, []).get(r.id)!).push({ reason, why: whyNeedsYou(t, reason, today) });
+    }
+  }
+  const catNames = db.prepare("SELECT GROUP_CONCAT(DISTINCT c.name) n FROM transaction_splits s JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=? AND c.system=0");
+  return ids.filter((id) => byId.has(id) && reasons.has(id)).map((id) => {
+    const t = byId.get(id); const rs = reasons.get(id)!;
+    const suggestions = rs.some((r) => r.reason === 'needs_category') ? (suggestionsOverride ? suggestionsOverride(t) : suggestionsFor(db, t, memo)) : undefined;
+    return { ...t, reasons: rs, suggestions, categories: (catNames.get(id) as { n: string | null }).n };
+  });
+}
+
+export function inbox(db: DB, today = new Date().toISOString().slice(0, 10), opts: { limit?: number } = {}) {
+  const limit = opts.limit ?? 200; // how many rows get the (comparatively expensive) suggestions: Home only needs a handful
+  const memo = new Map<string, unknown>();
+  const W = INBOX_WHERE;
+  const rows = (reason: InboxReason) => (db.prepare(`SELECT ${INBOX_COLS} ${INBOX_BASE(W[reason])} ORDER BY t.occurred_on DESC LIMIT 200`).all() as any[]).map((t) => ({ ...t, reason, why: whyNeedsYou(t, reason, today) }));
+  const sugg = (t: any) => (t._sug ??= suggestionsFor(db, t, memo));
+  const needsCategoryRaw = rows('needs_category');
   const needsNote = rows('needs_note'), staleProvisionals = rows('stale'), flagged = rows('flagged');
   // One entry per transaction, however many things are wrong with it, so a person resolves it once and sees every open reason.
   const merged = new Map<number, any>();
-  for (const t of [...needsCategory, ...flagged, ...needsNote, ...staleProvisionals]) {
+  for (const t of [...needsCategoryRaw, ...flagged, ...needsNote, ...staleProvisionals]) {
     const m = merged.get(t.id);
-    if (m) { m.reasons.push({ reason: t.reason, why: t.why }); if (t.suggestions && !m.suggestions) m.suggestions = t.suggestions; }
+    if (m) m.reasons.push({ reason: t.reason, why: t.why });
     else merged.set(t.id, { ...t, reasons: [{ reason: t.reason, why: t.why }] });
   }
   const catNames = db.prepare("SELECT GROUP_CONCAT(DISTINCT c.name) n FROM transaction_splits s JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=? AND c.system=0");
-  const items = [...merged.values()].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || b.id - a.id).slice(0, 200).map((t) => ({ ...t, categories: (catNames.get(t.id) as { n: string | null }).n }));
+  const items = [...merged.values()].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || b.id - a.id).slice(0, limit)
+    .map((t) => ({ ...t, ...(t.reasons.some((r: any) => r.reason === 'needs_category') ? { suggestions: sugg(t) } : {}), categories: (catNames.get(t.id) as { n: string | null }).n }));
+  const needsCategory = needsCategoryRaw.map((t, i) => ({ ...t, suggestions: i < limit ? sugg(t) : [] }));
   return {
-    counts: { total: unique, needsCategory: count(W.needs_category), needsNote: count(W.needs_note), stale: count(W.stale), flagged: count(W.flagged) },
+    counts: inboxCounts(db),
     items,
     needsCategory, needsNote, staleProvisionals, flagged,
     greenlightRequests: db.prepare("SELECT r.*, p.display_name FROM greenlight_requests r JOIN greenlight_profiles p ON p.id=r.profile_id WHERE r.status='pending'").all(),

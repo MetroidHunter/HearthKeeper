@@ -48,6 +48,29 @@ export function confirmBox(o: { title: string; body: TemplateResult | string; co
   return showDialog<boolean>((close) => html`<h3 class="title">${o.title}</h3><div>${o.body}</div>
     <div class="actions"><button class="cancel" @click=${() => close(false)}>${o.cancel ?? 'Cancel'}</button><button class=${o.danger ? 'primary danger-solid confirm' : 'primary confirm'} autofocus @click=${() => close(true)}>${o.confirm ?? 'Yes'}</button></div>`, { dismiss: false }).then((v) => v === true);
 }
+/**
+ * Block all input while something is being saved. A modal dialog (so nothing behind it can be clicked or typed into, and Esc is ignored)
+ * that becomes visible only if the work takes more than a moment, so quick saves do not flash it. Nested calls just run.
+ */
+let busyDepth = 0;
+export async function withBusy<T>(label: string, work: () => Promise<T>): Promise<T> {
+  if (busyDepth > 0) return work();
+  busyDepth++;
+  const d = document.createElement('dialog'); d.className = 'busy'; d.setAttribute('role', 'alert'); d.setAttribute('aria-busy', 'true'); d.setAttribute('aria-label', label);
+  d.addEventListener('cancel', (e) => e.preventDefault()); // Esc does not dismiss it
+  render(html`<span class="spinner" aria-hidden="true"></span><span class="busy-label">${label}</span><span class="muted small">Please wait, nothing else can be changed meanwhile.</span>`, d);
+  document.body.append(d); d.showModal();
+  try { return await work(); } finally { busyDepth--; d.close(); d.remove(); }
+}
+/** First / Previous / page number / Next / Last and a rows-per-page choice, the same controls as the Transactions table. */
+export function pagerBar(o: { page: number; total: number; size: number; sizes: number[]; onPage: (n: number) => void; onSize: (n: number) => void }) {
+  const pages = Math.max(1, Math.ceil(o.total / o.size)); const from = o.total ? o.page * o.size + 1 : 0, to = Math.min(o.total, (o.page + 1) * o.size);
+  const go = (n: number) => o.onPage(Math.min(pages - 1, Math.max(0, n)));
+  return html`<div class="pager"><button class="first" ?disabled=${o.page === 0} @click=${() => go(0)}>« First</button><button class="prev" ?disabled=${o.page === 0} @click=${() => go(o.page - 1)}>‹ Previous</button>
+    <span class="muted">${from.toLocaleString()}–${to.toLocaleString()} of ${o.total.toLocaleString()} · page <input class="jump" type="number" min="1" max=${pages} style="width:4.5rem" .value=${String(o.page + 1)} @change=${(e: any) => go(Number(e.target.value) - 1)} /> of ${pages.toLocaleString()}</span>
+    <button class="next" ?disabled=${o.page >= pages - 1} @click=${() => go(o.page + 1)}>Next ›</button><button class="last" ?disabled=${o.page >= pages - 1} @click=${() => go(pages - 1)}>Last »</button>
+    <label class="right muted small">Per page <select class="size" @change=${(e: any) => o.onSize(Number(e.target.value))}>${o.sizes.map((n) => html`<option ?selected=${n === o.size}>${n}</option>`)}</select></label></div>`;
+}
 /** A short confirmation that something was saved (bottom of the screen, gone in a few seconds). */
 export function toast(message: string) {
   const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = message; document.body.append(t);

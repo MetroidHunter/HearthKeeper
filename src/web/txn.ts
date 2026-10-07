@@ -1,7 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { api, money, fmtDate } from './api.js';
 import { amt, pace } from './shared.js';
-import { showDialog, alertBox, promptBox, toast, catSelect, pendingBadge, type PickCat } from './ui.js';
+import { showDialog, alertBox, promptBox, toast, catSelect, pendingBadge, withBusy, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
 export interface Suggestion { id: number; name: string; why: string }
@@ -60,13 +60,14 @@ export const txnHead = () => html`<div class="trow thead" aria-hidden="true"><di
  * holds anything else that is open (a flag, a charge that never posted) and opens the raw details: the bank's line, the account, why it
  * needs you, nearby transactions and "not a budget item". The row stays, showing what is still open, until nothing is.
  */
-export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { reason: string; why: string }[]; categories?: string | null }, hooks: { reload: () => void } = { reload: () => undefined }): TemplateResult {
+export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { reason: string; why: string }[]; categories?: string | null }, hooks: { reload: () => unknown } = { reload: () => undefined }): TemplateResult {
   const reasons = t.reasons ?? (t.reason ? [{ reason: t.reason, why: t.why ?? '' }] : []);
   const has = (r: string) => reasons.find((x) => x.reason === r);
   const picks = t.suggestions ?? [];
+  // Every save blocks input behind a "working" modal until the change AND the refreshed list are in, so nothing can be clicked half-way through.
   const attempt = async (what: () => Promise<unknown>, done: string) => {
-    try { await what(); toast(done); } catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); }
-    hooks.reload();
+    try { await withBusy('Saving…', async () => { await what(); await hooks.reload(); }); toast(done); }
+    catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); await hooks.reload(); }
   };
   const decide = async (categoryId: number, i: number | null) => {
     const sug = i === null ? undefined : picks[i];

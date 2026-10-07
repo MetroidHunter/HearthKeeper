@@ -373,3 +373,82 @@ describe('Rules: disabled rules can be hidden and sort last', () => {
     expect($('#show-off'), 'checkbox gone again').to.not.exist;
   });
 });
+
+describe('Backlog: paged, with a loading state and a blocking "working" modal', () => {
+  let trap, real;
+  beforeEach(async () => { await reset(); trap = trapErrors(); real = window.fetch; });
+  afterEach(() => { window.fetch = real; trap.stop(); expect(trap.errs).to.deep.equal([]); });
+  const slow = (re, ms) => { window.fetch = (u, o) => (re.test(String(u)) ? new Promise((r) => setTimeout(r, ms)).then(() => real(u, o)) : real(u, o)); };
+  const seed = async (n, per = 2) => { const chase = (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id; for (let i = 0; i < n; i++) for (let k = 0; k < per; k++) await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: `PAGER SHOP ${String(i).padStart(2, '0')}`, amountCents: -(300 + i * 7 + k) } }); };
+
+  it('shows a loading card first, then one page of merchants with the same controls as the other tables', async () => {
+    await seed(14);
+    slow(/\/api\/backlog/, 500);
+    await mount('/backlog');
+    await waitFor(() => $('.loadingcard'), 'loading card'); expect(text($('.loadingcard'))).to.match(/Loading the backlog/);
+    await waitFor(() => $('.pager'), 'the list'); expect($('.loadingcard')).to.not.exist;
+    window.fetch = real;
+    const groups = () => $$('.group').filter((g) => /PAGER SHOP/.test(text(g)));
+    await waitFor(() => $$('.group').length >= 1, 'groups');
+    expect($$('.group').length, 'at most one page of merchants (10)').to.be.at.most(10);
+    const info = text($('.pager')); expect(info).to.match(/1–10 of \d+/); const total = Number(/of (\d+)/.exec(info)[1]);
+    expect(total).to.be.greaterThan(14);
+    expect(text($('.tabs'))).to.match(/Needs a category \(\d+\)/);
+    // next page
+    const firstKeys = $$('.group').map((g) => g.dataset.key);
+    $('button.next').click(); await waitFor(() => /11–/.test(text($('.pager'))), 'page 2');
+    await waitFor(() => $$('.group').length && $$('.group').every((g) => !firstKeys.includes(g.dataset.key)), 'different merchants on page 2');
+    $('button.first').click(); await waitFor(() => /^1–/.test(text($('.pager')).replace(/^\D+/, '')) || /1–10/.test(text($('.pager'))), 'back to page 1');
+    // rows per page
+    choose($('select.size'), '5'); await waitFor(() => /1–5 of/.test(text($('.pager'))), '5 per page'); expect($$('.group').length).to.be.at.most(5);
+    // server-side filter
+    const box = $('input[type=search]'); setInput(box, 'PAGER SHOP 03');
+    await waitFor(() => /of 1\b/.test(text($('.pager'))) || /1–2 of 2/.test(text($('.pager'))) || groups().length === 1, 'filtered');
+    expect(groups().length).to.equal(1);
+  });
+
+  it('answering a group blocks all input behind a working modal until the page has refreshed, then shows the result', async () => {
+    await seed(3, 3);
+    await mount('/backlog');
+    const group = await waitFor(() => $$('.group').find((g) => /PAGER SHOP 02/.test(text(g))), 'a group');
+    slow(/\/api\/inbox\/bulk/, 900);
+    await pickCat($('.bulkbar hk-category-select', group), 'Eating Out');
+    await confirmDialog(/Yes, categorize/);
+    const busy = await waitFor(() => $('dialog.busy[open]'), 'the working modal');
+    expect(busy.matches(':modal'), 'a real modal: the page behind cannot be used').to.equal(true);
+    expect(text(busy)).to.match(/Categorizing 3 transactions from PAGER SHOP 02/);
+    busy.dispatchEvent(new Event('cancel', { cancelable: true })); // Esc
+    await sleep(50); expect($('dialog.busy[open]'), 'Esc does not dismiss it').to.exist;
+    window.fetch = real;
+    await waitFor(() => !$('dialog.busy'), 'the modal to go once the work is done', 15000);
+    expect($$('.group').some((g) => /PAGER SHOP 02/.test(text(g))), 'the answered group is gone').to.equal(false);
+    expect(text(document.body)).to.match(/PAGER SHOP 02: 3 categorized/);
+    const tx = await api('/api/transactions?q=PAGER%20SHOP%2002'); expect(tx.every((t) => t.splits[0]?.category === 'Eating Out')).to.equal(true);
+  });
+
+  it('answering a single row also blocks input until the list is refreshed', async () => {
+    await mount('/backlog');
+    const row = await waitFor(() => $('.trow.txn[data-cat=missing]'), 'a row');
+    const id = row.dataset.id;
+    slow(/\/categorize/, 700);
+    await pickCat($('.tcat hk-category-select', row), 'Gas'); await confirmDialog(/Yes, categorize/);
+    const busy = await waitFor(() => $('dialog.busy[open]'), 'the working modal'); expect(busy.matches(':modal')).to.equal(true);
+    window.fetch = real;
+    await waitFor(() => !$('dialog.busy'), 'modal gone', 15000);
+    await waitFor(() => !$$('.trow.txn').some((r) => r.dataset.id === id), 'row left the list');
+  });
+
+  it('after a CSV import, Amazon / PayPal / Venmo charges are on the Waiting-on-notes tab straight away', async () => {
+    const chase = (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id;
+    const csv = 'Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n09/03/2026,09/04/2026,AMZN Mktp US*E2E1,Shopping,Sale,-23.99,\n09/05/2026,09/06/2026,PAYPAL *E2E SHOP,Shopping,Sale,-30.00,\n09/07/2026,09/08/2026,TRADER JOES E2E,Groceries,Sale,-44.00,\n';
+    const m = await api('/api/imports/suggest-mapping', { method: 'POST', body: { csv } });
+    const r = await api('/api/imports/commit', { method: 'POST', body: { institution: 'Chase', csv, accountId: chase, spec: { columnMap: m.columnMap, dateFormat: m.dateFormat, signRule: m.signRule, skipRows: 0 } } });
+    expect(r.imported).to.equal(3); expect(r.waitingOnNotes).to.equal(2);
+    await mount('/backlog');
+    await waitFor(() => /Waiting on notes \(\d+\)/.test(text($('.tabs'))), 'tabs');
+    byText('button', /^Waiting on notes/).click();
+    await waitFor(() => $$('.trow.txn').some((x) => /AMZN Mktp US\*E2E1/.test(text(x))) && $$('.trow.txn').some((x) => /PAYPAL \*E2E SHOP/.test(text(x))), 'the wrapper charges');
+    expect($$('.trow.txn').some((x) => /TRADER JOES E2E/.test(text(x)))).to.equal(false);
+    expect($$('.trow.txn').every((x) => x.dataset.note === 'missing')).to.equal(true);
+  });
+});
