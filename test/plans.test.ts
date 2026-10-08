@@ -153,25 +153,17 @@ describe('rebalance and close', () => {
     });
   });
 
-  it('non-discretionary envelopes are asked only after the discretionary ones, and only for what is above budget + cushion (empty cushion = 0)', () => {
+  it('non-discretionary envelopes never give, whatever they hold or whatever their cushion; only discretionary ones above budget + cushion do', () => {
     const h = seedHousehold();
     h.db.prepare("UPDATE categories SET discretionary=0 WHERE name IN ('Family Support','Manicure','Miracle Spending')").run();
-    h.db.prepare("UPDATE categories SET cushion_cents=100000 WHERE name='Family Support'").run(); // keeps its $400 budget + $1,000 cushion: of 10 months * 400 = 4000, 2600 donatable
+    h.db.prepare("UPDATE categories SET cushion_cents=0 WHERE name IN ('Family Support','Manicure')").run(); // even an explicit cushion of 0 does not make them donors
     const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-02', amountCents: -(10 * 30000) - 99999999 });
     setSplits(h.db, t, [{ categoryId: h.cats['Eating Out'], amountCents: -(10 * 30000) - 99999999 }]);
     const p = proposeRebalance(h.db, '2026-10-31');
     const from = (c: string) => p.donorMoves.filter((m) => m.fromCategoryId === h.cats[c]).reduce((a, m) => a + m.cents, 0);
-    expect(from('Family Support')).toBe(10 * 40000 - (40000 + 100000)); // the cushion sits above the monthly budget
-    expect(from('Manicure')).toBe(10 * 12500 - 12500);                   // empty cushion = 0: it keeps exactly this month's budget and gives the rest, though it is non-discretionary
-    expect(from('Miracle Spending')).toBe(10 * 5000 - 5000);
-    // discretionary envelopes are drawn on before any of them: with enough in Groceries, the non-discretionary ones give nothing
-    const small = seedHousehold();
-    small.db.prepare("UPDATE categories SET discretionary=0 WHERE name IN ('Family Support','Manicure','Miracle Spending')").run();
-    const u = createTransaction(small.db, { accountId: small.chase, occurredOn: '2026-10-02', amountCents: -(10 * 30000) - 20000 });
-    setSplits(small.db, u, [{ categoryId: small.cats['Eating Out'], amountCents: -(10 * 30000) - 20000 }]);
-    const q = proposeRebalance(small.db, '2026-10-31');
-    expect(q.donorMoves.filter((m) => ['Family Support', 'Manicure', 'Miracle Spending'].includes(Object.keys(small.cats).find((k) => small.cats[k] === m.fromCategoryId)!))).toEqual([]);
-    expect(q.remainingShortfall).toEqual([]);
+    for (const c of ['Family Support', 'Manicure', 'Miracle Spending']) expect(from(c), c).toBe(0);
+    expect(p.donorMoves.length).toBeGreaterThan(0); // discretionary envelopes (Groceries) still give
+    expect(p.donorMoves.every((m) => !['Family Support', 'Manicure', 'Miracle Spending'].some((n) => h.cats[n] === m.fromCategoryId))).toBe(true);
   });
 
   it('the cushion is the amount kept ABOVE the current monthly budget: $150 budget + $50 cushion means nothing moves until it holds more than $200', async () => {

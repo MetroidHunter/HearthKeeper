@@ -45,8 +45,8 @@ const EPS = 0.5; // sub-cent legacy drift is not an overage (parity tolerance)
 
 /**
  * The cushion is the amount a category keeps ABOVE its current monthly budget: with a $150 budget and a $50 cushion, money is only taken from it
- * when it holds more than $200 (and then only the excess). Empty means 0: the category keeps exactly its budget. Discretionary categories give first; non-discretionary ones
- * are asked only afterwards, and only for what is above their budget + cushion.
+ * when it holds more than $200 (and then only the excess). Empty means 0: the category keeps exactly its budget. Only discretionary categories ever give:
+ * a non-discretionary envelope (mortgage, insurance…) is never drawn on, whatever it holds.
  */
 export function keepFloor(c: { monthly: number; cushion_cents: number | null }): number { return c.monthly + (c.cushion_cents ?? 0); }
 
@@ -57,7 +57,7 @@ export function monthFraction(asOf: string): { day: number; days: number } {
 }
 
 /**
- * Auto-proposal in priority order: the income pool first, then discretionary donors, then non-discretionary ones above budget + cushion (design §13.1).
+ * Auto-proposal in priority order: the income pool first, then discretionary donors above budget + cushion (design §13.1). Non-discretionary envelopes never give.
  * Two rounds, each in priority order. Round 1 covers every overage. Round 2 (unless `topUp: false`) tries to also give each overspent envelope the share of its
  * monthly budget for the days that remain: a category at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 19/30 = $165 in total, so it can
  * get through the rest of the month at its budgeted pace. Round 2 only spends what round 1 left, so a top-up can never take money an overage needed.
@@ -72,10 +72,10 @@ export function proposeRebalance(db: DB, asOf: string, opts: { topUp?: boolean }
   const pools = cats.filter((c) => c.kind === 'income_pool' && c.balance > EPS);
   const poolPayments: RebalanceProposal['poolPayments'] = [], donorMoves: RebalanceProposal['donorMoves'] = [];
   const donatable = (c: CatInfo) => {
-    if (c.kind !== 'expense') return 0;
+    if (c.kind !== 'expense' || !c.discretionary) return 0; // non-discretionary envelopes are never drawn on
     return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - keepFloor(c) + EPS));
   };
-  const tiers = [cats.filter((c) => c.discretionary), cats.filter((c) => !c.discretionary)];
+  const tiers = [cats.filter((c) => c.discretionary)];
   /** Fund `need` (category -> cents wanted) in priority order, pool first; returns what is still unfunded. */
   const fund = (need: Map<number, number>) => {
     for (const pool of pools) {

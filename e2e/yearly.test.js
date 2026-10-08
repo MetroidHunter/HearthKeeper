@@ -28,11 +28,13 @@ describe('Budgets show their yearly amount', () => {
 
   it('the Categories page explains the cushion as "above the budget" and shows what each envelope keeps (budget + cushion)', async () => {
     await mount('/categories');
-    const row = await waitFor(() => $$('tbody tr').find((r) => /Utilities/.test(text(r))), 'Utilities row');
-    expect(text($('.keeps', row))).to.equal('keeps $350.00'); // $300 monthly budget + $50 cushion
+    const row = await waitFor(() => $$('tbody tr').find((r) => /Groceries/.test(text(r))), 'Groceries row');
+    expect(text($('.keeps', row))).to.equal('keeps $800.00'); // $800 monthly budget, empty cushion = 0
+    const util = $$('tbody tr').find((r) => /Utilities/.test(text(r)));
+    expect(text($('.never', util)), 'a non-discretionary envelope never gives').to.equal('never gives'); expect($('.keeps', util)).to.not.exist; expect($('input[aria-label="Cushion above the budget"]', util).disabled).to.equal(true);
     const head = $$('thead th').find((t) => /Cushion/.test(text(t)));
-    expect($$('.keeps').length, 'every expense envelope shows what it keeps').to.be.greaterThan(5);
-    expect(head.dataset.tip).to.match(/ABOVE this month's budget.*\$150 budget and a \$50 cushion.*more than \$200/);
+    expect($$('.keeps').length, 'every discretionary expense envelope shows what it keeps').to.be.greaterThan(3);
+    expect(head.dataset.tip).to.match(/Discretionary envelopes only.*ABOVE this month's budget.*\$150 budget and a \$50 cushion.*more than \$200/);
   });
 });
 
