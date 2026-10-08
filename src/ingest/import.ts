@@ -6,7 +6,7 @@ import { captureEvent } from './events.js';
 import { pairTransfers } from './pairing.js';
 import { runNoteMatcher } from '../notes/matcher.js';
 
-export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; total: number; new: number; alreadyImported: number; matchesProvisional: number; movedToThisAccount?: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
+export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; columns?: string[]; sample?: string[][]; total: number; new: number; alreadyImported: number; matchesProvisional: number; movedToThisAccount?: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
 
 export function getOrCreateProfile(db: DB, institution: string, rows: string[][], spec?: ProfileSpec): { id: number; spec: ProfileSpec; signature: string } | { id: null; signature: string; suggested: ReturnType<typeof suggestMapping> } {
   const hasHeader = spec ? spec.columnMap.hasHeader : suggestMapping(rows).columnMap.hasHeader;
@@ -70,7 +70,7 @@ export function adoptMisfiled(db: DB, institution: string, accountId: number | u
 export function previewImport(db: DB, institution: string, csv: string, spec?: ProfileSpec, opts: { accountId?: number } = {}): ImportPreview {
   const rows = parseCsv(csv);
   const prof = getOrCreateProfile(db, institution, rows, spec);
-  if (prof.id === null) return { profileId: null, signature: prof.signature, suggested: prof.suggested, total: rows.length, new: 0, alreadyImported: 0, matchesProvisional: 0, errors: [], willAutoCategorize: 0, needsAttention: 0 };
+  if (prof.id === null) return { profileId: null, signature: prof.signature, suggested: prof.suggested, columns: (rows[0] ?? []).map((c) => c.trim()), sample: rows.slice(0, 4), total: rows.length, new: 0, alreadyImported: 0, matchesProvisional: 0, errors: [], willAutoCategorize: 0, needsAttention: 0 };
   const parsed = applyProfile(rows, prof.spec);
   const adopted = adoptMisfiled(db, institution, opts.accountId, parsed.rows, true);
   const { fresh, already } = diffAgainstDb(db, importScope(institution, opts.accountId), parsed.rows);

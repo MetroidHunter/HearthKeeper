@@ -68,18 +68,58 @@ describe('Imports: Wells Fargo has several accounts', () => {
     choose($('select', $('.card[style*="dashed"]')), 'Wells Fargo');
     drop(app, 'Checking_1.csv', WF);
     await waitFor(() => /map the columns once/i.test(text(document.body)) || $('.file-account'), 'file list');
-    if (/map the columns once/i.test(text(document.body))) byText('button', /Save mapping/).click();
+    if (/map the columns once/i.test(text(document.body))) {
+      // the wizard offers the real column names (no quote marks), preselected, and a deliberate pick works
+      const dateSel = byText('label', /^Date$/)?.querySelector('select') ?? $$('select').find((x) => $$('option', x).some((o) => o.value === 'DATE'));
+      expect($$('option', dateSel).map((o) => o.value)).to.include.members(['DATE', 'DESCRIPTION', 'AMOUNT']);
+      expect(dateSel.value, 'date column preselected').to.equal('DATE');
+      choose(dateSel, 'DATE');
+      byText('button', /Save mapping/).click();
+      await waitFor(() => /0 errors/.test(text(document.body)) || $('.file-account'), 'preview without errors');
+    }
     const sel = await waitFor(() => $('.file-account'), 'account chooser');
     expect($$('option', sel).map((o) => text(o))).to.include.members(['Choose the account…', 'Wells Fargo Brys', 'Wells Fargo Miracle', 'Wells Fargo Home']);
     await waitFor(() => byText('button', /^Import/), 'import button');
     expect(byText('button', /^Import/).disabled, 'cannot import until an account is chosen').to.equal(true);
     choose(sel, 'Wells Fargo Home');
     await waitFor(() => !byText('button', /^Import/).disabled, 'enabled after choosing');
+    expect(text(document.body), 'no row errors such as "missing date"').to.not.match(/missing date|[1-9]\d* errors/);
     byText('button', /^Import/).click();
     await waitFor(() => /Done/.test(text(document.body)), 'done');
     const accts = await api('/api/accounts'); const home = accts.find((a) => a.name === 'Wells Fargo Home').id;
     const tx = await api('/api/transactions?q=&limit=50');
     const mine = tx.filter((t) => t.account_id === home);
     expect(mine.map((t) => t.descriptor_clean).sort()).to.deep.equal(['CASH APP*CHRISTOPH', 'ORCA', 'ROCKET MORTGAGE LOAN']);
+  });
+});
+
+describe('Imports: saved column mappings', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('shows each saved mapping in words and lets you delete it (after confirming); the layout then asks again', async () => {
+    const app = await mount('/imports');
+    drop(app, 'chase.csv', CHASE);
+    await waitFor(() => byText('button', /Save mapping/), 'wizard');
+    byText('button', /Save mapping/).click();
+    await waitFor(() => /3 new/.test(text(document.body)), 'preview');
+    const box = $('details.mappings'); expect(box, 'saved mappings section').to.exist;
+    await waitFor(() => $$('.mapping-row', box).length >= 1, 'the new mapping is listed');
+    box.open = true;
+    const row = $$('.mapping-row', box).find((r) => /Chase/.test(text(r)));
+    expect(text(row)).to.match(/date: Transaction Date/).and.match(/amount: Amount/).and.match(/description: Description/).and.match(/has a header row/);
+    $('button.mapping-del', row).click();
+    const dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Delete this saved mapping/.test(text(d))), 'confirmation');
+    expect(text(dlg)).to.match(/No transactions are changed/);
+    byText('button', /^Cancel$/, dlg).click();
+    await new Promise((r) => setTimeout(r, 80));
+    expect($$('.mapping-row', box).some((r) => /Chase/.test(text(r))), 'cancel keeps it').to.equal(true);
+    $('button.mapping-del', row).click();
+    const dlg2 = await waitFor(() => $$('dialog').find((d) => d.open && /Delete this saved mapping/.test(text(d))), 'confirmation again');
+    byText('button', /Delete mapping/, dlg2).click();
+    await waitFor(() => !$$('.mapping-row', box).some((r) => /Chase/.test(text(r))), 'deleted');
+    expect((await api('/api/imports/profiles')).some((p) => p.institution === 'Chase')).to.equal(false);
+    await waitFor(() => /map the columns once/i.test(text(document.body)), 'the loaded file asks for its mapping again');
   });
 });

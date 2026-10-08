@@ -2,16 +2,16 @@ import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api } from '../api.js';
-import { pageHead, th } from '../ui.js';
+import { pageHead, th, confirmBox, toast } from '../ui.js';
 
 interface FileItem { name: string; text: string; accountId?: number }
 
 /** CSV upload (design §8.3): drag-and-drop, mapping wizard on first sight of a layout, preview before commit, coverage. */
 @customElement('hk-imports')
 export class Imports extends Page {
-  @state() accounts: any[] = []; @state() institution = 'Chase'; @state() files: FileItem[] = []; @state() preview: any = null; @state() mapping: any = null; @state() result: any = null; @state() coverage: any[] = []; @state() kind: 'bank' | 'notes' = 'bank'; @state() notesSource = 'amazon'; @state() drag = false;
+  @state() accounts: any[] = []; @state() profiles: any[] = []; @state() institution = 'Chase'; @state() files: FileItem[] = []; @state() preview: any = null; @state() mapping: any = null; @state() result: any = null; @state() coverage: any[] = []; @state() kind: 'bank' | 'notes' = 'bank'; @state() notesSource = 'amazon'; @state() drag = false;
   connectedCallback() { super.connectedCallback(); this.cov(); }
-  async cov() { await this.run(async () => { [this.coverage, this.accounts] = await Promise.all([api.get('/api/coverage'), api.get('/api/accounts')]); }); }
+  async cov() { await this.run(async () => { [this.coverage, this.accounts, this.profiles] = await Promise.all([api.get('/api/coverage'), api.get('/api/accounts'), api.get('/api/imports/profiles')]); }); }
   /** The accounts a bank CSV can belong to. With only one, it is chosen for you; with several you must say which, so a file is never filed on the wrong one. */
   private options() { return this.accounts.filter((a) => a.institution === this.institution); }
   private ready() { return this.kind === 'notes' || this.files.every((f) => f.accountId); }
@@ -28,8 +28,8 @@ export class Imports extends Page {
     const f = this.files[0]; if (!f) return;
     await this.run(async () => {
       const p = await api.post('/api/imports/preview', { institution: this.institution, csv: f.text, spec: this.mapping ?? undefined, accountId: f.accountId });
-      if (p.profileId === null) { this.mapping = { columnMap: p.suggested.columnMap, dateFormat: p.suggested.dateFormat, signRule: p.suggested.signRule, skipRows: 0 }; this.preview = { needsMapping: true, header: f.text.split('\n').slice(0, 4) }; }
-      else this.preview = p;
+      if (p.profileId === null) { this.mapping = { columnMap: p.suggested.columnMap, dateFormat: p.suggested.dateFormat, signRule: p.suggested.signRule, skipRows: 0 }; this.preview = { needsMapping: true, header: (p.sample ?? []).map((r: string[]) => r.join(' | ')), columns: p.columns ?? [] }; }
+      else { this.preview = p; this.profiles = await api.get('/api/imports/profiles'); } // a mapping just used is saved: show it
     });
   }
   async commit() {
@@ -43,13 +43,25 @@ export class Imports extends Page {
       this.result = agg; this.files = []; this.preview = null; this.cov();
     });
   }
+  /** One saved mapping in words, e.g. "date: DATE · amount: AMOUNT · description: DESCRIPTION". */
+  mappingText(p: any) {
+    const m = p.columnMap, col = (v: any) => (typeof v === 'number' ? `column ${v + 1}` : String(v).replace(/^"+|"+$/g, ''));
+    return [['date', m.date], ['posted', m.postDate], ['amount', m.amount], ['debit', m.debit], ['credit', m.credit], ['description', m.description], ['category', m.category], ['note', m.note]].filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `${k}: ${col(v)}`).join(' · ');
+  }
+  async deleteProfile(p: any) {
+    if (!await confirmBox({ title: 'Delete this saved mapping?', body: html`<b>${p.institution}</b>: ${this.mappingText(p)}.<br>No transactions are changed. The next time you upload a file with this layout you will be asked to map its columns again.`, confirm: 'Delete mapping', danger: true })) return;
+    await this.run(() => api.del(`/api/imports/profiles/${p.id}`)); toast('Mapping deleted'); await this.cov(); if (this.files.length && this.kind === 'bank') { this.mapping = null; await this.doPreview(); }
+  }
   colSel(key: string, label: string) {
-    const m = this.mapping.columnMap, hdr = this.files[0].text.split('\n')[0].split(',');
+    const m = this.mapping.columnMap, hdr: string[] = this.preview?.columns ?? []; // the columns as the server parsed them (quotes removed), never a raw split of the line
     return html`<label class="muted">${label} <select @change=${(e: any) => { const v = e.target.value; m[key] = v === '' ? undefined : m.hasHeader ? v : Number(v); }}><option value="">—</option>${hdr.map((h, i) => html`<option value=${m.hasHeader ? h.trim() : i} ?selected=${m[key] === (m.hasHeader ? h.trim() : i)}>${m.hasHeader ? h.trim() : `col ${i + 1}`}</option>`)}</select></label>`;
   }
   render() {
     return html`${pageHead('Imports', 'Bring in bank transactions from CSV files, and notes from Amazon, Venmo and PayPal exports.', 'The first time a file layout shows up you tell it which column is the date, amount and description; that choice is remembered. Duplicates are skipped, pending charges are matched to the posted ones when they arrive, and transfers between your own accounts are detected and hidden. Nothing is changed until you confirm the preview.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <div class="card"><b>Coverage</b>${this.coverage.map((c) => html`<div class="row"><span class="grow">${c.institution}</span><span class="muted">last txn ${c.last_txn ?? 'never'} · last upload ${c.last_upload ?? 'never'}</span>${c.stale ? html`<span class="badge bad">stale</span>` : html`<span class="badge">ok</span>`}</div>`)}</div>
+      <details class="card mappings"><summary><b>Saved column mappings</b> <span class="muted small">(${this.profiles.length}) · what you told the importer about each file layout</span></summary>
+        ${this.profiles.length ? this.profiles.map((p) => html`<div class="row mapping-row" data-id=${p.id}><span class="grow"><b>${p.institution}</b> <span class="muted small">${p.columnMap.hasHeader ? 'has a header row' : 'no header row'}${p.skip_rows ? ` · skips ${p.skip_rows} row(s)` : ''}</span><div class="small">${this.mappingText(p)}</div><div class="muted small">dates ${p.date_format} · ${p.sign_rule === 'invert' ? 'charges are positive (inverted)' : 'amounts used as they are'}</div></span><button class="danger mapping-del" @click=${() => this.deleteProfile(p)}>Delete</button></div>`)
+          : html`<p class="muted small" style="margin:8px 0 0">None yet. The first file of each layout asks you to map its columns, and the choice is saved here.</p>`}</details>
       <div class="tabs"><button class=${this.kind === 'bank' ? 'primary' : ''} @click=${() => { this.kind = 'bank'; this.preview = null; }}>Bank / card CSV</button><button class=${this.kind === 'notes' ? 'primary' : ''} @click=${() => { this.kind = 'notes'; this.preview = null; }}>Amazon / Venmo / PayPal notes CSV</button></div>
       <div class="card" style="border-style:dashed;text-align:center;padding:28px ${this.drag ? ';background:var(--chip)' : ''}" @dragover=${(e: DragEvent) => { e.preventDefault(); this.drag = true; }} @dragleave=${() => (this.drag = false)} @drop=${(e: DragEvent) => { e.preventDefault(); this.drag = false; this.take(e.dataTransfer?.files ?? null); }}>
         <div>Drop one or more CSV files here, or <input type="file" accept=".csv,text/csv" multiple @change=${(e: any) => this.take(e.target.files)} /></div>

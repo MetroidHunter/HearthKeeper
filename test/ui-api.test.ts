@@ -169,3 +169,21 @@ describe('inbox items: one entry per transaction with every open reason', () => 
     expect(rows[0].id).not.toBe(old);
   });
 });
+
+describe('saved import mappings', () => {
+  it('lists the saved column mappings and deletes one without touching transactions', async () => {
+    const h = seedHousehold(); const a = app(h);
+    const { previewImport, commitImport } = await import('../src/ingest/import.js');
+    const csv = '"DATE","DESCRIPTION","AMOUNT"\n"09/23/2026","ROCKET MORTGAGE  LOAN       261003 4288057","-25.00"\n';
+    const spec = { columnMap: { hasHeader: true, date: 'DATE', amount: 'AMOUNT', description: 'DESCRIPTION' }, dateFormat: 'M/d/yyyy', signRule: 'as_is' as const, skipRows: 0 };
+    commitImport(h.db, 'Wells Fargo', csv, spec);
+    const list = (await a.inject({ url: '/api/imports/profiles' })).json();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ institution: 'Wells Fargo', date_format: 'M/d/yyyy', sign_rule: 'as_is', columnMap: { date: 'DATE', amount: 'AMOUNT', description: 'DESCRIPTION' } });
+    expect((await a.inject({ method: 'DELETE', url: '/api/imports/profiles/999', headers: H })).statusCode).toBe(404);
+    expect((await a.inject({ method: 'DELETE', url: `/api/imports/profiles/${list[0].id}`, headers: H })).json()).toEqual({ ok: true });
+    expect((await a.inject({ url: '/api/imports/profiles' })).json()).toEqual([]);
+    expect((h.db.prepare('SELECT COUNT(*) c FROM transactions WHERE descriptor_raw LIKE ?').get('ROCKET%') as any).c).toBe(1); // transactions untouched
+    expect(previewImport(h.db, 'Wells Fargo', csv).profileId).toBeNull(); // the layout asks for its mapping again
+  });
+});

@@ -38,10 +38,13 @@ export function layoutSignature(rows: string[][], hasHeader: boolean, skipRows =
 export interface ParsedRow { date: string; postedOn?: string; amountCents: number; description: string; note?: string; category?: string; line: number }
 export interface RowError { line: number; error: string }
 
+/** Column names are compared without case, spaces or stray quote marks: a mapping saved as `"DATE"` (quotes included) still finds the column `DATE`. */
+const colName = (s: string) => s.trim().replace(/^["']+|["']+$/g, '').trim().toLowerCase();
 function pick(row: string[], header: string[] | null, ref: ColRef | undefined): string | undefined {
   if (ref === undefined) return undefined;
   if (typeof ref === 'number') return row[ref];
-  const i = header?.findIndex((h) => h.trim().toLowerCase() === ref.trim().toLowerCase()) ?? -1;
+  const want = colName(ref);
+  const i = header?.findIndex((h) => colName(h) === want) ?? -1;
   return i >= 0 ? row[i] : undefined;
 }
 function parseDate(v: string, fmt: string): string {

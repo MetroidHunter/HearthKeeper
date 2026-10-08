@@ -291,6 +291,15 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/months', async () => monthsOverview(db, now())); // month by month: what still needs doing, and a few numbers
 
   /* ---------- imports ---------- */
+  // Saved column mappings (one per file layout). Deleting one never touches transactions: the next upload of that layout simply asks for the columns again.
+  app.get('/api/imports/profiles', async () => (db.prepare('SELECT id, name, institution, header_signature, column_map_json, date_format, sign_rule, skip_rows FROM import_profiles ORDER BY institution, id').all() as any[])
+    .map(({ column_map_json, ...p }) => ({ ...p, columnMap: JSON.parse(column_map_json) })));
+  app.delete('/api/imports/profiles/:id', async (req: any, reply) => {
+    const id = Number(req.params.id); const p = db.prepare('SELECT * FROM import_profiles WHERE id=?').get(id);
+    if (!p) return reply.code(404).send({ error: 'no such mapping' });
+    db.prepare('DELETE FROM import_profiles WHERE id=?').run(id); audit(db, 'import_profile', id, 'delete', p, undefined, actor(req));
+    return { ok: true };
+  });
   app.post('/api/imports/preview', BIG, async (req) => { const b = rec(req.body); return previewImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId }); });
   app.post('/api/imports/suggest-mapping', BIG, async (req) => suggestMapping(parseCsv(rec(req.body).csv)));
   app.post('/api/imports/commit', BIG, async (req) => { const b = rec(req.body); return commitImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId, filename: b.filename }); });

@@ -98,3 +98,25 @@ describe('importing a file again with an account named', () => {
     expect(commitImport(h.db, 'Wells Fargo', csv, spec, { accountId: second }).imported).toBe(0); // and now it is an ordinary re-import
   });
 });
+
+describe('quoted CSV headers (Wells Fargo checking exports)', () => {
+  const csv = '"DATE","DESCRIPTION","AMOUNT","CHECK #","STATUS"\n"09/23/2026","ROCKET MORTGAGE  LOAN       261003 4288057         BRYS *SEPULVEDA","-25.00","","Posted"\n"09/24/2026","VENMO            PAYMENT    260924 1053527923194   MIRACLE SEPULVEDA","-5.00","","Posted"\n';
+  it('a mapping whose column names kept their quote marks (as the old wizard saved them) still finds the columns', async () => {
+    const { seedHousehold } = await import('./helpers.js');
+    const { previewImport, commitImport } = await import('../src/ingest/import.js');
+    const h = seedHousehold();
+    const bad = { columnMap: { hasHeader: true, date: '"DATE"', amount: '"AMOUNT"', description: '"DESCRIPTION"' }, dateFormat: 'M/d/yyyy', signRule: 'as_is' as const, skipRows: 0 };
+    const p = previewImport(h.db, 'Wells Fargo', csv, bad);
+    expect(p.errors).toEqual([]); expect(p.total).toBe(2);
+    // and the saved profile keeps working without a mapping being sent again
+    expect(previewImport(h.db, 'Wells Fargo', csv).errors).toEqual([]);
+    expect(commitImport(h.db, 'Wells Fargo', csv).imported).toBe(2);
+  });
+  it('an unmapped layout reports its columns parsed (no quote marks) so the wizard can offer them', async () => {
+    const { seedHousehold } = await import('./helpers.js');
+    const { previewImport } = await import('../src/ingest/import.js');
+    const p = previewImport(seedHousehold().db, 'Wells Fargo', csv);
+    expect(p.profileId).toBeNull();
+    expect(p.columns).toEqual(['DATE', 'DESCRIPTION', 'AMOUNT', 'CHECK #', 'STATUS']);
+  });
+});
