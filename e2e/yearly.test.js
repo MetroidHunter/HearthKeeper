@@ -35,3 +35,26 @@ describe('Budgets show their yearly amount', () => {
     expect(head.dataset.tip).to.match(/ABOVE this month's budget.*\$150 budget and a \$50 cushion.*more than \$200/);
   });
 });
+
+describe('The yearly amount never pushes the Budget table out of line', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(async () => { trap.stop(); expect(trap.errs).to.deep.equal([]); const { setViewport } = await import('@web/test-runner-commands'); await setViewport({ width: 800, height: 600 }); });
+  it('the pencil stays beside the target, and every row keeps one line of height, even with a long yearly figure', async () => {
+    const { api } = await import('./helpers.js'); const { setViewport } = await import('@web/test-runner-commands'); await setViewport({ width: 1280, height: 900 }); // a desktop window, as in the screenshot
+    const cats = await api('/api/categories'); const g = cats.find((c) => c.name === 'Groceries');
+    await api(`/api/categories/${g.id}/budget`, { method: 'POST', body: { monthlyCents: 123456789, effectiveMonth: new Date().toISOString().slice(0, 7) } }); // $1,234,567.89 a month
+    await mount('/budget');
+    const rows = await waitFor(() => { const r = $$('tbody tr.clickable'); return r.length > 3 && r; }, 'rows');
+    const heights = new Set();
+    for (const r of rows) {
+      const tgt = $('.tgt', r).getBoundingClientRect(), pen = $('button.edit', r).getBoundingClientRect();
+      expect(pen.top, `${text($('b', r))}: pencil is level with the target`).to.be.lessThan(tgt.bottom); expect(pen.bottom).to.be.greaterThan(tgt.top);
+      expect(pen.left, 'pencil is to the right of the amount').to.be.at.least(tgt.right - 1);
+      if ($('.yearly', r)) heights.add(Math.round(r.getBoundingClientRect().height)); // rows with no budget have no second line, so only compare rows that show one
+    }
+    const gro = rows.find((r) => /Groceries/.test(text(r)));
+    expect(text($('.yearly', gro))).to.match(/\$14,814,814\.68 a year/);
+    expect(Math.max(...heights) - Math.min(...heights), `rows are all about the same height: ${JSON.stringify(rows.map((r) => [text($('b', r)), Math.round(r.getBoundingClientRect().height), !!$('.yearly', r)]))} viewport ${innerWidth}`).to.be.at.most(6);
+  });
+});
