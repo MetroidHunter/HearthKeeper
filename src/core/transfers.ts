@@ -43,9 +43,10 @@ const EPS = 0.5; // sub-cent legacy drift is not an overage (parity tolerance)
 
 /**
  * The cushion is the amount a category keeps ABOVE its current monthly budget: with a $150 budget and a $50 cushion, money is only taken from it
- * when it holds more than $200 (and then only the excess). Not set: a discretionary category can give everything it has, a non-discretionary one is immune.
+ * when it holds more than $200 (and then only the excess). Empty means 0: the category keeps exactly its budget. Discretionary categories give first; non-discretionary ones
+ * are asked only afterwards, and only for what is above their budget + cushion.
  */
-export function keepFloor(c: { monthly: number; cushion_cents: number | null }): number | null { return c.cushion_cents === null ? null : c.monthly + c.cushion_cents; }
+export function keepFloor(c: { monthly: number; cushion_cents: number | null }): number { return c.monthly + (c.cushion_cents ?? 0); }
 
 /** Auto-proposal in priority order: Gig Income pool first, then discretionary donors, then non-discretionary above budget + cushion (design §13.1). */
 export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
@@ -71,9 +72,7 @@ export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
   }
   const donatable = (c: CatInfo) => {
     if (c.kind !== 'expense') return 0;
-    const keep = keepFloor(c) ?? (c.discretionary ? 0 : null);
-    if (keep === null) return 0; // non-discretionary, no cushion: immune
-    return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - keep + EPS));
+    return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - keepFloor(c) + EPS));
   };
   const tiers = [cats.filter((c) => c.discretionary), cats.filter((c) => !c.discretionary)];
   for (const o of over) {
