@@ -4,9 +4,10 @@ import { classify, createTransaction } from '../core/transactions.js';
 import { applyProfile, layoutSignature, normalizeDescriptor, parseCsv, rowFingerprint, suggestMapping, type ParsedRow, type ProfileSpec } from './csv.js';
 import { captureEvent } from './events.js';
 import { pairTransfers } from './pairing.js';
+import { claimHistory, dedupeAgainstHistory, matchHistory, similarity } from './history.js';
 import { runNoteMatcher } from '../notes/matcher.js';
 
-export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; columns?: string[]; sample?: string[][]; total: number; new: number; alreadyImported: number; matchesProvisional: number; movedToThisAccount?: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
+export interface ImportPreview { profileId: number | null; signature: string; suggested?: ReturnType<typeof suggestMapping>; columns?: string[]; sample?: string[][]; total: number; new: number; alreadyImported: number; matchesProvisional: number; movedToThisAccount?: number; inHistory?: number; errors: { line: number; error: string }[]; willAutoCategorize: number; needsAttention: number }
 
 export function getOrCreateProfile(db: DB, institution: string, rows: string[][], spec?: ProfileSpec): { id: number; spec: ProfileSpec; signature: string } | { id: null; signature: string; suggested: ReturnType<typeof suggestMapping> } {
   const hasHeader = spec ? spec.columnMap.hasHeader : suggestMapping(rows).columnMap.hasHeader;
@@ -73,11 +74,13 @@ export function previewImport(db: DB, institution: string, csv: string, spec?: P
   if (prof.id === null) return { profileId: null, signature: prof.signature, suggested: prof.suggested, columns: (rows[0] ?? []).map((c) => c.trim()), sample: rows.slice(0, 4), total: rows.length, new: 0, alreadyImported: 0, matchesProvisional: 0, errors: [], willAutoCategorize: 0, needsAttention: 0 };
   const parsed = applyProfile(rows, prof.spec);
   const adopted = adoptMisfiled(db, institution, opts.accountId, parsed.rows, true);
-  const { fresh, already } = diffAgainstDb(db, importScope(institution, opts.accountId), parsed.rows);
+  const diff = diffAgainstDb(db, importScope(institution, opts.accountId), parsed.rows);
+  const hist = matchHistory(db, diff.fresh, (r) => rowFingerprint(importScope(institution, opts.accountId), r.date, r.amountCents, r.description)); // rows already in your imported history are not new
+  const fresh = diff.fresh.filter((r) => !hist.has(r)), already = diff.already + hist.size;
   const accountId = defaultAccount(db, institution, opts.accountId);
   const provMatches = assignProvisionals(db, accountId, fresh).size;
   const moved = Math.min(adopted, fresh.length); // rows an earlier import filed under the wrong account: they are moved, not added again
-  return { profileId: prof.id, signature: prof.signature, total: parsed.rows.length, new: fresh.length - moved, alreadyImported: already + moved, movedToThisAccount: moved, matchesProvisional: provMatches, errors: parsed.errors, willAutoCategorize: 0, needsAttention: fresh.length - moved - provMatches };
+  return { profileId: prof.id, signature: prof.signature, total: parsed.rows.length, new: fresh.length - moved, alreadyImported: already + moved, movedToThisAccount: moved, inHistory: hist.size, matchesProvisional: provMatches, errors: parsed.errors, willAutoCategorize: 0, needsAttention: fresh.length - moved - provMatches };
 }
 
 function defaultAccount(db: DB, institution: string, accountId?: number): number {
@@ -87,7 +90,7 @@ function defaultAccount(db: DB, institution: string, accountId?: number): number
   return a.id;
 }
 
-export interface ImportResult { imported: number; alreadyImported: number; movedToThisAccount: number; supersededProvisionals: number; categorized: number; needsCategory: number; errors: { line: number; error: string }[]; transferPairs: number; waitingOnNotes: number; notesMatched: number }
+export interface ImportResult { imported: number; alreadyImported: number; alreadyInHistory: number; duplicatesHidden: number; movedToThisAccount: number; supersededProvisionals: number; categorized: number; needsCategory: number; errors: { line: number; error: string }[]; transferPairs: number; waitingOnNotes: number; notesMatched: number }
 
 export function commitImport(db: DB, institution: string, csv: string, spec?: ProfileSpec, opts: { accountId?: number; filename?: string } = {}): ImportResult {
   const rows = parseCsv(csv);
@@ -99,7 +102,10 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
   return db.transaction(() => {
     const scope = importScope(institution, opts.accountId);
     const adopted = adoptMisfiled(db, institution, opts.accountId, parsed.rows);
-    const { fresh, already } = diffAgainstDb(db, scope, parsed.rows);
+    const diff = diffAgainstDb(db, scope, parsed.rows);
+    const fpOf = (r: ParsedRow) => rowFingerprint(scope, r.date, r.amountCents, r.description);
+    const hist = matchHistory(db, diff.fresh, fpOf); claimHistory(db, hist, fpOf); // a row that is already in the history imported from the old sheet is the same payment, not a new one
+    const fresh = diff.fresh.filter((r) => !hist.has(r)), already = diff.already + hist.size;
     const provFor = assignProvisionals(db, accountId, fresh); // exact matches first, then unique tolerance matches over what is left
     let superseded = 0, categorized = 0, needs = 0;
     for (const r of fresh) {
@@ -110,24 +116,19 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
       const c = classify(db, id);
       if (c.outcome === 'categorized' || c.outcome === 'internal_transfer' || c.outcome === 'ignored') categorized++; else needs++;
     }
+    const dates = parsed.rows.map((r) => r.date).sort();
+    const cleaned = dates.length ? dedupeAgainstHistory(db, { from: dates[0], to: dates[dates.length - 1] }) : { duplicates: 0 }; // and tidy any row an earlier import put on top of history
     const pairs = pairTransfers(db);
     db.prepare("UPDATE accounts SET last_synced_at=datetime('now') WHERE id=?").run(accountId);
     audit(db, 'import', prof.id, 'commit', undefined, { institution, imported: fresh.length, already });
     // Amazon / Venmo / PayPal charges need a note: flag them now (and match any notes already received), not whenever the 10-minute timer next runs
     const nm = runNoteMatcher(db);
     const waitingOnNotes = (db.prepare("SELECT COUNT(*) c FROM transactions WHERE account_id=? AND status!='void' AND note_state IN ('awaiting_note','needs_note','ambiguous')").get(accountId) as { c: number }).c;
-    return { imported: fresh.length, alreadyImported: already + adopted, movedToThisAccount: adopted, supersededProvisionals: superseded, categorized, needsCategory: needs, errors: parsed.errors, transferPairs: pairs.paired, waitingOnNotes, notesMatched: nm.matched };
+    return { imported: fresh.length, alreadyImported: already + adopted, alreadyInHistory: hist.size, duplicatesHidden: cleaned.duplicates, movedToThisAccount: adopted, supersededProvisionals: superseded, categorized, needsCategory: needs, errors: parsed.errors, transferPairs: pairs.paired, waitingOnNotes, notesMatched: nm.matched };
   })();
 }
 
 /* ---------- provisional -> posted (design §8.6) ---------- */
-const tokens = (s: string) => new Set(normalizeDescriptor(s).split(' ').filter((t) => t.length > 2));
-function similarity(a: string, b: string): number {
-  const A = tokens(a), B = tokens(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0; for (const t of A) if (B.has(t)) inter++;
-  return inter / Math.min(A.size, B.size);
-}
 export interface MatchOpts { tolerancePct: number; windowDays: number; minSimilarity: number }
 export const DEFAULT_MATCH: MatchOpts = { tolerancePct: 0.25, windowDays: 5, minSimilarity: 0.5 };
 
@@ -147,15 +148,18 @@ const openProvisionals = (db: DB, accountId: number) => db.prepare("SELECT id, o
 export function assignProvisionals(db: DB, accountId: number, rows: ParsedRow[], o: MatchOpts = DEFAULT_MATCH): Map<ParsedRow, number> {
   const provs = openProvisionals(db, accountId); const taken = new Set<number>(); const out = new Map<ParsedRow, number>();
   if (!provs.length) return out;
+  // Candidates that are the same alert twice (same day, amount and text: two identical coffees) are interchangeable, so a tie between them is not ambiguous: take the first.
+  const byId = new Map<number, any>(provs.map((p) => [p.id, p]));
+  const twins = (a: number, b: number) => { const x = byId.get(a), y = byId.get(b); return x.occurred_on === y.occurred_on && x.amount_cents === y.amount_cents && x.descriptor_raw === y.descriptor_raw; };
   for (const r of rows) { // pass 1
-    const ex = candidatesFor(provs, r, o, taken).filter((c) => c.exact).sort((a, b) => b.sim - a.sim || a.days - b.days);
-    if (!ex.length || (ex.length > 1 && ex[0].sim === ex[1].sim && ex[0].days === ex[1].days)) continue;
+    const ex = candidatesFor(provs, r, o, taken).filter((c) => c.exact).sort((a, b) => b.sim - a.sim || a.days - b.days || a.id - b.id);
+    if (!ex.length || (ex.length > 1 && ex[0].sim === ex[1].sim && ex[0].days === ex[1].days && !ex.filter((c) => c.sim === ex[0].sim && c.days === ex[0].days).every((c) => twins(c.id, ex[0].id)))) continue;
     out.set(r, ex[0].id); taken.add(ex[0].id);
   }
   for (const r of rows) { // pass 2
     if (out.has(r)) continue;
     const cs = candidatesFor(provs, r, o, taken);
-    if (cs.length === 1) { out.set(r, cs[0].id); taken.add(cs[0].id); }
+    if (cs.length >= 1 && cs.every((c) => twins(c.id, cs[0].id))) { out.set(r, cs[0].id); taken.add(cs[0].id); }
   }
   return out;
 }

@@ -126,7 +126,7 @@ describe('migration: merchant rules are retired', () => {
     const { h } = setup();
     h.db.prepare("INSERT INTO rules(match_json, action_json, mode, origin) VALUES ('{\"all_of\":[{\"field\":\"merchant\",\"op\":\"eq\",\"value\":\"A\"}]}', '{\"type\":\"categorize\",\"category\":\"Groceries\"}', 'suggest', 'learned')").run();
     h.db.prepare("INSERT INTO rules(match_json, action_json, mode, origin) VALUES ('{\"all_of\":[{\"field\":\"merchant\",\"op\":\"eq\",\"value\":\"B\"}]}', '{\"type\":\"categorize\",\"category\":\"Groceries\"}', 'auto', 'learned')").run();
-    h.db.exec(MIGRATIONS[MIGRATIONS.length - 1]);
+    h.db.exec(MIGRATIONS.find((m) => m.includes('Merchant rules are no longer stored'))!);
     const rows = h.db.prepare("SELECT origin, mode FROM rules WHERE notes IS NULL OR notes NOT LIKE 'was the%'").all() as any[];
     expect(rows.filter((r) => r.origin === 'learned')).toHaveLength(0);
     expect(rows.filter((r) => r.mode === 'auto' && r.origin === 'user').length).toBeGreaterThanOrEqual(1);

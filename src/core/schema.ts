@@ -118,4 +118,8 @@ UPDATE rules SET origin='user' WHERE origin='learned' AND mode='auto';
 UPDATE transactions SET decided_rule_id=NULL WHERE decided_rule_id IN (SELECT id FROM rules WHERE origin='learned');
 DELETE FROM rules WHERE origin='learned';
 `,
+`
+-- which history row (from the old sheet) a bank-file row was recognised as: keeps the importer, a re-import and the clean-up in agreement
+CREATE TABLE history_claims(legacy_id INTEGER NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(legacy_id, fingerprint));
+`,
 ];

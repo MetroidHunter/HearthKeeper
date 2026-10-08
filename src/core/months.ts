@@ -6,9 +6,16 @@ import { daysBetween } from './time.js';
 import { unpairedLegs } from '../ingest/pairing.js';
 
 /** Filters the Transactions page understands for a "fix it" link from the Months checklist (same SQL as Home and Backlog, see INBOX_WHERE). */
+/** A bank-file row with a same-amount row in the old sheet's history within three days that the importer did not recognise as the same payment (descriptions differ): worth a human look. */
+const HISTORY_TWIN = `(t.fingerprint IS NOT NULL AND t.flagged=0 AND t.kind IN ('spending','income') AND t.review_state!='user_confirmed' AND EXISTS (SELECT 1 FROM transactions h JOIN accounts ha ON ha.id=h.account_id
+  WHERE ha.in_system=0 AND h.status!='void' AND h.kind IN ('spending','income') AND h.amount_cents=t.amount_cents AND ABS(julianday(h.occurred_on)-julianday(t.occurred_on))<=3
+  AND NOT EXISTS (SELECT 1 FROM history_claims c WHERE c.legacy_id=h.id AND c.fingerprint!=t.fingerprint)))`;
+/** The same bank line on two accounts of one bank (a file imported under the wrong account and again under the right one). */
+const OTHER_ACCOUNT_TWIN = `(t.flagged=0 AND t.kind IN ('spending','income') AND t.review_state!='user_confirmed' AND EXISTS (SELECT 1 FROM transactions d JOIN accounts da ON da.id=d.account_id JOIN accounts ta ON ta.id=t.account_id
+  WHERE d.status!='void' AND d.kind IN ('spending','income') AND d.account_id!=t.account_id AND da.in_system=1 AND da.institution=ta.institution AND d.occurred_on=t.occurred_on AND d.amount_cents=t.amount_cents AND d.descriptor_raw=t.descriptor_raw))`;
 export const NEEDS_WHERE: Record<string, string> = {
   category: INBOX_WHERE.needs_category, note: INBOX_WHERE.needs_note, stale: INBOX_WHERE.stale, flag: INBOX_WHERE.flagged,
-  dupes: `EXISTS (SELECT 1 FROM transactions d WHERE d.status!='void' AND d.account_id=t.account_id AND d.occurred_on=t.occurred_on AND d.amount_cents=t.amount_cents AND d.descriptor_raw=t.descriptor_raw AND d.id!=t.id) AND t.flagged=0 AND t.kind IN ('spending','income') AND t.legacy_group IS NULL AND t.review_state!='user_confirmed'`,
+  dupes: `((EXISTS (SELECT 1 FROM transactions d WHERE d.status!='void' AND d.account_id=t.account_id AND d.occurred_on=t.occurred_on AND d.amount_cents=t.amount_cents AND d.descriptor_raw=t.descriptor_raw AND d.id!=t.id) AND t.flagged=0 AND t.kind IN ('spending','income') AND t.legacy_group IS NULL AND t.review_state!='user_confirmed') OR (t.status!='void' AND (${HISTORY_TWIN} OR ${OTHER_ACCOUNT_TWIN})))`,
 };
 
 export interface MonthItem { key: string; label: string; count: number; detail?: string; link: string }
@@ -34,6 +41,7 @@ export function monthsOverview(db: DB, today: string): MonthRow[] {
   const txns = byMonth("SELECT substr(occurred_on,1,7) m, COUNT(*) c FROM transactions WHERE status!='void' GROUP BY m");
   const dupes = byMonth(`SELECT m, COUNT(*) c FROM (SELECT substr(occurred_on,1,7) m FROM transactions WHERE status!='void' AND flagged=0 AND kind IN ('spending','income') AND legacy_group IS NULL
     GROUP BY account_id, occurred_on, amount_cents, descriptor_raw HAVING COUNT(*)>1 AND SUM(CASE WHEN review_state='user_confirmed' THEN 1 ELSE 0 END)<COUNT(*)) GROUP BY m`);
+  for (const r of db.prepare(`SELECT substr(t.occurred_on,1,7) m, COUNT(*) c FROM transactions t WHERE t.status!='void' AND (${HISTORY_TWIN} OR ${OTHER_ACCOUNT_TWIN}) GROUP BY m`).all() as { m: string; c: number }[]) dupes.set(r.m, (dupes.get(r.m) ?? 0) + r.c);
   // transfers whose other half never showed up, placed in the month they belong to
   const legIds = unpairedLegs(db); const legs = new Map<string, number>();
   if (legIds.length) for (const r of db.prepare(`SELECT substr(occurred_on,1,7) m FROM transactions WHERE id IN (${legIds.map(() => '?').join(',')})`).all(...legIds) as { m: string }[]) legs.set(r.m, (legs.get(r.m) ?? 0) + 1);
