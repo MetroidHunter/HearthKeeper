@@ -124,7 +124,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   /* ---------- reports ---------- */
   app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now(), undefined, userIdOf(req) ?? undefined));
   /* weekly budgets: a monthly amount spread over the weeks of each month */
-  const weeklyBody = (b: Record<string, any>) => ({ name: b.name, amountCents: Number(b.amountCents), categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds.map(Number) : [], weekStart: b.weekStart === undefined ? undefined : Number(b.weekStart), rollover: !!b.rollover });
+  const weeklyBody = (b: Record<string, any>) => ({ name: b.name, amountCents: Number(b.amountCents), categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds.map(Number) : [], weekStart: b.weekStart === undefined ? undefined : Number(b.weekStart) });
   const weeklyErr = (e: unknown) => { throw Object.assign(new Error((e as Error).message), { statusCode: 400 }); };
   app.get('/api/weekly-budgets', async (req: any) => listWeekly(db, req.query.today ?? now(), { month: /^\d{4}-\d{2}$/.test(req.query.month ?? '') ? req.query.month : undefined, userId: userIdOf(req) ?? undefined }));
   app.get('/api/weekly-budgets/preview', async (req: any) => weeksOfMonth(/^\d{4}-\d{2}$/.test(req.query.month ?? '') ? req.query.month : now().slice(0, 7), Math.min(7, Math.max(1, Number(req.query.weekStart) || 1)), Math.max(0, Math.round(Number(req.query.amountCents) || 0))));

@@ -7,7 +7,7 @@ import { lastDayOfMonth } from './reports.js';
  * Weekly budgets: one monthly amount spread over the weeks of the month, counting what is spent in the chosen categories.
  * Weeks start on `weekStart` (1 = Monday … 7 = Sunday) and are cut at month ends, so a month usually begins and ends with a short week.
  * Each week gets its share of the month by days (rounded cumulatively, so the weeks add up to the month exactly). A week that goes over eats into
- * the next one; with `rollover` on, unspent money carries forward too.
+ * the next one, and unspent money carries forward too, so a week's money is its share plus whatever is left from the week before.
  */
 export interface Week { n: number; from: string; to: string; days: number; allottedCents: number; limitCents: number }
 export interface WeekRow extends Week { carriedCents: number; availableCents: number; spentCents: number; remainingCents: number; state: 'past' | 'current' | 'future' }
@@ -33,7 +33,7 @@ export function weeksOfMonth(month: string, weekStart: number, amountCents: numb
   return weeks;
 }
 
-export interface WeeklyInput { name: string; amountCents: number; categoryIds: number[]; weekStart?: number; rollover?: boolean }
+export interface WeeklyInput { name: string; amountCents: number; categoryIds: number[]; weekStart?: number }
 
 function validate(db: DB, b: WeeklyInput): Required<WeeklyInput> {
   const name = String(b.name ?? '').trim();
@@ -47,7 +47,7 @@ function validate(db: DB, b: WeeklyInput): Required<WeeklyInput> {
     const c = db.prepare('SELECT kind, status FROM categories WHERE id=?').get(id) as { kind: string; status: string } | undefined;
     if (!c || c.status !== 'active' || c.kind !== 'expense') throw new Error('Only active spending categories can be part of a weekly budget');
   }
-  return { name, amountCents: b.amountCents, categoryIds: ids, weekStart, rollover: !!b.rollover };
+  return { name, amountCents: b.amountCents, categoryIds: ids, weekStart };
 }
 
 function setCategories(db: DB, id: number, ids: number[]) {
@@ -59,7 +59,7 @@ export function createWeekly(db: DB, input: WeeklyInput, actor = 'system'): numb
   const v = validate(db, input);
   return db.transaction(() => {
     const sort = (db.prepare('SELECT COALESCE(MAX(sort),0)+1 n FROM weekly_budgets').get() as { n: number }).n;
-    const id = Number(db.prepare('INSERT INTO weekly_budgets(name, amount_cents, week_start, rollover, sort) VALUES (?,?,?,?,?)').run(v.name, v.amountCents, v.weekStart, v.rollover ? 1 : 0, sort).lastInsertRowid);
+    const id = Number(db.prepare('INSERT INTO weekly_budgets(name, amount_cents, week_start, sort) VALUES (?,?,?,?)').run(v.name, v.amountCents, v.weekStart, sort).lastInsertRowid);
     setCategories(db, id, v.categoryIds);
     audit(db, 'weekly_budget', id, 'create', undefined, v, actor);
     return id;
@@ -70,7 +70,7 @@ export function updateWeekly(db: DB, id: number, input: WeeklyInput, actor = 'sy
   if (!db.prepare('SELECT 1 FROM weekly_budgets WHERE id=?').get(id)) throw new Error('No such weekly budget');
   const v = validate(db, input);
   db.transaction(() => {
-    db.prepare('UPDATE weekly_budgets SET name=?, amount_cents=?, week_start=?, rollover=? WHERE id=?').run(v.name, v.amountCents, v.weekStart, v.rollover ? 1 : 0, id);
+    db.prepare('UPDATE weekly_budgets SET name=?, amount_cents=?, week_start=? WHERE id=?').run(v.name, v.amountCents, v.weekStart, id);
     setCategories(db, id, v.categoryIds);
     audit(db, 'weekly_budget', id, 'update', undefined, v, actor);
   })();
@@ -96,11 +96,10 @@ function spentIn(db: DB, ids: number[], from: string, to: string): number {
   return v === 0 ? 0 : -v;
 }
 
-export function weeklyRows(month: string, weekStart: number, amountCents: number, rollover: boolean, spentOf: (from: string, to: string) => number, today: string): WeekRow[] {
-  let remaining = 0, first = true;
+export function weeklyRows(month: string, weekStart: number, amountCents: number, spentOf: (from: string, to: string) => number, today: string): WeekRow[] {
+  let remaining = 0;
   return weeksOfMonth(month, weekStart, amountCents).map((w) => {
-    const carried = first ? 0 : rollover ? remaining : Math.min(0, remaining);   // an overspent week always carries; unspent money only with rollover
-    first = false;
+    const carried = remaining;                                                   // what is left (or overspent) in the week before
     const availableCents = w.allottedCents + carried, spentCents = spentOf(w.from, w.to);
     remaining = availableCents - spentCents;
     return { ...w, carriedCents: carried, availableCents, spentCents, remainingCents: remaining, state: today > w.to ? 'past' : today < w.from ? 'future' : 'current' } as WeekRow;
@@ -108,7 +107,7 @@ export function weeklyRows(month: string, weekStart: number, amountCents: number
 }
 
 export interface WeeklyBudget {
-  id: number; name: string; amountCents: number; weekStart: number; rollover: boolean; categoryIds: number[]; categories: string[]; favorite: boolean;
+  id: number; name: string; amountCents: number; weekStart: number; categoryIds: number[]; categories: string[]; favorite: boolean;
   month: string; weeks: WeekRow[]; spentCents: number; remainingCents: number; currentWeek: number | null;
 }
 
@@ -116,12 +115,12 @@ export interface WeeklyBudget {
 export function listWeekly(db: DB, today: string, opts: { month?: string; userId?: number } = {}): WeeklyBudget[] {
   const month = opts.month ?? today.slice(0, 7);
   const favs = new Set(opts.userId ? (db.prepare('SELECT weekly_id FROM weekly_favorites WHERE user_id=?').all(opts.userId) as { weekly_id: number }[]).map((r) => r.weekly_id) : []);
-  return (db.prepare('SELECT id, name, amount_cents, week_start, rollover FROM weekly_budgets ORDER BY sort, id').all() as any[]).map((b) => {
+  return (db.prepare('SELECT id, name, amount_cents, week_start FROM weekly_budgets ORDER BY sort, id').all() as any[]).map((b) => {
     const cats = db.prepare('SELECT c.id, c.name FROM weekly_budget_categories w JOIN categories c ON c.id=w.category_id WHERE w.weekly_id=? ORDER BY c.name').all(b.id) as { id: number; name: string }[];
     const ids = cats.map((c) => c.id);
-    const weeks = weeklyRows(month, b.week_start, b.amount_cents, !!b.rollover, (f, t) => spentIn(db, ids, f, t), today);
+    const weeks = weeklyRows(month, b.week_start, b.amount_cents, (f, t) => spentIn(db, ids, f, t), today);
     const spent = weeks.reduce((a, w) => a + w.spentCents, 0);
-    return { id: b.id, name: b.name, amountCents: b.amount_cents, weekStart: b.week_start, rollover: !!b.rollover, categoryIds: ids, categories: cats.map((c) => c.name), favorite: favs.has(b.id),
+    return { id: b.id, name: b.name, amountCents: b.amount_cents, weekStart: b.week_start, categoryIds: ids, categories: cats.map((c) => c.name), favorite: favs.has(b.id),
       month, weeks, spentCents: spent, remainingCents: b.amount_cents - spent, currentWeek: weeks.find((w) => w.state === 'current')?.n ?? null };
   });
 }

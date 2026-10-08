@@ -17,7 +17,7 @@ export function weeklyCard(b: any, on: { favorite: () => void; edit: () => void 
       <h3 class="grow wk-name">${b.name}</h3>
       <span class="wk-total ${tone(b.remainingCents)}" title="The month's amount minus everything spent in it so far"><b>${money(b.remainingCents)}</b> <span class="muted small">left of ${money(b.amountCents)} this month</span></span>
       <button class="icon wk-edit" title="Edit or delete this weekly budget" aria-label="Edit weekly budget" @click=${on.edit}>✎</button></div>
-    <div class="muted small wk-sub">Counts ${b.categories.join(', ')} · weeks start ${DAYS[b.weekStart]} · ${b.rollover ? 'unspent money rolls into the next week; a week that goes over eats into the next' : 'a week that goes over eats into the next'}</div>
+    <div class="muted small wk-sub">Counts ${b.categories.join(', ')} · weeks start ${DAYS[b.weekStart]} · what is left in a week rolls into the next, and a week that goes over eats into it</div>
     <div style="overflow-x:auto"><table class="wk-table"><thead><tr><th>Week</th><th class="num">Budget</th><th class="num">Carried in</th><th class="num">Spent</th><th class="num">Left</th><th class="num hide-sm" title="The most you can have spent by the end of this week to be on track for the month">Limit by week end</th></tr></thead>
       <tbody>${b.weeks.map((w: any) => html`<tr class="wk-row ${w.state}" data-week=${w.n}>
         <td>${weekLabel(w)} <span class="muted small">${w.days} day${w.days === 1 ? '' : 's'}</span>${w.state === 'current' ? html` <span class="badge good">this week</span>` : nothing}</td>
@@ -48,13 +48,13 @@ export class WeeklyForm extends LitElement {
   @property({ attribute: false }) cats: any[] = [];
   @property({ attribute: false }) existing: any = null;
   @property({ attribute: false }) done: (changed?: boolean) => void = () => {};
-  @state() private name = ''; @state() private amount = ''; @state() private picked = new Set<number>(); @state() private weekStart = 1; @state() private rollover = false;
+  @state() private name = ''; @state() private amount = ''; @state() private picked = new Set<number>(); @state() private weekStart = 1;
   @state() private preview: any[] = []; @state() private err = ''; @state() private busy = false;
   createRenderRoot() { return this; }
   connectedCallback() {
     super.connectedCallback();
     const e = this.existing;
-    if (e) { this.name = e.name; this.amount = (e.amountCents / 100).toFixed(2); this.picked = new Set(e.categoryIds); this.weekStart = e.weekStart; this.rollover = e.rollover; }
+    if (e) { this.name = e.name; this.amount = (e.amountCents / 100).toFixed(2); this.picked = new Set(e.categoryIds); this.weekStart = e.weekStart; }
     void this.refresh();
   }
   private async refresh() {
@@ -68,7 +68,7 @@ export class WeeklyForm extends LitElement {
     if (!Number.isFinite(amountCents)) { this.err = 'Enter the monthly amount, like 300.00'; return; }
     this.busy = true;
     try {
-      const body = { name: this.name, amountCents, categoryIds: [...this.picked], weekStart: this.weekStart, rollover: this.rollover };
+      const body = { name: this.name, amountCents, categoryIds: [...this.picked], weekStart: this.weekStart };
       if (this.existing) await api.put(`/api/weekly-budgets/${this.existing.id}`, body); else await api.post('/api/weekly-budgets', body);
       this.done(true);
     } catch (e) { this.err = (e as Error).message; } finally { this.busy = false; }
@@ -85,8 +85,7 @@ export class WeeklyForm extends LitElement {
       <div class="stack">
         <div class="row"><input class="grow" aria-label="Name" placeholder="Name, like Eating out" .value=${this.name} @input=${(e: any) => (this.name = e.target.value)} />
           <input style="width:8rem" inputmode="decimal" aria-label="Monthly amount" placeholder="300.00" .value=${this.amount} @input=${(e: any) => { this.amount = e.target.value; void this.refresh(); }} /><span class="muted">a month</span></div>
-        <div class="row"><label>Weeks start on <select aria-label="Week starts on" @change=${(e: any) => { this.weekStart = Number(e.target.value); void this.refresh(); }}>${DAYS.slice(1).map((d, i) => html`<option value=${i + 1} ?selected=${this.weekStart === i + 1}>${d}</option>`)}</select></label>
-          <label class="row" style="gap:6px"><input type="checkbox" aria-label="Roll unspent money forward" .checked=${this.rollover} @change=${(e: any) => (this.rollover = e.target.checked)} /> Unspent money rolls into the next week</label></div>
+        <div class="row"><label>Weeks start on <select aria-label="Week starts on" @change=${(e: any) => { this.weekStart = Number(e.target.value); void this.refresh(); }}>${DAYS.slice(1).map((d, i) => html`<option value=${i + 1} ?selected=${this.weekStart === i + 1}>${d}</option>`)}</select></label></div>
         <div><b>Spending that counts</b> <span class="muted small">(${this.picked.size} chosen)</span>
           <div class="wk-cats">${[...groups].map(([g, list]) => html`<div class="wk-catgroup"><span class="muted small">${g}</span>${list.map((c) => html`<label class="row" style="gap:6px"><input type="checkbox" data-cat=${c.id} .checked=${this.picked.has(c.id)} @change=${(e: any) => { const s = new Set(this.picked); if (e.target.checked) s.add(c.id); else s.delete(c.id); this.picked = s; }} /> ${c.name}</label>`)}</div>`)}</div></div>
         ${this.preview.length ? html`<div class="wk-preview"><b>This month's weeks</b> <span class="muted small">(each gets its share by days; the last week of the month can be short, and so can the first)</span>

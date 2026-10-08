@@ -35,33 +35,26 @@ const scene = () => {
 };
 
 describe('weekly budget', () => {
-  it('shows what is left in each week and in the month; an overspent week eats into the next', () => {
+  it('shows what is left in each week and in the month; whatever is left carries into the next week, over or under', () => {
     const { h, spend } = scene();
-    spend('Eating Out', '2026-10-02', 3000);     // week 1: $40 → $10 left
-    spend('Manicure', '2026-10-06', 9500);       // week 2: $70 − $95 = −$25
+    spend('Eating Out', '2026-10-02', 3000);     // week 1: $40 → $10 left, which carries
+    spend('Manicure', '2026-10-06', 9500);       // week 2: $70 + $10 − $95 = −$15
     spend('Groceries', '2026-10-07', 50000);     // not one of this budget's categories
     const [b] = listWeekly(h.db, '2026-10-14');
     expect(b.weeks.map((w) => w.spentCents)).toEqual([3000, 9500, 0, 0, 0]);
-    expect(b.weeks.map((w) => w.carriedCents)).toEqual([0, 0, -2500, 0, 0]);   // week 1's leftover does not roll forward, week 2's overage does
-    expect(b.weeks.map((w) => w.remainingCents)).toEqual([1000, -2500, 4500, 7000, 6000]);
+    expect(b.weeks.map((w) => w.carriedCents)).toEqual([0, 1000, -1500, 5500, 12500]);
+    expect(b.weeks.map((w) => w.remainingCents)).toEqual([1000, -1500, 5500, 12500, 18500]);
     expect(b.weeks.map((w) => w.state)).toEqual(['past', 'past', 'current', 'future', 'future']);
     expect(b.currentWeek).toBe(3);
     expect(b.spentCents).toBe(12500);
     expect(b.remainingCents).toBe(31000 - 12500);
+    expect(b.weeks.at(-1)!.remainingCents).toBe(b.remainingCents);     // the last week's remainder is the month's
   });
-  it('overage keeps carrying through consecutive weeks', () => {
+  it('an overage keeps eating into the following weeks until it is paid back', () => {
     const { h, spend } = scene();
     spend('Eating Out', '2026-10-06', 20000);    // week 2 is $130 over
     const [b] = listWeekly(h.db, '2026-10-30');
-    expect(b.weeks.map((w) => w.remainingCents)).toEqual([4000, -13000, -6000, 1000, 6000]);
-  });
-  it('with rollover, unspent money carries forward too', () => {
-    const { h, spend, id } = scene();
-    updateWeekly(h.db, id, { name: 'Fun money', amountCents: 31000, categoryIds: [h.cats['Eating Out']], rollover: true });
-    spend('Eating Out', '2026-10-02', 1000);
-    const [b] = listWeekly(h.db, '2026-10-30');
-    expect(b.weeks.map((w) => w.carriedCents)).toEqual([0, 3000, 10000, 17000, 24000]);
-    expect(b.weeks.at(-1)!.remainingCents).toBe(b.remainingCents);     // the last week's remainder is the month's
+    expect(b.weeks.map((w) => w.remainingCents)).toEqual([4000, -9000, -2000, 5000, 11000]);
   });
   it('refunds count back, voided transactions and other months do not count', () => {
     const { h, spend } = scene();
@@ -110,10 +103,10 @@ describe('weekly budget API', () => {
     expect(list[0].currentWeek).toBe(3);
     const prev = (await call('GET', '/api/weekly-budgets/preview?month=2026-10&weekStart=7&amountCents=31000')).json();
     expect(prev[0]).toMatchObject({ from: '2026-10-01', to: '2026-10-03' });
-    expect((await call('PUT', `/api/weekly-budgets/${id}`, { ...body, name: 'Fun 2', rollover: true })).statusCode).toBe(200);
+    expect((await call('PUT', `/api/weekly-budgets/${id}`, { ...body, name: 'Fun 2'})).statusCode).toBe(200);
     expect((await call('PUT', '/api/weekly-budgets/999', body)).statusCode).toBe(400);
     expect((await call('POST', `/api/weekly-budgets/${id}/favorite`)).statusCode).toBe(200);
-    expect((await call('GET', '/api/weekly-budgets')).json()[0]).toMatchObject({ name: 'Fun 2', rollover: true });
+    expect((await call('GET', '/api/weekly-budgets')).json()[0]).toMatchObject({ name: 'Fun 2'});
     await call('DELETE', `/api/weekly-budgets/${id}`);
     expect((await call('GET', '/api/weekly-budgets')).json()).toEqual([]);
   });
