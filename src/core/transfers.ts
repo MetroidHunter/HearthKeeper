@@ -1,5 +1,6 @@
 import { audit, type DB } from './db.js';
-import { categoryBalance } from './balance.js';
+import { categoryBalance, getVersions, monthlyAmount } from './balance.js';
+import { monthOf } from './time.js';
 
 /** Envelope movements (design §13). Transfers are excluded from spend reports by construction. */
 export interface Leg { categoryId: number; cents: number }
@@ -30,16 +31,23 @@ export interface RebalanceProposal {
   resulting: Record<number, number>; // balance of every touched category after commit
 }
 
-interface CatInfo { id: number; name: string; kind: string; discretionary: number; cushion_cents: number | null; overage_priority: number | null; balance: number }
+interface CatInfo { id: number; name: string; kind: string; discretionary: number; cushion_cents: number | null; overage_priority: number | null; balance: number; monthly: number }
 
 function loadBalances(db: DB, asOf: string): CatInfo[] {
   const cats = db.prepare("SELECT * FROM categories WHERE status='active' OR 1=1").all() as any[];
-  return cats.map((c) => ({ ...c, balance: categoryBalance(db, c.id, asOf).total ?? 0 }));
+  const month = monthOf(asOf);
+  return cats.map((c) => ({ ...c, balance: categoryBalance(db, c.id, asOf).total ?? 0, monthly: monthlyAmount(getVersions(db, c.id), month) })); // monthly: the budget in force that month
 }
 
 const EPS = 0.5; // sub-cent legacy drift is not an overage (parity tolerance)
 
-/** Auto-proposal in priority order: Gig Income pool first, then discretionary donors, then non-discretionary above cushion (design §13.1). */
+/**
+ * The cushion is the amount a category keeps ABOVE its current monthly budget: with a $150 budget and a $50 cushion, money is only taken from it
+ * when it holds more than $200 (and then only the excess). Not set: a discretionary category can give everything it has, a non-discretionary one is immune.
+ */
+export function keepFloor(c: { monthly: number; cushion_cents: number | null }): number | null { return c.cushion_cents === null ? null : c.monthly + c.cushion_cents; }
+
+/** Auto-proposal in priority order: Gig Income pool first, then discretionary donors, then non-discretionary above budget + cushion (design §13.1). */
 export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
   const cats = loadBalances(db, asOf);
   const bal = new Map(cats.map((c) => [c.id, c.balance]));
@@ -63,9 +71,9 @@ export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
   }
   const donatable = (c: CatInfo) => {
     if (c.kind !== 'expense') return 0;
-    const cushion = c.discretionary ? (c.cushion_cents ?? 0) : c.cushion_cents;
-    if (cushion === null) return 0; // non-discretionary, no cushion: immune
-    return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - cushion + EPS));
+    const keep = keepFloor(c) ?? (c.discretionary ? 0 : null);
+    if (keep === null) return 0; // non-discretionary, no cushion: immune
+    return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - keep + EPS));
   };
   const tiers = [cats.filter((c) => c.discretionary), cats.filter((c) => !c.discretionary)];
   for (const o of over) {

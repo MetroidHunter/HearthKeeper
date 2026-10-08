@@ -19,7 +19,7 @@ export class Transfers extends Page {
     const pools = this.cats.filter((c) => c.kind === 'income_pool');
     return html`${pageHead('Transfers', 'Move money between envelopes: cover overspending, place income, or make a one-off move.', 'Rebalance proposes covering overspent categories from the income pool and then from discretionary envelopes with room to spare. You review the proposal before anything moves.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <h2>Rebalance overages</h2>
-      <div class="card"><p class="muted">Gig Income pays overages first (in priority order), then discretionary donors, then non-discretionary donors above their cushion. Edit any amount before committing.</p>
+      <div class="card"><p class="muted">Gig Income pays overages first (in priority order), then discretionary donors, then non-discretionary donors, taking only what is above their monthly budget plus cushion (a $150 budget with a $50 cushion is touched only when it holds more than $200). Edit any amount before committing.</p>
         <button class="primary" @click=${() => this.propose()}>Propose</button>
         ${this.prop ? html`${this.prop.poolPayments.length + this.prop.donorMoves.length === 0 ? html`<p>Nothing to rebalance.</p>` : ''}
           <table><tbody>${this.prop.poolPayments.map((m: any, i: number) => html`<tr><td>Pool ${this.name(m.poolCategoryId)} → <b>${this.name(m.toCategoryId)}</b></td><td class="num"><input style="width:7rem;text-align:right" .value=${(m.cents / 100).toFixed(2)} @change=${(e: any) => this.edit('poolPayments', i, e.target.value)} /></td></tr>`)}

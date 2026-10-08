@@ -97,7 +97,7 @@ describe('rebalance and close', () => {
   it('non-discretionary without cushion is immune; with cushion only the excess moves', () => {
     const h = seedHousehold();
     h.db.prepare("UPDATE categories SET discretionary=0 WHERE name IN ('Family Support','Manicure')").run();
-    h.db.prepare("UPDATE categories SET cushion_cents=100000 WHERE name='Family Support'").run(); // 10 mo * 400 -> 2600 donatable
+    h.db.prepare("UPDATE categories SET cushion_cents=100000 WHERE name='Family Support'").run(); // keeps its $400 budget + $1,000 cushion: of 10 months * 400 = 4000, 2600 donatable
     h.db.prepare("UPDATE categories SET discretionary=0 WHERE name='Miracle Spending'").run();
     const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-02', amountCents: -(10 * 30000) - 99999999 });
     setSplits(h.db, t, [{ categoryId: h.cats['Eating Out'], amountCents: -(10 * 30000) - 99999999 }]);
@@ -105,8 +105,28 @@ describe('rebalance and close', () => {
     const from = (c: string) => p.donorMoves.filter((m) => m.fromCategoryId === h.cats[c]).reduce((a, m) => a + m.cents, 0);
     expect(from('Manicure')).toBe(0);
     expect(from('Miracle Spending')).toBe(0);
-    expect(from('Family Support')).toBe(10 * 40000 - 100000);
+    expect(from('Family Support')).toBe(10 * 40000 - (40000 + 100000)); // the cushion sits above the monthly budget
     expect(p.remainingShortfall.length).toBe(1);
+  });
+
+  it('the cushion is the amount kept ABOVE the current monthly budget: $150 budget + $50 cushion means nothing moves until it holds more than $200', async () => {
+    const { addCategory } = await import('../src/core/categories.js');
+    const { keepFloor } = await import('../src/core/transfers.js');
+    const h = seedHousehold();
+    const bricks = addCategory(h.db, { name: 'Bricks', group: 'Home', startMonth: '2026-10', monthlyCents: 15000, kind: 'expense', cushionCents: 5000 });
+    expect(keepFloor({ monthly: 15000, cushion_cents: 5000 })).toBe(20000); expect(keepFloor({ monthly: 15000, cushion_cents: null })).toBeNull();
+    // nobody else can give anything; Eating Out is overspent by $150 in November (and by far more in October)
+    h.db.prepare('UPDATE categories SET cushion_cents=999999999 WHERE id NOT IN (?, ?)').run(bricks, h.cats['Eating Out']);
+    const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-10-02', amountCents: -345000, descriptor: 'BIG EATING OUT' });
+    setSplits(h.db, t, [{ categoryId: h.cats['Eating Out'], amountCents: -345000 }]);
+    const given = (asOf: string) => { const p = proposeRebalance(h.db, asOf); return { given: p.donorMoves.filter((m) => m.fromCategoryId === bricks).reduce((a, m) => a + m.cents, 0), short: p.remainingShortfall.reduce((a, x) => a + x.cents, 0) }; };
+    expect(given('2026-10-31').given).toBe(0);            // Bricks holds $150, the budget itself: below budget + cushion ($200)
+    expect(given('2026-11-30')).toMatchObject({ given: 10000 }); // $300 held: only the $100 above $200 may move, although $150 is needed
+    expect(given('2026-11-30').short).toBeGreaterThan(0);
+    h.db.prepare('UPDATE categories SET cushion_cents=0 WHERE id=?').run(bricks);
+    expect(given('2026-11-30').given).toBe(15000);        // a cushion of 0 still keeps this month's budget ($150), so $150 may move
+    h.db.prepare('UPDATE categories SET cushion_cents=NULL WHERE id=?').run(bricks);
+    expect(given('2026-11-30').given).toBe(15000);        // not set on a discretionary envelope: it can give everything it has, as before
   });
 
   it('placement cannot exceed the pool; adjustments are single-leg', () => {

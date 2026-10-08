@@ -13,7 +13,7 @@ import { answerCategory } from '../core/answers.js';
 import { merchantHistory } from '../core/merchants.js';
 import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
 import { addRule, backtest, type RuleMatch } from '../core/rules.js';
-import { categoryBalance, checkInvariants } from '../core/balance.js';
+import { categoryBalance, checkInvariants, getVersions, monthlyAmount } from '../core/balance.js';
 import { authenticate, captureEvent, shapes, decideShape, replay, parseEvent, silentTokens, createToken, type Source } from '../ingest/events.js';
 import { previewImport, commitImport, coverage, markStale } from '../ingest/import.js';
 import { suggestMapping, parseCsv } from '../ingest/csv.js';
@@ -158,7 +158,10 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   });
 
   /* ---------- categories & budgets ---------- */
-  app.get('/api/categories', async () => db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all());
+  app.get('/api/categories', async () => { // monthly_cents: the budget in force this month, so a cushion ("above the budget") can be shown as the balance an envelope keeps
+    const month = now().slice(0, 7);
+    return (db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all() as any[]).map((c) => ({ ...c, monthly_cents: monthlyAmount(getVersions(db, c.id), month) }));
+  });
   app.post('/api/categories', async (req) => ({ id: addCategory(db, rec(req.body) as any, actor(req)) }));
   app.patch('/api/categories/:id', async (req: any) => {
     const b = rec(req.body); const id = Number(req.params.id);

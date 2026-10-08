@@ -25,4 +25,12 @@ describe('Budgets show their yearly amount', () => {
     setInput(input, '30');
     await waitFor(() => /= \$360\.00 a year/.test(text($('.yearly-add'))), 'yearly hint');
   });
+
+  it('the Categories page explains the cushion as "above the budget" and shows what each envelope keeps (budget + cushion)', async () => {
+    await mount('/categories');
+    const row = await waitFor(() => $$('tbody tr').find((r) => /Utilities/.test(text(r))), 'Utilities row');
+    expect(text($('.keeps', row))).to.equal('keeps $350.00'); // $300 monthly budget + $50 cushion
+    const head = $$('thead th').find((t) => /Cushion/.test(text(t)));
+    expect(head.dataset.tip).to.match(/ABOVE this month's budget.*\$150 budget and a \$50 cushion.*more than \$200/);
+  });
 });
