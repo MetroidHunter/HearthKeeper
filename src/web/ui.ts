@@ -160,5 +160,5 @@ export const catSelect = (cats: PickCat[], value: number | null | undefined, onP
   html`<hk-category-select .cats=${cats} .value=${value ?? null} placeholder=${o.placeholder ?? 'Category'} ?includeRetired=${o.includeRetired} ?reset=${o.reset} @change=${(e: CustomEvent) => { if (e.detail && e.target === e.currentTarget) onPick(e.detail.id, e.detail.name); }}></hk-category-select>`; // ignore stray native change events
 
 /** The "pending" badge, with what it means one tap/hover away. */
-export const PENDING_TIP = "Pending means this came from a real-time alert (Chase, Wells Fargo or Greenlight) and the bank has not posted it yet. The amount can still change (a tip, a hold). When the bank file arrives, the posted row replaces this one and keeps your category and note. If it never posts within a week it shows up as 'Never posted'.";
+export const PENDING_TIP = "Pending means this came from a real-time alert (Chase or Wells Fargo) and the bank has not posted it yet. The amount can still change (a tip, a hold). When the bank file arrives, the posted row replaces this one and keeps your category and note. If it never posts within a week it shows up as 'Never posted'.";
 export const pendingBadge = () => html`<span class="badge warn" data-tip=${PENDING_TIP} tabindex="0">pending</span>`;

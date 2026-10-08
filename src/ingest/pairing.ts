@@ -6,7 +6,7 @@ import { daysBetween } from '../core/time.js';
  * and both legs become internal_transfer. Equal-and-opposite alone is not enough within one institution: a transfer-like descriptor is required
  * (a refund that matches a purchase is not a transfer). Across institutions, descriptor evidence on at least one leg is required.
  */
-const TRANSFER_LIKE = /(transfer|payment thank you|chase credit crd|autopay|online pmt|epay|crd epay|credit card|greenlight app|move money|xfer)/i;
+const TRANSFER_LIKE = /(transfer|payment thank you|chase credit crd|autopay|online pmt|epay|crd epay|credit card|move money|xfer)/i;
 export interface PairResult { paired: number; unpaired: number[] }
 
 export function pairTransfers(db: DB, windowDays = 3): PairResult {

@@ -17,7 +17,7 @@ Last verified: 241 unit/property/API tests (Vitest) plus the Web Test Runner bro
 **Phase 2, replace the transaction sheet**
 - CSV import with mapping wizard, per-institution profiles, per-account de-dup, provisional-to-posted reconcile (exact before tolerance; superseding carries kind, pairing, notes), paired in-system transfers (transfer-like descriptor on both legs).
 - Merchants, rules, backtest (seeded 236 rules checked against 16,675 historical rows), ranked suggestions, backlog mode with grouped bulk answers.
-- Greenlight: nine message shapes plus declined/withdraw/request, per-profile policy, scored final-amount matching, expected-allowance fulfilment by nearest date.
+- Greenlight (retooled, D79): money sent to Greenlight is an ordinary bank payment that waits for a note, like Amazon/Venmo/PayPal; the allowance message supplies the note (the child). Card activity is ignored. One-time migration at start (`retireGreenlight`) restores hidden funding rows and ignores old wallet rows.
 - Notes matcher (global assignment, per-source windows, item splits with loose subset search).
 - Chase alert parser (real format from `IFTTT_Code.gs`), including alerts that arrive after the CSV already posted the charge. Amazon order, Venmo (paid/received), PayPal (two formats) and Wells Fargo account-update parsers are written against real sample emails (fixtures in `test/fixtures/receipts`) and are on by default; only those formats are verified.
 
@@ -35,7 +35,6 @@ Last verified: 241 unit/property/API tests (Vitest) plus the Web Test Runner bro
 | Audit-log page, merchant-group UI, saved Explore searches | Backend exists; UI not built. |
 | SimpleFIN, LLM fallback | Optional by design. |
 | Wells Fargo notice parser | Needs real captured samples. |
-| Regression test for "final amount on a user-split Greenlight reclass" | Fix is in (it flags instead of collapsing the split) but has no dedicated test yet. |
 
 ## Known judgement calls
 See `docs/DECISIONS.md` (D36-D52). The legacy sheet's own quirks (retired-category month semantics, the `(blank)` group, sub-cent amounts) are replicated deliberately so parity holds.

@@ -1,8 +1,6 @@
 /** Tiny in-process event bus: parsers and engines announce what happened; the notifier decides who to tell (design §15.3). */
 export type NotifyEvent =
   | { type: 'needs_you'; txnId: number; lane: 'fast' | 'daily' }
-  | { type: 'greenlight_inform'; message: string; profile?: string }
-  | { type: 'greenlight_request'; requestId: number }
   | { type: 'silence'; labels: string[] };
 
 type Handler = (e: NotifyEvent) => void | Promise<void>;

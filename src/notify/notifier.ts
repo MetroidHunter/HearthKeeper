@@ -3,7 +3,6 @@ import type { DB } from '../core/db.js';
 import { HOME_ZONE } from '../core/time.js';
 import { formatCents } from '../core/money.js';
 import { suggestionsFor } from '../core/reports.js';
-import { missingAllowances } from '../greenlight/engine.js';
 import { silentTokens } from '../ingest/events.js';
 import type { NotifyEvent } from './bus.js';
 import type { PushPayload, PushSubscriptionRow, PushTransport } from './push.js';
@@ -31,7 +30,7 @@ export function inQuietHours(p: NotifyPrefs, now: DateTime): boolean {
   return s <= e ? mins >= s && mins < e : mins >= s || mins < e; // window may wrap midnight
 }
 
-export interface Digest { date: string; needsYou: number; flagged: number; staleProvisionals: number; autoCategorized: { id: number; descriptor: string; amountCents: number; category: string | null; ruleId: number | null }[]; silentSources: string[]; missingAllowances: number; text: string }
+export interface Digest { date: string; needsYou: number; flagged: number; staleProvisionals: number; autoCategorized: { id: number; descriptor: string; amountCents: number; category: string | null; ruleId: number | null }[]; silentSources: string[]; text: string }
 
 export class Notifier {
   constructor(private db: DB, private transport: PushTransport, private opts: { now?: () => DateTime } = {}) {}
@@ -69,11 +68,6 @@ export class Notifier {
 
   async handle(e: NotifyEvent) {
     if (e.type === 'needs_you') return this.needsYou(e.txnId, e.lane);
-    if (e.type === 'greenlight_inform') return this.sendToUsers(this.allUsers(), { title: 'Greenlight', body: e.message, tag: `gl-${Date.now()}`, url: '/#/greenlight' }, 'greenlight_inform', null);
-    if (e.type === 'greenlight_request') {
-      const r = this.db.prepare('SELECT r.amount_cents, p.display_name FROM greenlight_requests r JOIN greenlight_profiles p ON p.id=r.profile_id WHERE r.id=?').get(e.requestId) as any;
-      return this.sendToUsers(this.allUsers(), { title: `${r.display_name} requests ${formatCents(r.amount_cents)}`, body: 'Approve or decline in HearthKeeper', tag: `glreq-${e.requestId}`, url: '/#/greenlight' }, 'greenlight_request', e.requestId);
-    }
     if (e.type === 'silence') return this.sendToUsers(this.allUsers(), { title: 'A source went quiet', body: `No messages from ${e.labels.join(', ')}. Check the capture app.`, tag: 'silence', url: '/#/ingest' }, 'silence', null, { ignoreQuiet: true });
   }
 
@@ -112,10 +106,9 @@ export class Notifier {
     const auto = (db.prepare(`SELECT t.id, t.descriptor_raw descriptor, t.amount_cents amountCents, t.decided_rule_id ruleId, (SELECT c.name FROM transaction_splits s JOIN categories c ON c.id=s.category_id WHERE s.transaction_id=t.id LIMIT 1) category
       FROM transactions t WHERE t.review_state='auto_categorized' AND t.decided_by='rule' AND t.created_at >= datetime('now','-1 day') AND t.legacy_group IS NULL ORDER BY t.id DESC LIMIT 100`).all() as any[]);
     const silent = silentTokens(db).map((s) => s.label);
-    const gaps = missingAllowances(db, today).length;
     const parts = [`${needsYou} need you`, `${auto.length} auto-categorized`];
-    if (flagged) parts.push(`${flagged} flagged`); if (stale) parts.push(`${stale} stale pending`); if (gaps) parts.push(`${gaps} missing allowance`); if (silent.length) parts.push(`silent: ${silent.join(', ')}`);
-    return { date: today, needsYou, flagged, staleProvisionals: stale, autoCategorized: auto, silentSources: silent, missingAllowances: gaps, text: parts.join(' · ') };
+    if (flagged) parts.push(`${flagged} flagged`); if (stale) parts.push(`${stale} stale pending`); if (silent.length) parts.push(`silent: ${silent.join(', ')}`);
+    return { date: today, needsYou, flagged, staleProvisionals: stale, autoCategorized: auto, silentSources: silent, text: parts.join(' · ') };
   }
 
   /** Called by the scheduler: each user gets one digest per day, at or after their digest hour. */

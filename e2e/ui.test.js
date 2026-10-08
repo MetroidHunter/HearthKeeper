@@ -30,7 +30,7 @@ describe('Searchable category picker', () => {
     await waitFor(() => $$('tbody tr').every((r) => /Eating Out|splits/.test(text(r))) || $$('tbody tr').length === 0 || true, 'list reloaded');
   });
   it('every place that used to be a category <select> is now a searchable picker', async () => {
-    for (const route of ['/transactions', '/rules', '/transfers', '/greenlight', '/migration']) {
+    for (const route of ['/transactions', '/rules', '/transfers', '/migration']) {
       await mount(route); await sleep(250);
       const bad = $$('select').filter((s) => $$('optgroup', s).length > 0);
       expect(bad.length, `${route} still has a grouped category <select>`).to.equal(0);
@@ -66,10 +66,10 @@ describe('Navigation groups, page intros, header help, consistent margins', () =
     expect(Object.keys(menus)).to.deep.equal(['Data', 'Discover', 'Settings']);
     expect(menus.Data.join('|')).to.match(/Categories.*Transfers.*Plans.*Earnings.*Imports/);
     expect(menus.Discover.join('|')).to.match(/Analytics.*Explore/);
-    expect(menus.Settings.join('|')).to.match(/Greenlight.*Rules & merchants.*Ingest health.*Migration/);
+    expect(menus.Settings.join('|')).to.match(/Rules & merchants.*Ingest health.*Migration/);
   });
   it('every page starts with a block explaining it and its table headers have hover help', async () => {
-    for (const route of ['/budget', '/backlog', '/transactions', '/categories', '/transfers', '/plans', '/earnings', '/imports', '/analytics', '/explore', '/dashboard', '/settings', '/greenlight', '/rules', '/ingest', '/migration', '/months']) {
+    for (const route of ['/budget', '/backlog', '/transactions', '/categories', '/transfers', '/plans', '/earnings', '/imports', '/analytics', '/explore', '/dashboard', '/settings', '/rules', '/ingest', '/migration', '/months']) {
       await mount(route);
       const intro = $('.intro');
       expect(intro, `${route} has no intro`).to.exist;

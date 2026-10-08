@@ -1,3 +1,4 @@
+import { ensureChildRules } from '../greenlight/retire.js';
 import type { DB } from '../core/db.js';
 import { createToken } from '../ingest/events.js';
 import { createScenario } from '../core/earnings.js';
@@ -23,7 +24,7 @@ export function seedHousehold(db: DB, opts: { users?: { name: string; email: str
   return out;
 }
 
-/** Greenlight profiles need categories to exist first (D7: Miracle -> Miracle Spending, Marion -> Family Support). */
+/** Greenlight children (name -> category; D7: Miracle -> Miracle Spending, Marion -> Family Support) need their categories to exist first. Each also gets a rule on the payment's note. */
 export function seedGreenlightProfiles(db: DB): string[] {
   const wallet = db.prepare("SELECT id FROM accounts WHERE type='greenlight_wallet'").get() as { id: number } | undefined;
   if (!wallet) throw new Error('seedHousehold first');
@@ -33,16 +34,16 @@ export function seedGreenlightProfiles(db: DB): string[] {
     if (!c) { missing.push(cat); continue; }
     db.prepare('INSERT OR IGNORE INTO greenlight_profiles(display_name,name_pattern,category_id,wallet_account_id,spend_policy,request_policy) VALUES (?,?,?,?,?,?)').run(display, pattern, c.id, wallet.id, spend, req);
   }
+  ensureChildRules(db); // Greenlight payments go to the child's category once a message says who they were for
   return missing;
 }
 
-/** Default rules the design calls for regardless of the legacy guesser: Greenlight funding/fees, card-payment legs (§8.8, §11.2, §21.1). */
+/** Default rules the design calls for regardless of the legacy guesser: the Greenlight plan fee and card-payment legs (§8.8, §21.1). Greenlight funding is an ordinary payment, not a transfer. */
 export function seedCoreRules(db: DB) {
   const has = (note: string) => db.prepare('SELECT 1 FROM rules WHERE notes=?').get(note);
   const add = (note: string, priority: number, all_of: any[], action: any, mode: string) => { if (!has(note)) db.prepare('INSERT INTO rules(priority,match_json,action_json,mode,origin,notes) VALUES (?,?,?,?,?,?)').run(priority, JSON.stringify({ all_of }), JSON.stringify(action), mode, 'user', note); };
   const d = (v: string) => ({ field: 'descriptor', op: 'contains', value: v });
   add('core: greenlight plan fee', 40, [d('greenlight app'), { field: 'amount_cents', op: 'eq', value: -662 }], { type: 'categorize', category: 'Fees and Taxes' }, 'suggest');
-  add('core: greenlight funding', 50, [d('greenlight app')], { type: 'internal_transfer', reason: 'greenlight_funding' }, 'auto');
   add('core: card payment (wf leg)', 50, [d('chase credit crd')], { type: 'internal_transfer', reason: 'card_payment' }, 'auto');
   add('core: card payment (chase leg)', 50, [d('payment thank you')], { type: 'internal_transfer', reason: 'card_payment' }, 'auto');
   add('core: chase card serv', 50, [d('chase card serv')], { type: 'internal_transfer', reason: 'card_payment' }, 'auto');

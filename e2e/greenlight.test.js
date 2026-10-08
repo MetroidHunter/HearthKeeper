@@ -1,47 +1,40 @@
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, setInput, choose, pickCat, api } from './helpers.js';
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, pickCat, confirmDialog, api } from './helpers.js';
 
-describe('Greenlight', () => {
+describe('Greenlight is an ordinary payment with a note', () => {
   let trap;
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('shows both profiles with their own categories and policies', async () => {
+  it('there is no Greenlight page or menu entry any more; the old address lands on Home', async () => {
     await mount('/greenlight');
-    await waitFor(() => $$('.grid2 .card').length === 2, 'profile cards');
-    const body = text($('.grid2'));
-    expect(body).to.match(/Miracle\s*→ Miracle Spending/);
-    expect(body).to.match(/Marion\s*→ Family Support/);
+    expect(text($('h1'))).to.equal('Home');
+    expect($$('nav a').some((a) => /Greenlight/.test(text(a)))).to.equal(false);
   });
 
-  it('a request never charges until approved; Marion\'s approval needs a category', async () => {
-    await mount('/greenlight');
-    await waitFor(() => $$('.grid2 .card').length === 2, 'profiles');
-    const profiles = (await api('/api/greenlight')).profiles;
-    const marion = profiles.find((p) => p.display_name === 'Marion');
+  it('funding payments are shown like any other: the child named by the Greenlight message is the note, and that child\'s category is the offered answer', async () => {
+    await mount('/backlog');
+    const row = await waitFor(() => $$('.trow.txn').find((r) => /GREENLIGHT APP/.test(text(r)) && /\$100\.00/.test(text($('.tamt', r)))), 'the $100 Greenlight payment');
+    expect(text($('.tnote', row)), 'the note says which child').to.match(/Marion/);
+    expect(row.dataset.cat).to.equal('missing');
+    const quick = $('button.quick', row);
+    expect(text(quick)).to.equal('Family Support'); expect(quick.title).to.match(/your rule/i);
+    const id = Number(row.dataset.id);
+    quick.click(); await confirmDialog(/Yes, categorize/);
+    await waitFor(async () => (await api(`/api/transactions?q=GREENLIGHT`)).find((t) => t.id === id)?.splits[0]?.category === 'Family Support', 'saved as Family Support');
+    const kid = $$('.trow.txn').find((r) => /GREENLIGHT APP/.test(text(r)) && /\$50\.00/.test(text($('.tamt', r))));
+    if (kid) expect(text($('button.quick', kid))).to.equal('Miracle Spending');
+  });
+
+  it('a live allowance message names the child for a payment already in the system', async () => {
+    const chase = (await api('/api/accounts')).find((a) => a.name === 'Wells Fargo Brys').id;
+    const made = await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'GREENLIGHT APP 261005 GREENLIGHT BRYS SEPULVEDA', amountCents: -7500, occurredOn: '2026-10-05' } });
+    const tok = await api('/api/ingest/tokens', { method: 'POST', body: { label: 'e2e-gl', channel: 'device' } });
+    const post = (body) => fetch(`/ingest/device?token=${tok.secret}`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body });
+    expect((await post('$75.00 allowance transferred to Marion on October 4, 2026 at 09:15AM')).status).to.equal(200);
+    await waitFor(async () => (await api('/api/transactions?q=GREENLIGHT')).find((t) => t.id === made.id)?.note === 'Marion', 'the payment carries the child as its note');
+    // what the cards themselves do is ignored: no transaction, no page error
     const before = (await api('/api/transactions?hidden=1&limit=500')).length;
-    const sel = $$('select').find((s) => /Profile/.test(text(s)));
-    choose(sel, 'Marion');
-    setInput($('input[placeholder=Amount]'), '40.00');
-    byText('button', /Record request/).click();
-    await waitFor(() => $$('.badge').some((b) => /pending/.test(text(b))), 'pending request');
-    expect((await api('/api/transactions?hidden=1&limit=500')).length).to.equal(before); // no charge yet
-    const approve = byText('button', /^Approved$/);
-    const catSel = $$('hk-category-select').find((p) => $('input', p).placeholder === 'Which category pays?');
-    expect(catSel).to.exist;
-    approve.click(); // no category chosen: server refuses, the page shows the error
-    await waitFor(() => /category/i.test(text($('.err') ?? document.body)), 'error about category');
-    await pickCat(catSel, 'Eating Out');
-    byText('button', /^Approved$/).click();
-    await waitFor(async () => (await api('/api/transactions?hidden=1&limit=500')).length === before + 1, 'charge posted on approval');
-    const fam = (await api('/api/budget')).rows.find((r) => r.name === 'Family Support');
-    const eat = (await api('/api/budget')).rows.find((r) => r.name === 'Eating Out');
-    expect(eat.spent[0]).to.be.greaterThan(0);
-    void fam; void marion;
-  });
-
-  it('shows no unrecognized messages for the demo corpus but lists the wallet balance', async () => {
-    await mount('/greenlight');
-    await waitFor(() => /Wallet balance/.test(text(document.body)), 'wallet balance');
-    expect(text($$('.card').find((c) => /Unrecognized/.test(text(c.previousElementSibling ?? c))) ?? document.body)).to.be.a('string');
+    expect((await post('Marion spent $7.07 at WAL-MART #3658 GREENSBORO NC on October 4, 2026 at 09:16AM')).status).to.equal(200);
+    expect((await api('/api/transactions?hidden=1&limit=500')).length).to.equal(before);
   });
 });

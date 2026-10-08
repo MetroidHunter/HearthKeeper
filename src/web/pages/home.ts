@@ -52,7 +52,6 @@ export class Home extends Page {
               <div class="list-row"><span class="grow">Pending charges that never posted</span><b>${c.stale}</b></div></div>
             <p class="muted small" style="margin-bottom:0">One transaction can be in more than one group, so these add up to more than ${c.total}. The Backlog groups uncategorized items by merchant, so it shows fewer lines than this count.</p></div>
           ${unc && unc.count ? html`<div class="stat"><span class="label">Sitting in "Needs category"</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions with no category (${money(unc.spendCents)} out, ${money(unc.incomeCents)} in). Categorizing one moves its amount out of here and into that category.</span></div>` : nothing}
-          ${this.inbox.greenlightRequests.map((r: any) => html`<div class="card row"><div class="grow"><b>${r.display_name}</b> requests ${money(r.amount_cents)}</div><a href="#/greenlight"><button>Review</button></a></div>`)}
           ${need.length === 0 ? html`<div class="card muted">All caught up.</div>` : html`<div class="card flush txnlist">${txnHead()}${need.slice(0, 10).map((t: any) => txnRow(env, t, { reload: () => this.load() }))}</div>`}
           ${c.total > need.length ? html`<div class="card row"><span class="grow muted">Showing the ${need.length} most recent of ${c.total}.</span><a href="#/backlog"><button class="primary">Keep going in Backlog</button></a></div>` : nothing}
         </div>

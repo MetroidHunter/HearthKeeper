@@ -17,7 +17,7 @@ import { categoryBalance, checkInvariants } from '../core/balance.js';
 import { authenticate, captureEvent, shapes, decideShape, replay, parseEvent, silentTokens, createToken, type Source } from '../ingest/events.js';
 import { previewImport, commitImport, coverage, markStale } from '../ingest/import.js';
 import { suggestMapping, parseCsv } from '../ingest/csv.js';
-import { processGreenlightMessage, createRequest, fundRequest, walletBalance, missingAllowances } from '../greenlight/engine.js';
+import { processGreenlightMessage } from '../greenlight/engine.js';
 import { extractText } from '../greenlight/parser.js';
 import { Notifier, getPrefs, setPrefs } from '../notify/notifier.js';
 import { vapidKeys } from '../notify/push.js';
@@ -311,18 +311,6 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/migration', async () => { const items = worksheetItems(db); return { report: loadReport(db), worksheet: items, total: items.reduce((a, i) => a + i.amountCents, 0) }; });
   app.post('/api/migration/apply', async (req) => applyWorksheet(db, rec(req.body).assignments ?? [], now(), actor(req)));
   app.post('/api/migration/merchants', async () => bootstrapMerchants(db));
-
-  /* ---------- greenlight ---------- */
-  app.get('/api/greenlight', async () => {
-    const wallet = db.prepare("SELECT id FROM accounts WHERE type='greenlight_wallet' LIMIT 1").get() as any;
-    return { profiles: db.prepare('SELECT p.*, c.name category FROM greenlight_profiles p JOIN categories c ON c.id=p.category_id').all(),
-      requests: db.prepare("SELECT * FROM greenlight_requests ORDER BY id DESC LIMIT 50").all(), walletBalanceCents: wallet ? walletBalance(db, wallet.id) : null,
-      missingAllowances: missingAllowances(db, now()), unrecognized: db.prepare("SELECT * FROM raw_events WHERE source='greenlight_msg' AND parse_status='unrecognized' ORDER BY id DESC LIMIT 50").all() };
-  });
-  app.patch('/api/greenlight/profiles/:id', async (req: any) => { const b = rec(req.body); for (const [k, c] of [['spendPolicy', 'spend_policy'], ['requestPolicy', 'request_policy'], ['withdrawPolicy', 'withdraw_policy'], ['categoryId', 'category_id']] as const) if (b[k] !== undefined) db.prepare(`UPDATE greenlight_profiles SET ${c}=? WHERE id=?`).run(b[k], req.params.id); return { ok: true }; });
-  app.post('/api/greenlight/requests', async (req) => { const b = rec(req.body); return { id: createRequest(db, b.profileId, b.amountCents, b.requestedAt ?? now()) }; });
-  app.post('/api/greenlight/requests/:id/approve', async (req: any) => ({ txnId: fundRequest(db, Number(req.params.id), now(), rec(req.body).categoryId) }));
-  app.post('/api/greenlight/requests/:id/decline', async (req: any) => { db.prepare("UPDATE greenlight_requests SET status='declined' WHERE id=? AND status='pending'").run(req.params.id); return { ok: true }; });
 
   /* ---------- ingest health, shapes, replay ---------- */
   app.get('/api/ingest/health', async () => ({ perSource: db.prepare('SELECT source, COUNT(*) events, MAX(received_at) last_event, SUM(parse_status IN (\'unrecognized\',\'error\')) failed, SUM(parse_status=\'pending\') pending FROM raw_events GROUP BY source').all(), tokens: db.prepare('SELECT id, label, channel, last_seen_at, expected_cadence_hours FROM ingest_tokens').all(), silent: silentTokens(db) }));

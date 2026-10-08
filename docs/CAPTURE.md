@@ -25,7 +25,7 @@ Then open **Settings → Ingest health**: the source shows as seen just now. A `
    - Content type: `text/plain`
    - Body: exactly the text your Sheets action writes into the "Full Transaction" column (the notification text followed by `on <date> at <time>`). Use the same ingredients in the same order.
 4. Save, then use IFTTT's "Check now" or wait for the next real notification.
-5. Check Ingest health: the message appears, parsed. A Greenlight spend shows up on Home / Backlog (Miracle's spends need a category; Marion's are ignored).
+5. Check Ingest health: the message appears, parsed. Only `$N allowance transferred to <child>` is used: it becomes a note naming the child, which is attached to the bank payment of the same amount (a `GREENLIGHT APP …` row). Spending, withdrawals, requests and declines are ignored. This step is optional: without it you categorize each Greenlight payment yourself, or with a rule such as *description contains greenlight app AND amount is $100 → Family Support*.
 Chase alerts sent through the same automation are recognised by their wording ("Prime Visa: You made a $… transaction with …") and need no extra setup.
 
 ## 3. Chase alerts by email → receiver mailbox (the route for Chase if IFTTT does not see them)

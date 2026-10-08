@@ -71,7 +71,7 @@ describe('security regressions (from the independent review)', () => {
     const h = seedHousehold(); const app = buildApp(h.db, { auth: { mode: 'dev', allowlist: [], sessionSecret: 'x' } });
     expect((await app.inject({ url: '/api/budget' })).headers['cache-control']).toBe('no-store');
     // a bad id makes the handler throw a TypeError: the client must get a generic message
-    const r = await app.inject({ method: 'POST', url: '/api/greenlight/requests/99999/approve', headers: H, payload: {} });
+    const r = await app.inject({ method: 'POST', url: '/api/transactions/99999/categorize', headers: H, payload: { categoryId: 1 } });
     expect(r.statusCode).toBe(500); expect(r.json().error).toBe('internal error');
   });
 
@@ -107,11 +107,10 @@ describe('security regressions: privacy, sender trust, import profiles', () => {
     h.db.prepare('INSERT INTO push_subscriptions(user_id, endpoint, p256dh, auth) VALUES (?,?,?,?)').run(u, 'https://push.example.com/1', 'k', 'a');
     setPrefs(h.db, u, { lockScreenPrivacy: true });
     const t = memoryTransport(); const n = new Notifier(h.db, t, { now: () => DateTime.fromISO('2026-10-05T12:00:00', { zone: 'America/Los_Angeles' }) });
-    await n.handle({ type: 'greenlight_inform', message: "Marion's 33.79 at WALMART was declined" });
     await n.sendToUsers([u], { title: 'Chipotle $14.20', body: 'Eating Out?', tag: 'txn-1', id: 1, actions: [{ action: '3', title: 'Eating Out' }] }, 'needs_you', 1);
     await n.sendDueDigests();
     await n.handle({ type: 'silence', labels: ['phone'] });
-    expect(t.sent.length).toBe(4);
+    expect(t.sent.length).toBe(3);
     for (const { payload } of t.sent) { const all = JSON.stringify(payload); expect(all).not.toMatch(/WALMART|Chipotle|14\.20|Eating Out|Marion|need you/); expect(payload.actions).toBeUndefined(); }
   });
 

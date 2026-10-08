@@ -73,16 +73,12 @@ describe('notifications (verbose first, design §15.3)', () => {
     expect(s.t.sent).toHaveLength(0);
   });
 
-  it('greenlight: requests and declined purchases notify; Marion\'s ignored spends do not', async () => {
+  it('greenlight: nothing the cards do notifies any more (spending, requests, declines)', async () => {
     const s = setup();
     const gl = (m: string) => parseEvent(s.db, captureEvent(s.db, { source: 'greenlight_msg', channel: 'device', payload: `${m} on October 3, 2026 at 09:15AM` }).id);
-    gl('Marion spent $7.07 at WAL-MART #3658 GREENSBORO NC'); await flush();
-    expect(s.t.sent).toHaveLength(0);
-    gl('Marion requests $50.00 to buy groceries'); await flush();
-    expect(s.t.sent.map((x) => x.payload.title)).toEqual(['Marion requests $50.00', 'Marion requests $50.00']);
-    s.t.sent.length = 0;
+    gl('Marion spent $7.07 at WAL-MART #3658 GREENSBORO NC'); gl('Marion requests $50.00 to buy groceries');
     gl("Marion's $33.79 purchase at WAL-MART #5393 GREENSBORO NC was declined due to insufficient funds in their GROCERY Spend Control."); await flush();
-    expect(s.t.sent[0].payload.body).toMatch(/declined/);
+    expect(s.t.sent).toHaveLength(0);
   });
 
   it('respects per-user prefs: push off, quiet hours (items still reach the digest), and lock-screen privacy', async () => {

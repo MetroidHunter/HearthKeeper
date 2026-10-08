@@ -51,7 +51,7 @@ describe('guesser seeding', () => {
     const db = openDb();
     seedAccts(db); expect(Object.keys(seedAccts(db).tokens)).toEqual([]);
     seedCoreRules(db); seedCoreRules(db);
-    expect((db.prepare('SELECT COUNT(*) c FROM rules').get() as any).c).toBe(5);
+    expect((db.prepare('SELECT COUNT(*) c FROM rules').get() as any).c).toBe(4); // greenlight funding is no longer a rule: it is an ordinary payment
     expect(seedGreenlightProfiles(db)).toEqual(['Miracle Spending', 'Family Support']);
     addCategory(db, { name: 'Miracle Spending', startMonth: '2020-01' }); addCategory(db, { name: 'Family Support', startMonth: '2020-01' });
     expect(seedGreenlightProfiles(db)).toEqual([]);

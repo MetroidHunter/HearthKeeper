@@ -59,6 +59,11 @@ export function seedDemo(db: DB, today: string) {
   let n = 0;
   for (const m of ['$50.00 allowance transferred to Miracle', '$100.00 allowance transferred to Marion', 'Miracle spent $21.83 at El Rinconsito Seattle', 'Marion spent $7.07 at WAL-MART #3658 GREENSBORO NC', 'they can no longer use their debit card with payment apps', 'Marion\'s Greenlight card is on the way! 📫'])
     { const c = captureEvent(db, { source: 'greenlight_msg', channel: 'device', payload: `${m} on October 3, 2026 at 0${++n}:15PM` }); parseEvent(db, c.id); }
+  // Greenlight is an ordinary payment that needs a note: two funding payments, and the allowance messages above say which child each was for
+  for (const [cents, desc] of [[-5000, 'GREENLIGHT APP 261004 GREENLIGHT BRYS SEPULVEDA'], [-10000, 'GREENLIGHT APP 261004 GREENLIGHT BRYS SEPULVEDA']] as const) { const g = createTransaction(db, { accountId: wf, occurredOn: '2026-10-04', amountCents: cents, descriptor: desc }); classify(db, g); }
+  // a card purchase the bank has not posted yet (what a real-time alert creates), so "pending" has something to explain
+  const pend = createTransaction(db, { accountId: chase, occurredOn: day(0), amountCents: -1850, descriptor: 'SQ *PENDING DELI SEATTLE WA', status: 'provisional' }); classify(db, pend);
+  runNoteMatcher(db);
   captureEvent(db, { source: 'chase_alert', channel: 'email', payload: 'Chase: You made a $9.40 transaction with SQ *NEW CAFE on Oct 3, 2026 at 4:11 PM ET' });
   void processGreenlightMessage; void createToken; void setSplits;
 }

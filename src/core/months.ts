@@ -3,7 +3,6 @@ import { INBOX_WHERE } from './reports.js';
 import { incomeVsSpend, monthlySpend, monthRange } from './analytics.js';
 import { getVersions, monthlyAmount } from './balance.js';
 import { daysBetween } from './time.js';
-import { missingAllowances } from '../greenlight/engine.js';
 import { unpairedLegs } from '../ingest/pairing.js';
 
 /** Filters the Transactions page understands for a "fix it" link from the Months checklist (same SQL as Home and Backlog, see INBOX_WHERE). */
@@ -35,11 +34,9 @@ export function monthsOverview(db: DB, today: string): MonthRow[] {
   const txns = byMonth("SELECT substr(occurred_on,1,7) m, COUNT(*) c FROM transactions WHERE status!='void' GROUP BY m");
   const dupes = byMonth(`SELECT m, COUNT(*) c FROM (SELECT substr(occurred_on,1,7) m FROM transactions WHERE status!='void' AND flagged=0 AND kind IN ('spending','income') AND legacy_group IS NULL
     GROUP BY account_id, occurred_on, amount_cents, descriptor_raw HAVING COUNT(*)>1 AND SUM(CASE WHEN review_state='user_confirmed' THEN 1 ELSE 0 END)<COUNT(*)) GROUP BY m`);
-  // transfers whose other half never showed up, and Greenlight allowances that never arrived, placed in the month they belong to
+  // transfers whose other half never showed up, placed in the month they belong to
   const legIds = unpairedLegs(db); const legs = new Map<string, number>();
   if (legIds.length) for (const r of db.prepare(`SELECT substr(occurred_on,1,7) m FROM transactions WHERE id IN (${legIds.map(() => '?').join(',')})`).all(...legIds) as { m: string }[]) legs.set(r.m, (legs.get(r.m) ?? 0) + 1);
-  const gl = new Map<string, number>(); for (const e of missingAllowances(db, today)) gl.set(e.expected_on.slice(0, 7), (gl.get(e.expected_on.slice(0, 7)) ?? 0) + 1);
-  const pendingRequests = (db.prepare("SELECT COUNT(*) c FROM greenlight_requests WHERE status='pending'").get() as { c: number }).c;
   // data coverage per institution: does its data run through the end of the month, and is every month in between present?
   const inst = (db.prepare(`SELECT a.institution i, MIN(t.occurred_on) first, MAX(t.occurred_on) last FROM accounts a JOIN transactions t ON t.account_id=a.id AND t.status!='void'
     WHERE a.in_system=1 AND a.type IN ('credit_card','bank') GROUP BY a.institution`).all() as { i: string; first: string; last: string }[]);
@@ -81,7 +78,6 @@ export function monthsOverview(db: DB, today: string): MonthRow[] {
       { key: 'stale', label: 'Pending charges resolved', count: stale.get(m) ?? 0, detail: (stale.get(m) ?? 0) ? 'Charges that never posted: hide them, or import the bank file' : undefined, link: `#/transactions?${q('stale')}` },
       { key: 'dupes', label: 'No duplicates', count: dupes.get(m) ?? 0, link: `#/transactions?${q('dupes')}` },
       { key: 'transfers', label: 'Transfers paired', count: legs.get(m) ?? 0, link: '#/transfers' },
-      { key: 'greenlight', label: 'Greenlight settled', count: (gl.get(m) ?? 0) + (m === cur ? pendingRequests : 0), link: '#/greenlight' },
     ];
     return { month: m, current: m === cur, items, todo: items.filter((x) => x.count > 0).length, stats: stats(m, i) };
   }).reverse();

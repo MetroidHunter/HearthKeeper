@@ -4,7 +4,8 @@ import { categoryBalance, checkInvariants } from '../src/core/balance.js';
 import { setBudget, retireCategory } from '../src/core/categories.js';
 import { createTransaction, setSplits, classify } from '../src/core/transactions.js';
 import { createTransfer, proposeRebalance, commitRebalance, placePool, adjustment } from '../src/core/transfers.js';
-import { processGreenlightMessage, attributionViolations } from '../src/greenlight/engine.js';
+import { processGreenlightMessage } from '../src/greenlight/engine.js';
+import { runNoteMatcher } from '../src/notes/matcher.js';
 import { commitImport } from '../src/ingest/import.js';
 import { suggestMapping, parseCsv } from '../src/ingest/csv.js';
 import { addRule } from '../src/core/rules.js';
@@ -53,7 +54,7 @@ describe('property: conservation of money (design §7.8, §17.5)', () => {
   }
 });
 
-describe('property: Greenlight attribution (design §11.8 #3)', () => {
+describe('property: Greenlight messages are notes, never money (design §11.8 #3, retooled)', () => {
   const TEMPLATES = [
     (p: string, c: number) => `$${(c / 100).toFixed(2)} allowance transferred to ${p}`,
     (p: string, c: number) => `${p} spent $${(c / 100).toFixed(2)} at TST* VENDOR ${c % 7} SEATTLE WA`,
@@ -65,28 +66,26 @@ describe('property: Greenlight attribution (design §11.8 #3)', () => {
     (p: string, c: number) => `${p} is scheduled to receive $${Math.round(c / 100)} allowance tomorrow morning. We'll send it.`,
   ];
   for (let seed = 1; seed <= 25; seed++) {
-    it(`no event for one profile ever touches the other's category; funding never charges (seed ${seed})`, () => {
+    it(`messages never create money; every note matches at most one payment and vice versa; a payment only ever gets its own child's note (seed ${seed})`, () => {
       const r = rng(1000 + seed); const h = seedHousehold(); const db = h.db;
-      addRule(db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'vendor 3' }] }, action: { type: 'categorize', category: 'Eating Out' }, mode: 'auto' });
-      addRule(db, { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'greenlight app' }] }, action: { type: 'internal_transfer', reason: 'greenlight_funding' }, mode: 'auto' });
-      const owner = new Map<number, string>();
+      let allowances = 0; const payments: number[] = [];
       for (let i = 1; i <= 60; i++) {
-        const p = r() < 0.5 ? 'Miracle' : 'Marion'; const c = int(r, 100, 20000);
-        const day = `October ${int(r, 1, 28)}, 2026`;
-        const out = processGreenlightMessage(db, i, `${pick(r, TEMPLATES)(p, c)} on ${day} at 0${int(r, 1, 9)}:15PM`, '2026-10-29T00:00:00Z');
-        if ('txnId' in out && out.txnId) owner.set(out.txnId, p);
-        if (r() < 0.15) { const f = createTransaction(db, { accountId: h.wf, occurredOn: '2026-10-05', amountCents: -int(r, 500, 20000), descriptor: 'GREENLIGHT APP 261005 GREENLIGHT BRYS' }); classify(db, f); }
+        const p = r() < 0.5 ? 'Miracle' : 'Marion'; const c = int(r, 1, 6) * 2500; // amounts collide on purpose
+        const day = int(r, 1, 28);
+        const out = processGreenlightMessage(db, i, `${pick(r, TEMPLATES)(p, c)} on October ${day}, 2026 at 0${int(r, 1, 9)}:15PM`, '2026-10-29T00:00:00Z');
+        if (out.outcome === 'note') allowances++;
+        if (r() < 0.2) { const f = createTransaction(db, { accountId: h.wf, occurredOn: `2026-10-${String(day).padStart(2, '0')}`, amountCents: -int(r, 1, 6) * 2500, descriptor: 'GREENLIGHT APP 261005 GREENLIGHT BRYS' }); classify(db, f); payments.push(f); }
+        if (r() < 0.3) runNoteMatcher(db);
       }
-      const myCat = { Miracle: h.cats['Miracle Spending'], Marion: h.cats['Family Support'] } as Record<string, number>;
-      const other = { Miracle: h.cats['Family Support'], Marion: h.cats['Miracle Spending'] } as Record<string, number>;
-      for (const [txn, p] of owner) for (const s of db.prepare('SELECT category_id FROM transaction_splits WHERE transaction_id=?').all(txn) as any[]) expect(s.category_id, `txn ${txn} of ${p}`).not.toBe(other[p]);
-      void myCat;
-      expect(attributionViolations(db)).toEqual([]);
+      runNoteMatcher(db);
+      // messages never created a transaction; only the bank payments exist
+      expect((db.prepare('SELECT COUNT(*) c FROM transactions').get() as any).c).toBe(payments.length);
+      expect((db.prepare("SELECT COUNT(*) c FROM external_notes WHERE source='greenlight'").get() as any).c).toBe(allowances);
+      // one-to-one, equal sizes
+      const matched = db.prepare("SELECT n.matched_txn_id t, n.amount_cents a, n.note FROM external_notes n WHERE n.matched_txn_id IS NOT NULL").all() as any[];
+      expect(new Set(matched.map((m) => m.t)).size).toBe(matched.length);
+      for (const m of matched) { const t = db.prepare('SELECT amount_cents a, note FROM transactions WHERE id=?').get(m.t) as any; expect(-t.a).toBe(m.a); if (t.note !== null) expect(t.note).toBe(m.note); }
       expect(checkInvariants(db)).toEqual([]);
-      // under option A funding never charges a category
-      expect(db.prepare("SELECT COUNT(*) c FROM transactions t JOIN transaction_splits s ON s.transaction_id=t.id WHERE UPPER(t.descriptor_raw) LIKE 'GREENLIGHT APP%'").get()).toEqual({ c: 0 });
-      // Marion's spends never create a ledger effect at all
-      expect(db.prepare("SELECT COUNT(*) c FROM transactions WHERE kind='greenlight_reclass' AND greenlight_ref LIKE 'spend:2:%'").get()).toEqual({ c: 0 });
     });
   }
 });

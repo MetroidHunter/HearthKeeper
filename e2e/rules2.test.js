@@ -67,6 +67,7 @@ describe('Rules are made while categorizing, with AND / OR conditions', () => {
     await api('/api/rules', { method: 'POST', body: { match: { all_of: [{ field: 'descriptor', op: 'contains', value: 'pelican' }] }, action: { type: 'categorize', category: 'Groceries' }, mode: 'suggest' } });
     await mk('PELICAN BAKERY', -600);
     await mount('/backlog');
+    setInput(await waitFor(() => $('input[type=search]'), 'the search box'), 'PELICAN'); // the demo has more rows waiting now: look only at this merchant
     const row = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((r) => /PELICAN/.test(text(r))), 'row');
     const qs = $$('button.quick', row);
     expect(qs.map((q) => [q.dataset.why, text(q)])).to.deep.equal([['rule', 'Groceries'], ['merchant history', 'Eating Out']]); // no prefix: the category is what you read

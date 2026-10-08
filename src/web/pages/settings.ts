@@ -79,7 +79,7 @@ export class Settings extends Page {
             : this.thisDevice ? html`<button id="disable" @click=${() => this.disableHere()}>Turn off notifications on this device</button>`
             : html`<button class="primary" id="enable" @click=${() => this.enablePush()}>Turn on notifications on this device</button>`}
           <button id="test" ?disabled=${this.devices.length === 0} @click=${async () => { await this.run(async () => { const r = await api.post('/api/push/test'); this.status = `Test sent to ${r.results.length} device${r.results.length === 1 ? '' : 's'}: ${r.results.map((x: any) => x.status).join(', ')}`; }); }}>Send a test to my devices</button></div>
-        <p class="muted small" style="margin-bottom:0">Each device is on or off by itself; there is no separate master switch. Prompts are real-time for Chase purchases and Greenlight; everything else waits for the morning digest. The first of you to answer closes the prompt on the other phone.</p>
+        <p class="muted small" style="margin-bottom:0">Each device is on or off by itself; there is no separate master switch. Prompts are real-time for Chase purchases; everything else waits for the morning digest. The first of you to answer closes the prompt on the other phone.</p>
       </div>
       <div class="card">
         <div class="row"><label><input type="checkbox" id="quiet" .checked=${p.quiet.enabled} @change=${(e: any) => this.save({ quiet: { enabled: e.target.checked } })} /> Quiet hours</label>

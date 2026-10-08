@@ -8,7 +8,6 @@ import './pages/transactions.js';
 import './pages/plans.js';
 import './pages/earnings.js';
 import './pages/imports.js';
-import './pages/greenlight.js';
 import './pages/ingest.js';
 import './pages/months.js';
 import './pages/rules.js';
@@ -46,7 +45,6 @@ const MENUS: { label: string; items: Route[] }[] = [
   ] },
   { label: 'Settings', items: [
     R('/settings', 'Preferences', () => html`<hk-settings></hk-settings>`, 'Appearance and notifications'),
-    R('/greenlight', 'Greenlight', () => html`<hk-greenlight></hk-greenlight>`, 'Kids\' cards and requests'),
     R('/rules', 'Rules & merchants', () => html`<hk-rules></hk-rules>`, 'How things get categorized'),
     R('/ingest', 'Ingest health', () => html`<hk-ingest></hk-ingest>`, 'Is capture working?'),
     R('/migration', 'Migration', () => html`<hk-migration></hk-migration>`, 'Import report and cleanup'),
@@ -60,7 +58,7 @@ export class HkApp extends LitElement {
   @state() private auth: { mode: string; user: string | null; googleClientId: string | null } | null = null;
   @state() private offline = false; private retryTimer: any;
   createRenderRoot() { return this; }
-  private current() { return (location.hash.replace(/^#/, '') || '/').replace(/^\/close\b/, '/months'); } // the old Close page lives on as Months
+  private current() { return (location.hash.replace(/^#/, '') || '/').replace(/^\/close\b/, '/months').replace(/^\/greenlight\b/, '/'); } // the old Close page lives on as Months
   /**
    * Who is signed in? If the server cannot be reached we cannot know: show the saved pages read-only with a visible banner, and keep asking
    * (when the connection returns, when the tab is shown again, and every 20s) so the sign-in page appears as soon as it is needed.

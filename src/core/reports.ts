@@ -180,7 +180,6 @@ export function inbox(db: DB, today = new Date().toISOString().slice(0, 10), opt
     counts: inboxCounts(db),
     items,
     needsCategory, needsNote, staleProvisionals, flagged,
-    greenlightRequests: db.prepare("SELECT r.*, p.display_name FROM greenlight_requests r JOIN greenlight_profiles p ON p.id=r.profile_id WHERE r.status='pending'").all(),
     unrecognized: db.prepare("SELECT id, source, received_at, payload, error FROM raw_events WHERE parse_status IN ('unrecognized','error') ORDER BY id DESC LIMIT 100").all(),
   };
 }

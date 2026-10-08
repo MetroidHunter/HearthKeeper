@@ -3,6 +3,7 @@ import { markStale } from '../ingest/import.js';
 import { silentTokens } from '../ingest/events.js';
 import { runNoteMatcher } from '../notes/matcher.js';
 import { recleanDescriptors } from '../core/reclean.js';
+import { retireGreenlight } from '../greenlight/retire.js';
 import type { Notifier } from '../notify/notifier.js';
 
 /** Periodic housekeeping (design §17.1): stale provisionals, note re-matching, silence checks. Push delivery plugs into `onAlert`. */
@@ -19,6 +20,7 @@ export function startScheduler(db: DB, notifier?: Notifier, onAlert: (kind: stri
     } catch (e) { console.error('scheduler tick failed', e); }
   };
   try { const r = recleanDescriptors(db); if (r.changed) console.log(`re-cleaned ${r.changed} descriptors, removed ${r.merchantsRemoved} unused merchants`); } catch (e) { console.error('descriptor repair failed', e); }
+  try { const r = retireGreenlight(db); if (!r.skipped) console.log(`Greenlight retired: ${r.rules} child rule(s), ${r.fundingRestored} funding payment(s) restored, ${r.walletRowsIgnored} wallet row(s) ignored, ${r.messagesReprocessed} message(s) re-read`); } catch (e) { console.error('Greenlight migration failed', e); }
   void tick(); // once at start too, so a deploy never leaves charges waiting for the first timer
   const h = setInterval(() => void tick(), 10 * 60_000);
   h.unref();

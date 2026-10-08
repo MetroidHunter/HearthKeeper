@@ -3,9 +3,9 @@ import { daysBetween } from '../core/time.js';
 import { parseCents } from '../core/money.js';
 import { parseCsv } from '../ingest/csv.js';
 import { decide, loadRules } from '../core/rules.js';
-import { getCategoryId } from '../core/transactions.js';
+import { classify, getCategoryId } from '../core/transactions.js';
 
-export type WrapperSource = 'amazon' | 'venmo' | 'paypal';
+export type WrapperSource = 'amazon' | 'venmo' | 'paypal' | 'greenlight';
 
 /** Which wrapper source does a bank descriptor name? (source-aware candidate filter, design §10.3 step 1) */
 export function wrapperSourceOf(descriptor: string): WrapperSource | null {
@@ -13,6 +13,7 @@ export function wrapperSourceOf(descriptor: string): WrapperSource | null {
   if (/venmo/.test(d)) return /cashout|cash out|standard transfer|instant transfer/.test(d) ? null : 'venmo'; // cash-outs are income, not notes (§10.2)
   if (/paypal/.test(d)) return 'paypal';
   if (/amzn|amazon/.test(d)) return 'amazon';
+  if (/greenlight app/.test(d)) return 'greenlight'; // money sent to a child's Greenlight card: the bank row does not say which child; the Greenlight message does
   return null;
 }
 export function ownerHint(descriptor: string): 'brys' | 'miracle' | null {
@@ -92,13 +93,18 @@ export function assign(cost: number[][]): number[] {
 }
 const total = (cost: number[][], asg: number[]) => asg.reduce((s, j, i) => s + (j >= 0 ? cost[i][j] : 0), 0);
 
-export const WINDOWS: Record<WrapperSource, { before: number; after: number }> = { amazon: { before: 3, after: 3 }, paypal: { before: 3, after: 3 }, venmo: { before: 0, after: 5 } }; // bank date relative to note date
+export const WINDOWS: Record<WrapperSource, { before: number; after: number }> = { amazon: { before: 3, after: 3 }, paypal: { before: 3, after: 3 }, venmo: { before: 0, after: 5 }, greenlight: { before: 3, after: 7 } }; // bank date relative to note date
 
 /** Mark wrapper-source charges as awaiting a note (only the three wrapper sources require one by default). */
 export function markWrapperNotes(db: DB): number {
-  const rows = db.prepare("SELECT id, descriptor_raw FROM transactions WHERE note_state='not_needed' AND status!='void' AND kind IN ('spending','income') AND amount_cents<0 AND COALESCE(note_source,'')!='seed'").all() as any[];
+  const rows = db.prepare("SELECT id, descriptor_raw, decided_rule_id, review_state FROM transactions WHERE note_state='not_needed' AND status!='void' AND kind IN ('spending','income') AND amount_cents<0 AND COALESCE(note_source,'')!='seed'").all() as any[];
   let n = 0;
-  for (const r of rows) if (wrapperSourceOf(r.descriptor_raw)) { db.prepare("UPDATE transactions SET note_state='awaiting_note' WHERE id=?").run(r.id); n++; }
+  for (const r of rows) {
+    const src = wrapperSourceOf(r.descriptor_raw); if (!src) continue;
+    // a Greenlight row already settled by a rule (the plan fee, or "$100 → Family Support") needs no note to say which child
+    if (src === 'greenlight' && (r.decided_rule_id || r.review_state === 'auto_categorized' || r.review_state === 'user_confirmed')) continue;
+    { db.prepare("UPDATE transactions SET note_state='awaiting_note' WHERE id=?").run(r.id); n++; }
+  }
   return n;
 }
 
@@ -139,7 +145,12 @@ export function runNoteMatcher(db: DB): MatchSummary {
       }
       db.prepare('UPDATE external_notes SET matched_txn_id=? WHERE id=?').run(t.id, note.id);
       if (q !== 'sufficient') { db.prepare("UPDATE transactions SET note_state='needs_note', note=?, flag_reason=? WHERE id=?").run(unknown ? null : note.note || null, unknown ? `${note.source} export could not identify this order` : `vague note (${note.counterparty ?? 'unknown counterparty'})`, t.id); out.needsNote++; }
-      else { db.prepare("UPDATE transactions SET note=?, note_state='auto_matched', note_source=? WHERE id=?").run(note.note, note.source, t.id); out.matched++; }
+      else {
+        db.prepare("UPDATE transactions SET note=?, note_state='auto_matched', note_source=? WHERE id=?").run(note.note, note.source, t.id); out.matched++;
+        // the note is new information: rules that look at the note (e.g. "Greenlight + note contains Marion → Family Support") can now apply
+        const cur = db.prepare('SELECT review_state r, kind FROM transactions WHERE id=?').get(t.id) as { r: string; kind: string };
+        if (cur.r === 'needs_category' && !['ignored', 'internal_transfer', 'greenlight_reclass'].includes(cur.kind)) classify(db, t.id);
+      }
     }
   }
   return out;

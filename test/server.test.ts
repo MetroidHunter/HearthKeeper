@@ -49,12 +49,14 @@ describe('api', () => {
     expect(r.statusCode).toBe(200);
     expect(r.json().duplicate).toBe(false);
     expect((await app.inject({ method: 'POST', url: `/ingest/device?token=${t.secret}`, payload: { text: '$50.00 allowance transferred to Miracle on October 3, 2026 at 09:15AM' } })).json().duplicate).toBe(true);
-    const txns = await app.inject({ url: '/api/transactions?hidden=1' });
-    expect(txns.json()).toHaveLength(1);
+    // Greenlight is a note source now: an allowance message becomes a note, not a transaction
+    expect((await app.inject({ url: '/api/transactions?hidden=1' })).json()).toHaveLength(0);
+    expect(h.db.prepare("SELECT source, amount_cents a, note FROM external_notes").all()).toEqual([{ source: 'greenlight', a: 5000, note: 'Miracle' }]);
     // plain text body (what a webhook with a raw body sends)
     const r2 = await app.inject({ method: 'POST', url: `/ingest/device?token=${t.secret}`, headers: { 'content-type': 'text/plain' }, payload: '$100.00 allowance transferred to Marion on October 3, 2026 at 09:16AM' });
     expect(r2.statusCode).toBe(200);
-    expect((await app.inject({ url: '/api/transactions?hidden=1' })).json()).toHaveLength(2);
+    expect((await app.inject({ url: '/api/transactions?hidden=1' })).json()).toHaveLength(0);
+    expect(h.db.prepare("SELECT note FROM external_notes ORDER BY id").all()).toEqual([{ note: 'Miracle' }, { note: 'Marion' }]);
   });
 
   it('hmac-signed email ingest verifies against the exact raw bytes (Apps Script path)', async () => {

@@ -14,11 +14,12 @@ describe('capture and replay', () => {
     expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 0 }); // no parser yet: nothing created
     registerGreenlightParser();
     expect(replay(h.db).replayed).toBe(2);
-    const snap = () => JSON.stringify(h.db.prepare('SELECT * FROM transactions ORDER BY id').all());
+    const snap = () => JSON.stringify(h.db.prepare('SELECT * FROM external_notes ORDER BY id').all());
     const first = snap();
     replay(h.db, { includeOk: true });
     expect(snap()).toBe(first); // second replay changes nothing
-    expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 2 });
+    expect(h.db.prepare('SELECT COUNT(*) c FROM external_notes').get()).toEqual({ c: 2 }); // Greenlight messages are notes now
+    expect(h.db.prepare('SELECT COUNT(*) c FROM transactions').get()).toEqual({ c: 0 });
   });
 
   it('unknown shapes are never silently parsed; they cluster by fingerprint', () => {

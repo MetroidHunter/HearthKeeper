@@ -113,21 +113,16 @@ describe('Home (phone view)', () => {
     await waitFor(() => /E2E COFFEE/.test(text(byText('h2', /^Recent/).nextElementSibling)), 'new row under Recent');
   });
 
-  it('picking from the search box and confirming saves it, with no page errors, including for a Greenlight spend', async () => {
+  it('picking from the search box and confirming saves it, with no page errors', async () => {
     await mount('/');
-    const card = await waitFor(() => $$('.trow.txn').find((c) => /El Rinconsito|Greenlight wallet/i.test(text(c))), 'the Greenlight spend card');
+    const card = await waitFor(() => $$('.trow.txn[data-cat=missing]').find((c) => !/GREENLIGHT/i.test(text(c))), 'a card waiting for a category');
     const id = Number(card.dataset.id);
-    const before = (await api('/api/budget')).rows.find((r) => r.name === 'Gas');
     await pickCat($('.tcat hk-category-select', card), 'Gas');
     await confirmDialog(/Yes, categorize/);
-    await waitFor(() => !$$('.trow.txn').some((c) => Number(c.dataset.id) === id), 'the card to leave Needs you');
-    const t = (await api(`/api/transactions?q=Rinconsito`))[0];
-    const gas = t.splits.find((s) => s.category === 'Gas');
-    expect(gas, 'a Gas split').to.exist;
-    expect(gas.amount_cents).to.be.below(0); // the spend now sits in Gas
-    expect(t.splits.reduce((a, s) => a + s.amount_cents, 0)).to.equal(0); // and the child's category got it back
-    const after = (await api('/api/budget')).rows.find((r) => r.name === 'Gas');
-    expect(after.currentCents).to.be.below(before.currentCents);
+    await waitFor(() => !$$('.trow.txn').some((c) => Number(c.dataset.id) === id && c.dataset.cat === 'missing'), 'the card to stop asking for a category');
+    const t = (await api(`/api/transactions?limit=500`)).find((x) => x.id === id);
+    expect(t.splits.map((s) => s.category)).to.deep.equal(['Gas']);
+    expect(t.splits.reduce((a, s) => a + s.amount_cents, 0)).to.equal(t.amount_cents);
   });
 
   it('a failed save is shown in a dialog instead of failing silently', async () => {
