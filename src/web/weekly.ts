@@ -1,16 +1,36 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { api, money } from './api.js';
-import { pace } from './shared.js';
+import { today } from './shared.js';
 import { showDialog, confirmBox, catSelect } from './ui.js';
 
 const DAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const day = (d: string) => `${MON[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8))}`;
-export const weekLabel = (w: { from: string; to: string }) => (w.from === w.to ? day(w.from) : `${day(w.from)} – ${w.from.slice(5, 7) === w.to.slice(5, 7) ? Number(w.to.slice(8)) : day(w.to)}`);
+export const weekLabel = (w: { from: string; to: string }) => (w.from === w.to ? day(w.from) : `${day(w.from)}–${w.from.slice(5, 7) === w.to.slice(5, 7) ? Number(w.to.slice(8)) : day(w.to)}`);
 const tone = (c: number) => (c < 0 ? 'neg' : c > 0 ? 'pos' : '');
 
-/** The weekly budget on the Budget page: the month's total left, then each week (its share, what carried in, what was spent, what is left). */
+/** How full a week's bar is: spent against the money it had (its share plus what carried in). A week with nothing to spend that has spending is full. */
+const fill = (w: any) => (w.availableCents > 0 ? Math.min(100, Math.max(0, (w.spentCents / w.availableCents) * 100)) : w.spentCents > 0 || w.availableCents < 0 ? 100 : 0);
+/** Where today falls inside the current week, as a share of the week's width (the end of today). */
+const todayAt = (w: any) => { const d = (Date.parse(today()) - Date.parse(w.from)) / 86400000 + 1; return Math.min(100, Math.max(0, (d / w.days) * 100)); };
+
+/**
+ * The month as one long bar cut into weeks (each as wide as it has days, so a short week is a short piece). Every piece is its own progress bar:
+ * the dates and the week's budget above it, what is left below it (red when the week went over), and what carried in or was spent beneath that.
+ */
+export function weekBars(b: any) {
+  return html`<div class="wkbars" role="list">${b.weeks.map((w: any) => {
+    const over = w.remainingCents < 0;
+    return html`<div class="wkseg ${w.state} ${over ? 'over' : ''}" role="listitem" data-week=${w.n} style="flex-grow:${w.days}" title="${weekLabel(w)}: ${money(w.availableCents)} to spend, ${money(w.spentCents)} spent">
+      <div class="wkseg-top"><span class="wkseg-dates">${weekLabel(w)}</span><span class="wkseg-budget muted">${money(w.allottedCents)}</span></div>
+      <div class="wkbar"><i style="width:${fill(w)}%"></i>${w.state === 'current' ? html`<u class="wk-now" style="left:${todayAt(w)}%" title="Today"></u>` : nothing}</div>
+      <div class="wkseg-left ${tone(w.remainingCents)}">${money(w.remainingCents)} <span class="wkseg-word">${over ? 'over' : 'left'}</span></div>
+      <div class="wkseg-sub muted">${w.state === 'future' && !w.spentCents ? nothing : html`${money(w.spentCents)} spent`}${w.carriedCents ? html`${w.state === 'future' && !w.spentCents ? nothing : html`<br>`}${w.carriedCents > 0 ? '+' : ''}${money(w.carriedCents)} carried` : nothing}</div></div>`;
+  })}</div>`;
+}
+
+/** The weekly budget on the Budget page: the month's total left, the week bars, and the exact numbers in a table underneath. */
 export function weeklyCard(b: any, on: { favorite: () => void; edit: () => void }) {
   return html`<section class="card flush wk" data-weekly=${b.id}>
     <div class="wk-head"><button class="link icon wk-fav" title=${b.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${on.favorite}>${b.favorite ? '★' : '☆'}</button>
@@ -18,22 +38,24 @@ export function weeklyCard(b: any, on: { favorite: () => void; edit: () => void 
       <span class="wk-total ${tone(b.remainingCents)}" title="The month's amount minus everything spent in it so far"><b>${money(b.remainingCents)}</b> <span class="muted small">left of ${money(b.amountCents)} this month</span></span>
       <button class="icon wk-edit" title="Edit or delete this weekly budget" aria-label="Edit weekly budget" @click=${on.edit}>✎</button></div>
     <div class="muted small wk-sub">The ${b.category} budget, spread over the month · weeks start ${DAYS[b.weekStart]} · what is left in a week rolls into the next, and a week that goes over eats into it</div>
+    <div class="wk-bars">${weekBars(b)}<div class="wk-legend muted small">Each piece is a week, as wide as it has days. It fills as you spend; red means that week went over. <span class="wk-legend-now"></span> marks today.</div></div>
+    <details class="wk-details"><summary class="muted small">Details</summary>
     <div style="overflow-x:auto"><table class="wk-table"><thead><tr><th>Week</th><th class="num">Budget</th><th class="num">Carried in</th><th class="num">Spent</th><th class="num">Left</th><th class="num hide-sm" title="The most you can have spent by the end of this week to be on track for the month">Limit by week end</th></tr></thead>
       <tbody>${b.weeks.map((w: any) => html`<tr class="wk-row ${w.state}" data-week=${w.n}>
         <td>${weekLabel(w)} <span class="muted small">${w.days} day${w.days === 1 ? '' : 's'}</span>${w.state === 'current' ? html` <span class="badge good">this week</span>` : nothing}</td>
         <td class="num">${money(w.allottedCents)}</td><td class="num ${tone(w.carriedCents)}">${w.carriedCents ? money(w.carriedCents) : '–'}</td><td class="num">${money(w.spentCents)}</td>
-        <td class="num wk-left ${tone(w.remainingCents)}"><b>${money(w.remainingCents)}</b></td><td class="num muted hide-sm">${money(w.limitCents)}</td></tr>`)}</tbody></table></div>
+        <td class="num wk-left ${tone(w.remainingCents)}"><b>${money(w.remainingCents)}</b></td><td class="num muted hide-sm">${money(w.limitCents)}</td></tr>`)}</tbody></table></div></details>
   </section>`;
 }
 
-/** A Home tile: this week's money left, the week's dates, and how the month is doing. */
+/** A Home tile: this week's money left, the whole month as little week bars, and how the month is doing. */
 export function weeklyTile(b: any, on: { unfavorite: () => void }) {
   const w = b.weeks.find((x: any) => x.n === b.currentWeek) ?? b.weeks.at(-1);
   return html`<div class="fav wk-tile ${w.remainingCents < 0 ? 'over' : ''}" data-weekly=${b.id} title="${b.name}: ${weekLabel(w)} has ${money(w.availableCents)} to spend (${money(w.allottedCents)} + ${money(w.carriedCents)} carried), ${money(w.spentCents)} spent">
-    <div class="fav-top"><b class="fav-name">${b.name}</b><span class="badge wk-badge">week</span><button class="link icon" title="Remove from favorites" aria-label="Toggle favorite" @click=${on.unfavorite}>★</button></div>
+    <div class="fav-top"><b class="fav-name">${b.name}</b><button class="link icon" title="Remove from favorites" aria-label="Toggle favorite" @click=${on.unfavorite}>★</button></div>
     <div class="fav-bal ${tone(w.remainingCents)}">${money(w.remainingCents)}</div>
-    <div class="bar ${w.remainingCents < 0 ? 'over' : ''}"><i style="width:${pace(w.spentCents, w.availableCents)}%"></i></div>
-    <div class="fav-sub">${weekLabel(w)} · ${money(w.spentCents)} of ${money(w.availableCents)}</div>
+    <div class="wkbars mini">${b.weeks.map((x: any) => html`<div class="wkseg ${x.state} ${x.remainingCents < 0 ? 'over' : ''}" style="flex-grow:${x.days}"><div class="wkbar"><i style="width:${fill(x)}%"></i></div></div>`)}</div>
+    <div class="fav-sub">${w.remainingCents < 0 ? 'over' : 'left'} this week (${weekLabel(w)})</div>
     <div class="fav-sub wk-month ${tone(b.remainingCents)}">Month: ${money(b.remainingCents)} left of ${money(b.amountCents)}</div></div>`;
 }
 

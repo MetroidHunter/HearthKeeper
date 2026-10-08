@@ -100,4 +100,31 @@ describe('Weekly budgets', () => {
       expect(text(tile)).to.match(/\$/);
     } finally { await setViewport({ width: 1280, height: 800 }); }
   });
+
+  it('draws the month as one bar cut into week pieces: as wide as the week has days, filled by spending, red when over, money above and below', async () => {
+    const cats = await api('/api/categories');
+    const eat = cats.find((c) => c.name === 'Eating Out');
+    const accts = await api('/api/accounts');
+    await api('/api/weekly-budgets', { method: 'POST', body: { categoryId: eat.id } });
+    const [b0] = await api('/api/weekly-budgets');
+    const cur = b0.weeks.find((w) => w.state === 'current');
+    await api('/api/transactions', { method: 'POST', body: { accountId: accts[0].id, descriptor: 'HALF', amountCents: -Math.round(cur.availableCents / 2), categoryId: eat.id } });
+    const [b] = await api('/api/weekly-budgets');
+    await mount('/budget');
+    const card = await waitFor(() => $('section[data-weekly]'), 'card');
+    const segs = $$('.wkbars .wkseg', card);
+    expect(segs).to.have.length(b.weeks.length);
+    segs.forEach((seg, i) => expect(getComputedStyle(seg).flexGrow).to.equal(String(b.weeks[i].days)));      // a short week is a short piece
+    const now = $('.wkseg.current', card);
+    expect(now).to.exist;
+    expect(Math.round(parseFloat($('.wkbar > i', now).style.width))).to.be.within(49, 51);                    // half spent, half the bar
+    expect($('.wk-now', now)).to.exist;                                                                         // today's marker
+    expect(text($('.wkseg-left', now))).to.match(/\$[\d,.]+ left/);
+    expect(text($('.wkseg-top', now))).to.contain(`$${(cur.allottedCents / 100).toFixed(2)}`);                  // the week's budget above the bar
+    await api('/api/transactions', { method: 'POST', body: { accountId: accts[0].id, descriptor: 'OOPS', amountCents: -500000, categoryId: eat.id } });
+    await mount('/budget');
+    const over = await waitFor(() => $('.wkseg.current.over'), 'the week turns red when it goes over');
+    expect(text($('.wkseg-left', over))).to.match(/^-\$.*over$/);
+    expect($('.wkbar > i', over).style.width).to.equal('100%');
+  });
 });
