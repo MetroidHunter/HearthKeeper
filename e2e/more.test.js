@@ -172,7 +172,7 @@ describe('Transfers: rebalance', () => {
     byText('button', /^Propose$/).click();
     await waitFor(() => /Resulting balances/.test(text(document.body)), 'proposal');
     expect(text(document.body)).to.match(/Pool Gig Income → Pets/);
-    expect(text($('.topups') ?? document.body), 'the top-up is explained').to.match(/Pets: toward this month's budget so far, \$\d[\d,.]* × \d+\/\d+ = \$/);
+    expect(text($('.topups') ?? document.body), 'the top-up is explained').to.match(/Pets: for the rest of the month, \$\d[\d,.]* × \d+\/\d+ days = \$/);
     byText('button', /^Commit$/).click();
     await waitFor(async () => (await api('/api/transfers')).some((t) => t.kind === 'pool_payment'), 'pool payment recorded');
     const legs = (await api('/api/transfers')).filter((t) => t.kind === 'pool_payment' || t.kind === 'reconcile');
@@ -192,7 +192,7 @@ describe('Transfers: top-up toggle', () => {
     await api('/api/transactions', { method: 'POST', body: { accountId: wf, descriptor: 'GIG PAYMENT', amountCents: 5_000_000, categoryId: id('Gig Income') } });
     const withTop = await api(`/api/transfers/rebalance?asOf=2026-10-11`); const without = await api(`/api/transfers/rebalance?asOf=2026-10-11&topUp=0`);
     const sum = (p) => p.poolPayments.filter((m) => m.toCategoryId === id('Pets')).reduce((a, m) => a + m.cents, 0);
-    expect(sum(withTop) - sum(without), 'the top-up is the budget share of 11 of 31 days').to.equal(Math.round(8000 * 11 / 31));
+    expect(sum(withTop) - sum(without), 'the top-up is the budget for the 20 days that remain of 31').to.equal(Math.round(8000 * 20 / 31));
     await mount('/transfers');
     $('#topup').click();
     byText('button', /^Propose$/).click();

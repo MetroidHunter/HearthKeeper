@@ -28,8 +28,8 @@ export interface RebalanceProposal {
   poolPayments: { poolCategoryId: number; toCategoryId: number; cents: number }[];
   donorMoves: { fromCategoryId: number; toCategoryId: number; cents: number }[];
   remainingShortfall: { categoryId: number; cents: number }[];
-  /** Round 2: how much each overspent envelope was also asked to receive toward the share of its budget the month has used, and how much of that was found. */
-  topUps: { categoryId: number; wantedCents: number; fundedCents: number; day: number; days: number; monthlyCents: number }[];
+  /** Round 2: how much each overspent envelope was also asked to receive for the days left in the month (monthly budget × remaining ÷ days), and how much of that was found. */
+  topUps: { categoryId: number; wantedCents: number; fundedCents: number; day: number; days: number; remaining: number; monthlyCents: number }[];
   resulting: Record<number, number>; // balance of every touched category after commit
 }
 
@@ -50,7 +50,7 @@ const EPS = 0.5; // sub-cent legacy drift is not an overage (parity tolerance)
  */
 export function keepFloor(c: { monthly: number; cushion_cents: number | null }): number { return c.monthly + (c.cushion_cents ?? 0); }
 
-/** Days of the month already used at `asOf`, as a fraction (day 11 of a 30-day month: 11/30). */
+/** Where `asOf` falls in its month: day 11 of a 30-day month means 11 days gone and 19 remaining. */
 export function monthFraction(asOf: string): { day: number; days: number } {
   const y = Number(asOf.slice(0, 4)), m = Number(asOf.slice(5, 7));
   return { day: Number(asOf.slice(8, 10)), days: new Date(Date.UTC(y, m, 0)).getUTCDate() };
@@ -58,9 +58,9 @@ export function monthFraction(asOf: string): { day: number; days: number } {
 
 /**
  * Auto-proposal in priority order: the income pool first, then discretionary donors, then non-discretionary ones above budget + cushion (design §13.1).
- * Two rounds, each in priority order. Round 1 covers every overage. Round 2 (unless `topUp: false`) tries to bring each overspent envelope up to the share of its
- * monthly budget that the month has already used: a category at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 11/30 = $125 in total.
- * Round 2 only spends what round 1 left, so a top-up can never take money an overage needed.
+ * Two rounds, each in priority order. Round 1 covers every overage. Round 2 (unless `topUp: false`) tries to also give each overspent envelope the share of its
+ * monthly budget for the days that remain: a category at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 19/30 = $165 in total, so it can
+ * get through the rest of the month at its budgeted pace. Round 2 only spends what round 1 left, so a top-up can never take money an overage needed.
  */
 export function proposeRebalance(db: DB, asOf: string, opts: { topUp?: boolean } = {}): RebalanceProposal {
   const topUp = opts.topUp !== false;
@@ -111,9 +111,9 @@ export function proposeRebalance(db: DB, asOf: string, opts: { topUp?: boolean }
   const topUps: RebalanceProposal['topUps'] = [];
   if (topUp) {
     const { day, days } = monthFraction(asOf);
-    const want = new Map(over.map((c) => [c.id, Math.round((c.monthly * day) / days)] as const).filter(([, v]) => v > 0));
+    const want = new Map(over.map((c) => [c.id, Math.round((c.monthly * (days - day)) / days)] as const).filter(([, v]) => v > 0));
     const left = fund(new Map(want));
-    for (const o of over) if (want.has(o.id)) topUps.push({ categoryId: o.id, wantedCents: want.get(o.id)!, fundedCents: want.get(o.id)! - (left.get(o.id) ?? 0), day, days, monthlyCents: o.monthly });
+    for (const o of over) if (want.has(o.id)) topUps.push({ categoryId: o.id, wantedCents: want.get(o.id)!, fundedCents: want.get(o.id)! - (left.get(o.id) ?? 0), day, days, remaining: days - day, monthlyCents: o.monthly });
   }
   const merge = <T extends { cents: number }>(xs: T[], key: (x: T) => string): T[] => { const m = new Map<string, T>(); for (const x of xs) { const k = key(x); const e = m.get(k); if (e) e.cents += x.cents; else m.set(k, { ...x }); } return [...m.values()]; };
   return finish(db, asOf, cats, merge(poolPayments, (x) => `${x.poolCategoryId}>${x.toCategoryId}`), merge(donorMoves, (x) => `${x.fromCategoryId}>${x.toCategoryId}`),

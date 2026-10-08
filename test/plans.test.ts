@@ -94,7 +94,7 @@ describe('rebalance and close', () => {
     expect(checkInvariants(h.db)).toEqual([]);
   });
 
-  describe('overages are covered, then topped up toward the share of the budget the month has used', () => {
+  describe('overages are covered, then topped up with the budget for the days left in the month', () => {
     const scene = async (poolCents: number) => {
       const { addCategory } = await import('../src/core/categories.js');
       const h = seedHousehold();
@@ -105,14 +105,14 @@ describe('rebalance and close', () => {
       return { h, bricks };
     };
     const noDonors = (h: ReturnType<typeof seedHousehold>, ...except: number[]) => h.db.prepare(`UPDATE categories SET cushion_cents=999999999 WHERE id NOT IN (${except.map(() => '?').join(',')})`).run(...except);
-    it('Bricks at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 11/30 = $125', async () => {
+    it('Bricks at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 19/30 = $165', async () => {
       const { h, bricks } = await scene(50000);
       const p = proposeRebalance(h.db, '2026-11-11');
-      expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: bricks, cents: 7000 + 5500 }]);
-      expect(p.topUps).toEqual([{ categoryId: bricks, wantedCents: 5500, fundedCents: 5500, day: 11, days: 30, monthlyCents: 15000 }]);
+      expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: bricks, cents: 7000 + 9500 }]);
+      expect(p.topUps).toEqual([{ categoryId: bricks, wantedCents: 9500, fundedCents: 9500, day: 11, days: 30, remaining: 19, monthlyCents: 15000 }]);
       expect(p.remainingShortfall).toEqual([]);
-      expect(p.resulting[bricks]).toBe(5500); // ends the proposal holding the share of the budget that is already "used"
-      commitRebalance(h.db, p); expect(categoryBalance(h.db, bricks, '2026-11-11').total).toBe(5500); expect(checkInvariants(h.db)).toEqual([]);
+      expect(p.resulting[bricks]).toBe(9500); // ends the proposal holding the budget for the 19 days that remain
+      commitRebalance(h.db, p); expect(categoryBalance(h.db, bricks, '2026-11-11').total).toBe(9500); expect(checkInvariants(h.db)).toEqual([]);
     });
     it('can be switched off: then only the overage is covered', async () => {
       const { h, bricks } = await scene(50000);
@@ -120,11 +120,11 @@ describe('rebalance and close', () => {
       expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: bricks, cents: 7000 }]); expect(p.topUps).toEqual([]);
     });
     it('a top-up only uses what is left after every overage is covered; unfunded top-up is reported but is not a shortfall', async () => {
-      const { h, bricks } = await scene(8000); // enough for the $70 and $10 of the $55
+      const { h, bricks } = await scene(8000); // enough for the $70 and $10 of the $95
       noDonors(h, bricks);
       const p = proposeRebalance(h.db, '2026-11-11');
       expect(p.poolPayments[0].cents).toBe(8000); expect(p.remainingShortfall).toEqual([]);
-      expect(p.topUps[0]).toMatchObject({ wantedCents: 5500, fundedCents: 1000 });
+      expect(p.topUps[0]).toMatchObject({ wantedCents: 9500, fundedCents: 1000 });
       const small = await scene(5000); // not even the overage
       noDonors(small.h, small.bricks);
       const q = proposeRebalance(small.h.db, '2026-11-11');
@@ -134,8 +134,8 @@ describe('rebalance and close', () => {
       const { h, bricks } = await scene(0);
       h.db.prepare("UPDATE categories SET cushion_cents=999999999 WHERE id NOT IN (?, ?)").run(bricks, h.cats['Manicure']); // only Manicure ($125 budget) can give
       const p = proposeRebalance(h.db, '2026-11-11');
-      expect(p.donorMoves).toEqual([{ fromCategoryId: h.cats['Manicure'], toCategoryId: bricks, cents: 12500 }]);
-      h.db.prepare("UPDATE categories SET cushion_cents=(11*12500 - 12500 - 9000) WHERE id=?").run(h.cats['Manicure']); // leaves only $90 above its floor
+      expect(p.donorMoves).toEqual([{ fromCategoryId: h.cats['Manicure'], toCategoryId: bricks, cents: 16500 }]); // $70 + $95
+      h.db.prepare("UPDATE categories SET cushion_cents=(11*12500 - 12500 - 9000) WHERE id=?").run(h.cats['Manicure']); // leaves only $90 above its floor (budget + cushion)
       expect(proposeRebalance(h.db, '2026-11-11').donorMoves.reduce((a, m) => a + m.cents, 0)).toBe(9000);
     });
     it('two overspent envelopes: both overages are covered in priority order before either gets a top-up', async () => {
