@@ -41,6 +41,9 @@ export class Home extends Page {
     return html`<h1>Home</h1>
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
 
+      ${(this.inbox.notices ?? []).map((n: any) => html`<div class="card notice" data-notice=${n.id} role="status"><div class="row"><span aria-hidden="true">⚠️</span><span class="grow">${n.message} <span class="muted small">No action needed.</span></span>
+        <a class="small" href=${`#/categories/${n.category_id}`}>See it</a><button class="dismiss-notice" @click=${async () => { await this.run(() => api.post(`/api/notices/${n.id}/dismiss`)); await this.load(); }}>Dismiss</button></div></div>`)}
+
       <details class="fold" ?open=${open} @toggle=${(e: Event) => saveFold((e.currentTarget as HTMLDetailsElement).open)}>
         <summary><h2>Needs attention</h2><span class="badge ${c.total ? 'warn' : 'good'}">${c.total}</span><span class="fold-hint muted small">${c.total ? (open ? 'tap to collapse' : 'tap to open') : 'all caught up'}</span></summary>
         <div class="stack" style="margin-top:12px">

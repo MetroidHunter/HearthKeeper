@@ -14,6 +14,19 @@ describe('Analytics (chart catalog)', () => {
     for (const t of ['Spend over time', 'Treemap', 'Category trend', 'Income vs spend', 'Merchants']) { await tab(t); expect($('.chart canvas').width).to.be.greaterThan(100); }
   });
 
+  it('each chart starts at its own height: a tall chart (Budget vs actual, Treemap, Merchants) never leaves its height on the Category trend', async function () {
+    this.timeout(60000);
+    await mount('/analytics');
+    await waitFor(() => $('.chart canvas'), 'first chart (lazy ECharts load)', 40000);
+    const h = () => Math.round($('.chart').getBoundingClientRect().height);
+    expect(h(), 'Budget vs actual is as tall as its rows need').to.be.greaterThan(400);
+    for (const before of ['Budget vs actual', 'Treemap', 'Merchants', 'Spend over time']) {
+      await tab(before);
+      await tab('Category trend');
+      expect(h(), `Category trend after ${before}`).to.equal(380);
+    }
+  });
+
   it('the year pivot is a table that matches the API', async () => {
     await mount('/analytics');
     byText('button', /^Year pivot$/).click();

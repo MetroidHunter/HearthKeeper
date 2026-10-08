@@ -1,4 +1,5 @@
 import { merchantHistory } from './merchants.js';
+import { openNotices } from './notices.js';
 import type { DB } from './db.js';
 import { categoryBalance, currentAllocation, periodTotals } from './balance.js';
 import { monthOf } from './time.js';
@@ -178,6 +179,7 @@ export function inbox(db: DB, today = new Date().toISOString().slice(0, 10), opt
   const needsCategory = needsCategoryRaw.map((t, i) => ({ ...t, suggestions: i < limit ? sugg(t) : [] }));
   return {
     counts: inboxCounts(db),
+    notices: openNotices(db),
     items,
     needsCategory, needsNote, staleProvisionals, flagged,
     unrecognized: db.prepare("SELECT id, source, received_at, payload, error FROM raw_events WHERE parse_status IN ('unrecognized','error') ORDER BY id DESC LIMIT 100").all(),

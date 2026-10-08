@@ -23,6 +23,7 @@ export class Analytics extends Page {
     const el = this.el(); const t = theme(); const key = `${this.tab}|${this.months}|${this.month}|${this.trendCat}|${this.mdim}`;
     if (this.tab === 'years') { if (!this.years) this.years = await api.get('/api/analytics/year-pivot'); return; }
     if (!el || el.dataset.key === key) return; el.dataset.key = key;
+    el.style.height = '380px'; // every tab starts from its own default: the one chart element is reused, so a tall chart's height must never carry over to the next tab
     const axis = { axisLabel: { color: t.muted }, axisLine: { lineStyle: { color: t.line } }, splitLine: { lineStyle: { color: t.line } } };
     await this.run(async () => {
       if (this.tab === 'bva') {

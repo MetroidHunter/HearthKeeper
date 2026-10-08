@@ -122,4 +122,9 @@ DELETE FROM rules WHERE origin='learned';
 -- which history row (from the old sheet) a bank-file row was recognised as: keeps the importer, a re-import and the clean-up in agreement
 CREATE TABLE history_claims(legacy_id INTEGER NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(legacy_id, fingerprint));
 `,
+`
+-- short, dismissable heads-ups shown on Home (no action needed), e.g. "Groceries went over budget after an automatic categorization"
+CREATE TABLE notices(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, category_id INTEGER, txn_id INTEGER, message TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), dismissed_at TEXT);
+CREATE INDEX notices_open ON notices(dismissed_at);
+`,
 ];

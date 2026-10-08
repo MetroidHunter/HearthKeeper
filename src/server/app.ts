@@ -11,6 +11,7 @@ import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetV
 import { monthsOverview, NEEDS_WHERE } from '../core/months.js';
 import { answerCategory } from '../core/answers.js';
 import { merchantHistory } from '../core/merchants.js';
+import { dismissNotice } from '../core/notices.js';
 import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
 import { addRule, backtest, type RuleMatch } from '../core/rules.js';
 import { categoryBalance, checkInvariants, getVersions, monthlyAmount } from '../core/balance.js';
@@ -134,6 +135,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/analytics/budget-vs-actual', async (req) => budgetVsActual(db, q(req).month ?? mon()));
   app.get('/api/explore', async (req: any) => explore(db, String(req.query.q ?? ''), { from: req.query.from ?? '2020-01-01', to: req.query.to ?? now() }));
   app.get('/api/inbox', async (req: any) => inbox(db, now(), { limit: req.query.limit ? Math.min(200, Math.max(1, Number(req.query.limit))) : undefined }));
+  app.post('/api/notices/:id/dismiss', async (req: any) => ({ ok: dismissNotice(db, Number(req.params.id)) }));
   app.get('/api/backlog', async (req: any, reply) => { // one page of the Backlog (see backlogPage)
     const view = String(req.query.view ?? 'merchants'); if (!['merchants', 'flagged', 'notes'].includes(view)) return reply.code(400).send({ error: 'unknown view' });
     return backlogPage(db, { view: view as any, limit: Math.min(100, Math.max(1, Number(req.query.limit ?? 10))), offset: Math.max(0, Number(req.query.offset ?? 0)), q: req.query.q ? String(req.query.q) : undefined, today: now(), keys: req.query.keys ? String(req.query.keys).split(',').slice(0, 100) : undefined });

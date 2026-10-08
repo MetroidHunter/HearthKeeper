@@ -198,3 +198,25 @@ describe('Home (phone view)', () => {
     expect(id).to.exist;
   });
 });
+
+describe('Home heads-up for a budget pushed over by an automatic categorization', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+
+  it('shows a dismissable, no-action notice when an automatic rule files a payment that takes an envelope over; dismissing removes it', async () => {
+    const chase = (await api('/api/accounts')).find((a) => a.name === 'Chase Prime Visa').id;
+    // the demo has an automatic rule: chipotle -> Eating Out. A payment larger than the whole envelope pushes it over.
+    await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'CHIPOTLE 7777', amountCents: -5_000_000 } });
+    await mount('/');
+    const n = await waitFor(() => $('.notice[data-notice]'), 'the heads-up');
+    expect(text(n)).to.match(/Eating Out went over budget.*left in it after CHIPOTLE 7777 \(\$50,000\.00\) was filed there automatically\./);
+    expect(text(n)).to.match(/No action needed/);
+    expect($('a', n).getAttribute('href')).to.match(/^#\/categories\/\d+$/);
+    byText('button', /^Dismiss$/, n).click();
+    await waitFor(() => !$('.notice[data-notice]'), 'gone after dismissing');
+    await mount('/');
+    await waitFor(() => $('h1'), 'home');
+    expect($('.notice[data-notice]'), 'stays dismissed after a reload').to.not.exist;
+  });
+});

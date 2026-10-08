@@ -1,6 +1,7 @@
 import { audit, type DB } from './db.js';
 import { cleanDescriptor } from './descriptor.js';
 import { merchantHistory } from './merchants.js';
+import { noteOverage } from './notices.js';
 import { decide, loadRules, type Candidate, type Rule } from './rules.js';
 
 export type Kind = 'spending' | 'income' | 'internal_transfer' | 'greenlight_allowance' | 'greenlight_return' | 'greenlight_reclass' | 'ignored';
@@ -120,6 +121,7 @@ function applyCategory(db: DB, t: any, txnId: number, cid: number, mode: string,
   // `ask` => no default; `suggest` => pending suggestion; `auto` => apply. Suggestions are stored as a null-category split with a memo hint.
   if (mode === 'auto') {
     setSplits(db, txnId, [{ categoryId: cid, amountCents: t.amount_cents, origin: 'rule' }], 'rule', ruleId);
+    noteOverage(db, txnId, cid); // an automatic answer that pushes an envelope over budget leaves a dismissable heads-up on Home
     return { outcome: 'categorized', ruleId, categoryId: cid };
   }
   if (mode === 'suggest') {
