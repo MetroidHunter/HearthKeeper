@@ -171,10 +171,10 @@ Each overspent envelope is funded for its overage plus the budget for the days t
 
 ## D87. Weekly budgets
 
-A weekly budget is a monthly amount spread over the weeks of each month, counting net spending (refunds count back) in the categories chosen for it. It is a view over existing spending: it moves no money, creates no envelope and changes no category balance.
+A weekly budget spreads **one category's monthly budget** over the weeks of the month and counts net spending (refunds count back) in that category. It is a view over existing spending: it moves no money, creates no envelope and changes no category balance.
 
+- **One category, no typing.** It is named "<category> Weekly" and its total is that category's budget for the month shown, so it follows the category's budget when that changes (earlier months keep what the budget was then). To change the amount, change the category's budget. A category can have one weekly budget; the category must be an active expense category with a monthly budget above zero. Chosen with the same category picker used everywhere.
 - **Weeks** start on a chosen weekday (default Monday) and are cut at month ends, so a month can begin and end with a short week. Each week's share is by days, rounded cumulatively, so the weeks add up to the month exactly. The running total by the end of each week is shown as the week's limit.
-- **What is left carries.** A week's money is its share plus whatever was left (or overspent) the week before, so a week that goes over eats into the next and unspent money rolls forward. There is no option for this. The last week's remainder equals the month total.
-- **Month total** is the monthly amount minus everything spent in the month.
+- **What is left carries.** A week's money is its share plus whatever was left (or overspent) the week before, so a week that goes over eats into the next and unspent money rolls forward. The last week's remainder equals the month total.
 - **Favorites** are per person (`weekly_favorites`) and show on Home as tiles *above* the favorited envelopes. Home's fallback list of a few envelopes appears only when nothing at all is pinned.
-- Categories must be active expense categories. Deleting a weekly budget removes it and its pins and touches no transactions.
+- Deleting a weekly budget removes it and its pins and touches no transactions.

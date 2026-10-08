@@ -123,12 +123,12 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
 
   /* ---------- reports ---------- */
   app.get('/api/budget', async (req: any) => budgetPage(db, req.query.today ?? now(), undefined, userIdOf(req) ?? undefined));
-  /* weekly budgets: a monthly amount spread over the weeks of each month */
-  const weeklyBody = (b: Record<string, any>) => ({ name: b.name, amountCents: Number(b.amountCents), categoryIds: Array.isArray(b.categoryIds) ? b.categoryIds.map(Number) : [], weekStart: b.weekStart === undefined ? undefined : Number(b.weekStart) });
+  /* weekly budgets: a category's monthly budget spread over the weeks of each month */
+  const weeklyBody = (b: Record<string, any>) => ({ categoryId: Number(b.categoryId), weekStart: b.weekStart === undefined ? undefined : Number(b.weekStart) });
   const weeklyErr = (e: unknown) => { throw Object.assign(new Error((e as Error).message), { statusCode: 400 }); };
   app.get('/api/weekly-budgets', async (req: any) => listWeekly(db, req.query.today ?? now(), { month: /^\d{4}-\d{2}$/.test(req.query.month ?? '') ? req.query.month : undefined, userId: userIdOf(req) ?? undefined }));
   app.get('/api/weekly-budgets/preview', async (req: any) => weeksOfMonth(/^\d{4}-\d{2}$/.test(req.query.month ?? '') ? req.query.month : now().slice(0, 7), Math.min(7, Math.max(1, Number(req.query.weekStart) || 1)), Math.max(0, Math.round(Number(req.query.amountCents) || 0))));
-  app.post('/api/weekly-budgets', async (req) => { try { return { id: createWeekly(db, weeklyBody(rec(req.body)), actor(req)) }; } catch (e) { return weeklyErr(e); } });
+  app.post('/api/weekly-budgets', async (req) => { try { return { id: createWeekly(db, weeklyBody(rec(req.body)), actor(req), now()) }; } catch (e) { return weeklyErr(e); } });
   app.put('/api/weekly-budgets/:id', async (req: any) => { try { updateWeekly(db, Number(req.params.id), weeklyBody(rec(req.body)), actor(req)); return { ok: true }; } catch (e) { return weeklyErr(e); } });
   app.delete('/api/weekly-budgets/:id', async (req: any) => ({ ok: deleteWeekly(db, Number(req.params.id), actor(req)) }));
   app.post('/api/weekly-budgets/:id/favorite', async (req: any) => { setWeeklyFavorite(db, userIdOf(req) ?? 1, Number(req.params.id), true); return { ok: true }; });

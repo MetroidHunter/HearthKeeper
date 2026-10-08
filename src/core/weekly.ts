@@ -2,9 +2,10 @@ import { DateTime } from 'luxon';
 import type { DB } from './db.js';
 import { audit } from './db.js';
 import { lastDayOfMonth } from './reports.js';
+import { monthlyAmount, getVersions } from './balance.js';
 
 /**
- * Weekly budgets: one monthly amount spread over the weeks of the month, counting what is spent in the chosen categories.
+ * Weekly budgets: a category's monthly budget spread over the weeks of the month, counting what is spent in that category.
  * Weeks start on `weekStart` (1 = Monday … 7 = Sunday) and are cut at month ends, so a month usually begins and ends with a short week.
  * Each week gets its share of the month by days (rounded cumulatively, so the weeks add up to the month exactly). A week that goes over eats into
  * the next one, and unspent money carries forward too, so a week's money is its share plus whatever is left from the week before.
@@ -33,34 +34,25 @@ export function weeksOfMonth(month: string, weekStart: number, amountCents: numb
   return weeks;
 }
 
-export interface WeeklyInput { name: string; amountCents: number; categoryIds: number[]; weekStart?: number }
+export interface WeeklyInput { categoryId: number; weekStart?: number }
 
 function validate(db: DB, b: WeeklyInput): Required<WeeklyInput> {
-  const name = String(b.name ?? '').trim();
-  if (!name) throw new Error('Give the weekly budget a name');
-  if (!Number.isInteger(b.amountCents) || b.amountCents <= 0) throw new Error('The monthly amount must be more than zero');
   const weekStart = b.weekStart ?? 1;
   if (!Number.isInteger(weekStart) || weekStart < 1 || weekStart > 7) throw new Error('Pick the day the week starts on');
-  const ids = [...new Set((b.categoryIds ?? []).map(Number))];
-  if (!ids.length) throw new Error('Pick at least one category whose spending counts');
-  for (const id of ids) {
-    const c = db.prepare('SELECT kind, status FROM categories WHERE id=?').get(id) as { kind: string; status: string } | undefined;
-    if (!c || c.status !== 'active' || c.kind !== 'expense') throw new Error('Only active spending categories can be part of a weekly budget');
-  }
-  return { name, amountCents: b.amountCents, categoryIds: ids, weekStart };
+  const c = db.prepare('SELECT kind, status FROM categories WHERE id=?').get(b.categoryId) as { kind: string; status: string } | undefined;
+  if (!c || c.status !== 'active' || c.kind !== 'expense') throw new Error('Pick an active spending category');
+  return { categoryId: b.categoryId, weekStart };
 }
+const taken = (db: DB, categoryId: number, exceptId = 0) => { if (db.prepare('SELECT 1 FROM weekly_budgets WHERE category_id=? AND id!=?').get(categoryId, exceptId)) throw new Error('That category already has a weekly budget'); };
+const monthlyOf = (db: DB, categoryId: number, month: string) => monthlyAmount(getVersions(db, categoryId), month);
 
-function setCategories(db: DB, id: number, ids: number[]) {
-  db.prepare('DELETE FROM weekly_budget_categories WHERE weekly_id=?').run(id);
-  for (const c of ids) db.prepare('INSERT INTO weekly_budget_categories(weekly_id, category_id) VALUES (?,?)').run(id, c);
-}
-
-export function createWeekly(db: DB, input: WeeklyInput, actor = 'system'): number {
+export function createWeekly(db: DB, input: WeeklyInput, actor = 'system', today = new Date().toISOString().slice(0, 10)): number {
   const v = validate(db, input);
+  taken(db, v.categoryId);
+  if (monthlyOf(db, v.categoryId, today.slice(0, 7)) <= 0) throw new Error('That category has no monthly budget to spread over the weeks. Set one on the Budget page first.');
   return db.transaction(() => {
     const sort = (db.prepare('SELECT COALESCE(MAX(sort),0)+1 n FROM weekly_budgets').get() as { n: number }).n;
-    const id = Number(db.prepare('INSERT INTO weekly_budgets(name, amount_cents, week_start, sort) VALUES (?,?,?,?)').run(v.name, v.amountCents, v.weekStart, sort).lastInsertRowid);
-    setCategories(db, id, v.categoryIds);
+    const id = Number(db.prepare('INSERT INTO weekly_budgets(category_id, week_start, sort) VALUES (?,?,?)').run(v.categoryId, v.weekStart, sort).lastInsertRowid);
     audit(db, 'weekly_budget', id, 'create', undefined, v, actor);
     return id;
   })();
@@ -69,9 +61,9 @@ export function createWeekly(db: DB, input: WeeklyInput, actor = 'system'): numb
 export function updateWeekly(db: DB, id: number, input: WeeklyInput, actor = 'system'): void {
   if (!db.prepare('SELECT 1 FROM weekly_budgets WHERE id=?').get(id)) throw new Error('No such weekly budget');
   const v = validate(db, input);
+  taken(db, v.categoryId, id);
   db.transaction(() => {
-    db.prepare('UPDATE weekly_budgets SET name=?, amount_cents=?, week_start=? WHERE id=?').run(v.name, v.amountCents, v.weekStart, id);
-    setCategories(db, id, v.categoryIds);
+    db.prepare('UPDATE weekly_budgets SET category_id=?, week_start=? WHERE id=?').run(v.categoryId, v.weekStart, id);
     audit(db, 'weekly_budget', id, 'update', undefined, v, actor);
   })();
 }
@@ -107,20 +99,22 @@ export function weeklyRows(month: string, weekStart: number, amountCents: number
 }
 
 export interface WeeklyBudget {
-  id: number; name: string; amountCents: number; weekStart: number; categoryIds: number[]; categories: string[]; favorite: boolean;
+  id: number; name: string; categoryId: number; category: string; amountCents: number; weekStart: number; favorite: boolean;
   month: string; weeks: WeekRow[]; spentCents: number; remainingCents: number; currentWeek: number | null;
 }
 
-/** Every weekly budget, laid out for `month` (default: the month of `today`). `remainingCents` is the month's amount minus everything spent in it. */
+/**
+ * Every weekly budget, laid out for `month` (default: the month of `today`). Its total is the category's own monthly budget for that month (so it follows the
+ * category when that changes) and its name is "<category> Weekly". `remainingCents` is the month's amount minus everything spent in it.
+ */
 export function listWeekly(db: DB, today: string, opts: { month?: string; userId?: number } = {}): WeeklyBudget[] {
   const month = opts.month ?? today.slice(0, 7);
   const favs = new Set(opts.userId ? (db.prepare('SELECT weekly_id FROM weekly_favorites WHERE user_id=?').all(opts.userId) as { weekly_id: number }[]).map((r) => r.weekly_id) : []);
-  return (db.prepare('SELECT id, name, amount_cents, week_start FROM weekly_budgets ORDER BY sort, id').all() as any[]).map((b) => {
-    const cats = db.prepare('SELECT c.id, c.name FROM weekly_budget_categories w JOIN categories c ON c.id=w.category_id WHERE w.weekly_id=? ORDER BY c.name').all(b.id) as { id: number; name: string }[];
-    const ids = cats.map((c) => c.id);
-    const weeks = weeklyRows(month, b.week_start, b.amount_cents, (f, t) => spentIn(db, ids, f, t), today);
+  return (db.prepare('SELECT w.id, w.category_id, w.week_start, c.name category FROM weekly_budgets w JOIN categories c ON c.id=w.category_id ORDER BY w.sort, w.id').all() as any[]).map((b) => {
+    const amount = monthlyOf(db, b.category_id, month);
+    const weeks = weeklyRows(month, b.week_start, amount, (f, t) => spentIn(db, [b.category_id], f, t), today);
     const spent = weeks.reduce((a, w) => a + w.spentCents, 0);
-    return { id: b.id, name: b.name, amountCents: b.amount_cents, weekStart: b.week_start, categoryIds: ids, categories: cats.map((c) => c.name), favorite: favs.has(b.id),
-      month, weeks, spentCents: spent, remainingCents: b.amount_cents - spent, currentWeek: weeks.find((w) => w.state === 'current')?.n ?? null };
+    return { id: b.id, name: `${b.category} Weekly`, categoryId: b.category_id, category: b.category, amountCents: amount, weekStart: b.week_start, favorite: favs.has(b.id),
+      month, weeks, spentCents: spent, remainingCents: amount - spent, currentWeek: weeks.find((w) => w.state === 'current')?.n ?? null };
   });
 }

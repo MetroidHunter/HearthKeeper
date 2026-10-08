@@ -125,7 +125,7 @@ export class CategorySelect extends LitElement {
     if (below < h && above > below) { pop.style.top = ''; pop.style.bottom = `${window.innerHeight - r.top + 4}px`; } else { pop.style.bottom = ''; pop.style.top = `${r.bottom + 4}px`; }
   }
   private onDocDown = (e: Event) => { if (!this.contains(e.target as Node) && !this.pop?.contains(e.target as Node)) { this.open = false; this.q = ''; } };
-  private onScroll = (e: Event) => { if (this.open && !this.pop?.contains(e.target as Node)) this.place(); };
+  private onScroll = (e: Event) => { if (this.open && !(e.target instanceof Node && this.pop?.contains(e.target))) this.place(); }; // a resize's target is the window, not a node
   connectedCallback() { super.connectedCallback(); document.addEventListener('mousedown', this.onDocDown); addEventListener('scroll', this.onScroll, true); addEventListener('resize', this.onScroll); }
   disconnectedCallback() { super.disconnectedCallback(); document.removeEventListener('mousedown', this.onDocDown); removeEventListener('scroll', this.onScroll, true); removeEventListener('resize', this.onScroll); this.pop?.remove(); }
   private key(e: KeyboardEvent) {

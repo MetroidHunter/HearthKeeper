@@ -134,4 +134,19 @@ CREATE TABLE weekly_budgets(id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_c
 CREATE TABLE weekly_budget_categories(weekly_id INTEGER NOT NULL REFERENCES weekly_budgets(id) ON DELETE CASCADE, category_id INTEGER NOT NULL REFERENCES categories(id), PRIMARY KEY(weekly_id, category_id));
 CREATE TABLE weekly_favorites(user_id INTEGER NOT NULL REFERENCES users(id), weekly_id INTEGER NOT NULL REFERENCES weekly_budgets(id) ON DELETE CASCADE, PRIMARY KEY(user_id, weekly_id));
 `,
+`
+-- a weekly budget is now powered by ONE category and uses that category's monthly budget as its total (its name is "<category> Weekly"); rebuilt to drop the typed name and amount
+CREATE TABLE wb_old AS SELECT b.id, b.sort, b.week_start, b.created_at, (SELECT MIN(category_id) FROM weekly_budget_categories c WHERE c.weekly_id=b.id) category_id FROM weekly_budgets b;
+CREATE TABLE wf_old AS SELECT user_id, weekly_id FROM weekly_favorites;
+DROP TABLE weekly_favorites;
+DROP TABLE weekly_budget_categories;
+DROP TABLE weekly_budgets;
+CREATE TABLE weekly_budgets(id INTEGER PRIMARY KEY, category_id INTEGER NOT NULL UNIQUE REFERENCES categories(id), week_start INTEGER NOT NULL DEFAULT 1 CHECK(week_start BETWEEN 1 AND 7),
+  sort INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+INSERT OR IGNORE INTO weekly_budgets(id, category_id, week_start, sort, created_at) SELECT id, category_id, week_start, sort, created_at FROM wb_old WHERE category_id IS NOT NULL ORDER BY id;
+CREATE TABLE weekly_favorites(user_id INTEGER NOT NULL REFERENCES users(id), weekly_id INTEGER NOT NULL REFERENCES weekly_budgets(id) ON DELETE CASCADE, PRIMARY KEY(user_id, weekly_id));
+INSERT INTO weekly_favorites(user_id, weekly_id) SELECT user_id, weekly_id FROM wf_old WHERE weekly_id IN (SELECT id FROM weekly_budgets);
+DROP TABLE wb_old;
+DROP TABLE wf_old;
+`,
 ];
