@@ -119,7 +119,7 @@ describe('rebalance and close', () => {
       const p = proposeRebalance(h.db, '2026-11-11', { topUp: false });
       expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: bricks, cents: 7000 }]); expect(p.topUps).toEqual([]);
     });
-    it('a top-up only uses what is left after every overage is covered; unfunded top-up is reported but is not a shortfall', async () => {
+    it('what cannot be found for a top-up is reported with it and is not an unfunded overage', async () => {
       const { h, bricks } = await scene(8000); // enough for the $70 and $10 of the $95
       noDonors(h, bricks);
       const p = proposeRebalance(h.db, '2026-11-11');
@@ -138,18 +138,26 @@ describe('rebalance and close', () => {
       h.db.prepare("UPDATE categories SET cushion_cents=(11*12500 - 12500 - 9000) WHERE id=?").run(h.cats['Manicure']); // leaves only $90 above its floor (budget + cushion)
       expect(proposeRebalance(h.db, '2026-11-11').donorMoves.reduce((a, m) => a + m.cents, 0)).toBe(9000);
     });
-    it('two overspent envelopes: both overages are covered in priority order before either gets a top-up', async () => {
+    it('envelopes are funded in full, one at a time in priority order: the first one\'s top-up comes before the second one\'s overage', async () => {
       const { addCategory } = await import('../src/core/categories.js');
-      const { h, bricks } = await scene(0);
-      const tiles = addCategory(h.db, { name: 'Tiles', group: 'Home', startMonth: '2026-11', monthlyCents: 15000, kind: 'expense', overagePriority: 2 });
-      const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-11-02', amountCents: -25000, descriptor: 'TILES' }); setSplits(h.db, t, [{ categoryId: tiles, amountCents: -25000 }]); // -$100
-      const e = createTransaction(h.db, { accountId: h.wf, kind: 'income', occurredOn: '2026-11-03', amountCents: 20000, descriptor: 'GIG' }); setSplits(h.db, e, [{ categoryId: h.cats['Gig Income'], amountCents: 20000 }]);
-      noDonors(h, bricks, tiles);
-      const p = proposeRebalance(h.db, '2026-11-11');
+      const h = seedHousehold(); const spend = (cat: number, cents: number) => { const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-11-01', amountCents: -cents, descriptor: `S${cat}` }); setSplits(h.db, t, [{ categoryId: cat, amountCents: -cents }]); };
+      const bricks = addCategory(h.db, { name: 'Bricks', group: 'Home', startMonth: '2026-11', monthlyCents: 15000, kind: 'expense', overagePriority: 1 }); spend(bricks, 45000); // $150 accrued, $450 spent: -$300
+      const sand = addCategory(h.db, { name: 'Sand', group: 'Home', startMonth: '2026-11', monthlyCents: 10000, kind: 'expense', overagePriority: 2 }); spend(sand, 20000);   // $100 accrued, $200 spent: -$100
+      const e = createTransaction(h.db, { accountId: h.wf, kind: 'income', occurredOn: '2026-11-01', amountCents: 50000, descriptor: 'GIG' }); setSplits(h.db, e, [{ categoryId: h.cats['Gig Income'], amountCents: 50000 }]);
+      h.db.prepare('UPDATE categories SET cushion_cents=999999999 WHERE id NOT IN (?, ?)').run(bricks, sand); // $500 in the pool and nobody else gives
+      const p = proposeRebalance(h.db, '2026-11-01'); // day 1 of 30: 29 days remain
       const to = (id: number) => p.poolPayments.filter((m) => m.toCategoryId === id).reduce((a, m) => a + m.cents, 0);
-      expect(to(tiles)).toBe(10000);                       // Tiles' overage is fully covered even though Bricks has higher priority
-      expect(to(bricks)).toBe(7000 + 3000);                // Bricks: its overage, and the remaining $30 toward its top-up
-      expect(p.topUps.find((x) => x.categoryId === tiles)!.fundedCents).toBe(0);
+      expect(to(bricks)).toBe(30000 + Math.round(15000 * 29 / 30)); // $300 overage + $145 for the days left: $445 in full first
+      expect(to(sand)).toBe(50000 - 44500);                          // Sand gets the $55 that is left, though its overage is $100
+      expect(p.remainingShortfall).toEqual([{ categoryId: sand, cents: 10000 - 5500 }]);
+      expect(p.topUps.find((x) => x.categoryId === bricks)).toMatchObject({ wantedCents: 14500, fundedCents: 14500 });
+      expect(p.topUps.find((x) => x.categoryId === sand)).toMatchObject({ wantedCents: Math.round(10000 * 29 / 30), fundedCents: 0 });
+      // swap the priorities and propose again: now Sand is funded in full first
+      h.db.prepare('UPDATE categories SET overage_priority=1 WHERE id=?').run(sand); h.db.prepare('UPDATE categories SET overage_priority=2 WHERE id=?').run(bricks);
+      const q = proposeRebalance(h.db, '2026-11-01'); const toQ = (id: number) => q.poolPayments.filter((m) => m.toCategoryId === id).reduce((a, m) => a + m.cents, 0);
+      expect(toQ(sand)).toBe(10000 + Math.round(10000 * 29 / 30)); expect(toQ(bricks)).toBe(50000 - toQ(sand));
+      // and with the top-up off, only overages are covered, still in priority order
+      const r = proposeRebalance(h.db, '2026-11-01', { topUp: false }); expect(r.poolPayments.reduce((a, m) => a + m.cents, 0)).toBe(40000); expect(r.remainingShortfall).toEqual([]);
     });
   });
 

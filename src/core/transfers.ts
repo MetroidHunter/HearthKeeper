@@ -28,7 +28,7 @@ export interface RebalanceProposal {
   poolPayments: { poolCategoryId: number; toCategoryId: number; cents: number }[];
   donorMoves: { fromCategoryId: number; toCategoryId: number; cents: number }[];
   remainingShortfall: { categoryId: number; cents: number }[];
-  /** Round 2: how much each overspent envelope was also asked to receive for the days left in the month (monthly budget × remaining ÷ days), and how much of that was found. */
+  /** How much each overspent envelope was also asked to receive for the days left in the month (monthly budget × remaining ÷ days), and how much of that was found. */
   topUps: { categoryId: number; wantedCents: number; fundedCents: number; day: number; days: number; remaining: number; monthlyCents: number }[];
   resulting: Record<number, number>; // balance of every touched category after commit
 }
@@ -58,10 +58,10 @@ export function monthFraction(asOf: string): { day: number; days: number } {
 
 /**
  * Auto-proposal in priority order: the income pool first, then discretionary donors above budget + cushion (design §13.1). Non-discretionary envelopes never give.
- * Two rounds, each in priority order. Round 1 covers every overage. Round 2 (unless `topUp: false`) tries to also give each overspent envelope the share of its
- * monthly budget for the days that remain: a category at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 19/30 = $165 in total, so it can
- * get through the rest of the month at its budgeted pace. Round 2 only spends what round 1 left, so a top-up can never take money an overage needed.
- */
+ * Envelopes are funded one at a time in priority order, each in full before the next gets anything: its overage plus (unless `topUp: false`) the share of its
+ * monthly budget for the days that remain. A category at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 19/30 = $165 in total, so it can
+ * get through the rest of the month at its budgeted pace. Each envelope's money comes pool first, then from discretionary donors above their budget + cushion.
+ * So a higher-priority envelope's top-up is funded before a lower-priority envelope's overage: change the priorities and propose again to steer it. */
 export function proposeRebalance(db: DB, asOf: string, opts: { topUp?: boolean } = {}): RebalanceProposal {
   const topUp = opts.topUp !== false;
   const cats = loadBalances(db, asOf);
@@ -107,17 +107,20 @@ export function proposeRebalance(db: DB, asOf: string, opts: { topUp?: boolean }
     }
     return need;
   };
-  const overage = fund(new Map(over.map((c) => [c.id, -c.balance])));
-  const topUps: RebalanceProposal['topUps'] = [];
-  if (topUp) {
-    const { day, days } = monthFraction(asOf);
-    const want = new Map(over.map((c) => [c.id, Math.round((c.monthly * (days - day)) / days)] as const).filter(([, v]) => v > 0));
-    const left = fund(new Map(want));
-    for (const o of over) if (want.has(o.id)) topUps.push({ categoryId: o.id, wantedCents: want.get(o.id)!, fundedCents: want.get(o.id)! - (left.get(o.id) ?? 0), day, days, remaining: days - day, monthlyCents: o.monthly });
+  const { day, days } = monthFraction(asOf);
+  const overage = new Map(over.map((c) => [c.id, -c.balance] as const));
+  const want = new Map(over.map((c) => [c.id, topUp ? Math.round((c.monthly * (days - day)) / days) : 0] as const));
+  const left = fund(new Map(over.map((c) => [c.id, overage.get(c.id)! + want.get(c.id)!] as const)));
+  // how the funding split between the overage and the top-up: the overage is the first part of what an envelope receives
+  const topUps: RebalanceProposal['topUps'] = []; const short: [number, number][] = [];
+  for (const o of over) {
+    const got = overage.get(o.id)! + want.get(o.id)! - (left.get(o.id) ?? 0), overGot = Math.min(overage.get(o.id)!, got);
+    if (overage.get(o.id)! - overGot > 0) short.push([o.id, overage.get(o.id)! - overGot]);
+    if (topUp && want.get(o.id)! > 0) topUps.push({ categoryId: o.id, wantedCents: want.get(o.id)!, fundedCents: got - overGot, day, days, remaining: days - day, monthlyCents: o.monthly });
   }
   const merge = <T extends { cents: number }>(xs: T[], key: (x: T) => string): T[] => { const m = new Map<string, T>(); for (const x of xs) { const k = key(x); const e = m.get(k); if (e) e.cents += x.cents; else m.set(k, { ...x }); } return [...m.values()]; };
   return finish(db, asOf, cats, merge(poolPayments, (x) => `${x.poolCategoryId}>${x.toCategoryId}`), merge(donorMoves, (x) => `${x.fromCategoryId}>${x.toCategoryId}`),
-    [...overage].filter(([, v]) => v > 0).map(([categoryId, cents]) => ({ categoryId, cents })), topUps);
+    short.map(([categoryId, cents]) => ({ categoryId, cents })), topUps);
 }
 
 function finish(db: DB, asOf: string, cats: CatInfo[], poolPayments: RebalanceProposal['poolPayments'], donorMoves: RebalanceProposal['donorMoves'], remainingShortfall: RebalanceProposal['remainingShortfall'], topUps: RebalanceProposal['topUps']): RebalanceProposal {
