@@ -8,11 +8,11 @@ import { pageHead, th } from '../ui.js';
 
 @customElement('hk-transfers')
 export class Transfers extends Page {
-  @state() cats: Cat[] = []; @state() prop: any = null; @state() history: any[] = []; @state() manual = { from: 0, to: 0, amount: '', memo: '' }; @state() place: { pool: number; rows: { categoryId: number; cents: number }[] } = { pool: 0, rows: [] }; @state() poolBal: Record<number, number> = {};
+  @state() cats: Cat[] = []; @state() prop: any = null; @state() history: any[] = []; @state() manual = { from: 0, to: 0, amount: '', memo: '' }; @state() place: { pool: number; rows: { categoryId: number; cents: number }[] } = { pool: 0, rows: [] }; @state() poolBal: Record<number, number> = {}; @state() topUp = true;
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { [this.cats, this.history] = await Promise.all([api.get('/api/categories'), api.get('/api/transfers')]); const b = await api.get('/api/budget'); this.poolBal = Object.fromEntries(b.rows.filter((r: any) => r.kind === 'income_pool').map((r: any) => [r.id, r.currentCents])); }); }
   name(id: number) { return this.cats.find((c) => c.id === id)?.name ?? `#${id}`; }
-  async propose() { await this.run(async () => { this.prop = await api.get(`/api/transfers/rebalance?asOf=${today()}`); }); }
+  async propose() { await this.run(async () => { this.prop = await api.get(`/api/transfers/rebalance?asOf=${today()}${this.topUp ? '' : '&topUp=0'}`); }); }
   edit(list: 'poolPayments' | 'donorMoves', i: number, v: string) { this.prop[list][i].cents = parseMoney(v || '0'); this.requestUpdate(); }
   async commit() { await this.run(async () => { await api.post('/api/transfers/rebalance', { asOf: today(), poolPayments: this.prop.poolPayments.filter((x: any) => x.cents > 0), donorMoves: this.prop.donorMoves.filter((x: any) => x.cents > 0) }); this.prop = null; await this.load(); }); }
   render() {
@@ -20,10 +20,12 @@ export class Transfers extends Page {
     return html`${pageHead('Transfers', 'Move money between envelopes: cover overspending, place income, or make a one-off move.', 'Rebalance proposes covering overspent categories from the income pool and then from discretionary envelopes with room to spare. You review the proposal before anything moves.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}
       <h2>Rebalance overages</h2>
       <div class="card"><p class="muted">Gig Income pays overages first (in priority order), then discretionary donors, then non-discretionary donors, taking only what is above their monthly budget plus cushion (an empty cushion counts as 0) (a $150 budget with a $50 cushion is touched only when it holds more than $200). Edit any amount before committing.</p>
-        <button class="primary" @click=${() => this.propose()}>Propose</button>
+        <label class="row" style="margin-top:6px"><input type="checkbox" id="topup" .checked=${this.topUp} @change=${(e: any) => { this.topUp = e.target.checked; this.prop = null; }} /> <span>Also bring each overspent envelope up to the share of its monthly budget the month has already used <span class="muted small">(overage + budget × days gone ÷ days in the month; only what is left after every overage is covered)</span></span></label>
+        <button class="primary" style="margin-top:6px" @click=${() => this.propose()}>Propose</button>
         ${this.prop ? html`${this.prop.poolPayments.length + this.prop.donorMoves.length === 0 ? html`<p>Nothing to rebalance.</p>` : ''}
           <table><tbody>${this.prop.poolPayments.map((m: any, i: number) => html`<tr><td>Pool ${this.name(m.poolCategoryId)} → <b>${this.name(m.toCategoryId)}</b></td><td class="num"><input style="width:7rem;text-align:right" .value=${(m.cents / 100).toFixed(2)} @change=${(e: any) => this.edit('poolPayments', i, e.target.value)} /></td></tr>`)}
           ${this.prop.donorMoves.map((m: any, i: number) => html`<tr><td>${this.name(m.fromCategoryId)} → <b>${this.name(m.toCategoryId)}</b></td><td class="num"><input style="width:7rem;text-align:right" .value=${(m.cents / 100).toFixed(2)} @change=${(e: any) => this.edit('donorMoves', i, e.target.value)} /></td></tr>`)}</tbody></table>
+          ${this.prop.topUps?.length ? html`<div class="muted small topups">${this.prop.topUps.map((t: any) => html`<div>${this.name(t.categoryId)}: toward this month's budget so far, ${money(t.monthlyCents)} × ${t.day}/${t.days} = ${money(t.wantedCents)}${t.fundedCents < t.wantedCents ? html` (only ${money(t.fundedCents)} could be found)` : ''}</div>`)}</div>` : ''}
           ${this.prop.remainingShortfall.length ? html`<p class="err">Unfunded: ${this.prop.remainingShortfall.map((s: any) => `${this.name(s.categoryId)} ${money(s.cents)}`).join(', ')}</p>` : ''}
           <h2>Resulting balances</h2><div class="muted">${Object.entries(this.prop.resulting).map(([k, v]) => html`<div>${this.name(Number(k))}: ${money(v as number)}</div>`)}</div>
           <div class="row" style="margin-top:8px"><button @click=${() => (this.prop = null)}>Discard</button><button class="primary" ?disabled=${this.prop.poolPayments.length + this.prop.donorMoves.length === 0} @click=${() => this.commit()}>Commit</button></div>` : ''}</div>

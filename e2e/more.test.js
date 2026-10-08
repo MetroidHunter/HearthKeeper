@@ -172,10 +172,32 @@ describe('Transfers: rebalance', () => {
     byText('button', /^Propose$/).click();
     await waitFor(() => /Resulting balances/.test(text(document.body)), 'proposal');
     expect(text(document.body)).to.match(/Pool Gig Income → Pets/);
+    expect(text($('.topups') ?? document.body), 'the top-up is explained').to.match(/Pets: toward this month's budget so far, \$\d[\d,.]* × \d+\/\d+ = \$/);
     byText('button', /^Commit$/).click();
     await waitFor(async () => (await api('/api/transfers')).some((t) => t.kind === 'pool_payment'), 'pool payment recorded');
     const legs = (await api('/api/transfers')).filter((t) => t.kind === 'pool_payment' || t.kind === 'reconcile');
     for (const t of legs) expect(JSON.parse(t.legs).reduce((a, l) => a + l.cents, 0)).to.equal(0);
+  });
+});
+
+describe('Transfers: top-up toggle', () => {
+  let trap;
+  beforeEach(async () => { await reset(); trap = trapErrors(); });
+  afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
+  it('unticking the top-up proposes only the overage', async () => {
+    const cats = await api('/api/categories'); const id = (n) => cats.find((c) => c.name === n).id;
+    const accts = await api('/api/accounts');
+    const chase = accts.find((a) => a.name === 'Chase Prime Visa').id, wf = accts.find((a) => /Wells Fargo Brys/.test(a.name)).id;
+    await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'VET BILL', amountCents: -2_000_000, categoryId: id('Pets') } });
+    await api('/api/transactions', { method: 'POST', body: { accountId: wf, descriptor: 'GIG PAYMENT', amountCents: 5_000_000, categoryId: id('Gig Income') } });
+    const withTop = await api(`/api/transfers/rebalance?asOf=2026-10-11`); const without = await api(`/api/transfers/rebalance?asOf=2026-10-11&topUp=0`);
+    const sum = (p) => p.poolPayments.filter((m) => m.toCategoryId === id('Pets')).reduce((a, m) => a + m.cents, 0);
+    expect(sum(withTop) - sum(without), 'the top-up is the budget share of 11 of 31 days').to.equal(Math.round(8000 * 11 / 31));
+    await mount('/transfers');
+    $('#topup').click();
+    byText('button', /^Propose$/).click();
+    await waitFor(() => /Resulting balances/.test(text(document.body)), 'proposal');
+    expect($('.topups')).to.not.exist;
   });
 });
 

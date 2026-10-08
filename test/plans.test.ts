@@ -83,7 +83,7 @@ describe('rebalance and close', () => {
     spend('Groceries', -(10 * 80000) - 15000);
     spend('Eating Out', -(10 * 30000) - 10000);
     earn('Gig Income', 20000);
-    const p = proposeRebalance(h.db, '2026-10-31');
+    const p = proposeRebalance(h.db, '2026-10-31', { topUp: false }); // just the overages (the top-up is tested below)
     expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: h.cats['Groceries'], cents: 15000 }, { poolCategoryId: h.cats['Gig Income'], toCategoryId: h.cats['Eating Out'], cents: 5000 }]);
     expect(p.donorMoves.every((m) => m.toCategoryId === h.cats['Eating Out'])).toBe(true);
     expect(p.donorMoves.reduce((a, m) => a + m.cents, 0)).toBe(5000);
@@ -92,6 +92,65 @@ describe('rebalance and close', () => {
     for (const c of ['Groceries', 'Eating Out']) expect(categoryBalance(h.db, h.cats[c], '2026-10-31').total).toBe(0);
     expect(categoryBalance(h.db, h.cats['Gig Income'], '2026-10-31').total).toBe(0);
     expect(checkInvariants(h.db)).toEqual([]);
+  });
+
+  describe('overages are covered, then topped up toward the share of the budget the month has used', () => {
+    const scene = async (poolCents: number) => {
+      const { addCategory } = await import('../src/core/categories.js');
+      const h = seedHousehold();
+      const bricks = addCategory(h.db, { name: 'Bricks', group: 'Home', startMonth: '2026-11', monthlyCents: 15000, kind: 'expense', overagePriority: 1 }); // $150 budget
+      const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-11-02', amountCents: -22000, descriptor: 'BRICKS' }); // accrues $150, spends $220: -$70
+      setSplits(h.db, t, [{ categoryId: bricks, amountCents: -22000 }]);
+      if (poolCents) { const e = createTransaction(h.db, { accountId: h.wf, kind: 'income', occurredOn: '2026-11-03', amountCents: poolCents, descriptor: 'GIG' }); setSplits(h.db, e, [{ categoryId: h.cats['Gig Income'], amountCents: poolCents }]); }
+      return { h, bricks };
+    };
+    const noDonors = (h: ReturnType<typeof seedHousehold>, ...except: number[]) => h.db.prepare(`UPDATE categories SET cushion_cents=999999999 WHERE id NOT IN (${except.map(() => '?').join(',')})`).run(...except);
+    it('Bricks at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 11/30 = $125', async () => {
+      const { h, bricks } = await scene(50000);
+      const p = proposeRebalance(h.db, '2026-11-11');
+      expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: bricks, cents: 7000 + 5500 }]);
+      expect(p.topUps).toEqual([{ categoryId: bricks, wantedCents: 5500, fundedCents: 5500, day: 11, days: 30, monthlyCents: 15000 }]);
+      expect(p.remainingShortfall).toEqual([]);
+      expect(p.resulting[bricks]).toBe(5500); // ends the proposal holding the share of the budget that is already "used"
+      commitRebalance(h.db, p); expect(categoryBalance(h.db, bricks, '2026-11-11').total).toBe(5500); expect(checkInvariants(h.db)).toEqual([]);
+    });
+    it('can be switched off: then only the overage is covered', async () => {
+      const { h, bricks } = await scene(50000);
+      const p = proposeRebalance(h.db, '2026-11-11', { topUp: false });
+      expect(p.poolPayments).toEqual([{ poolCategoryId: h.cats['Gig Income'], toCategoryId: bricks, cents: 7000 }]); expect(p.topUps).toEqual([]);
+    });
+    it('a top-up only uses what is left after every overage is covered; unfunded top-up is reported but is not a shortfall', async () => {
+      const { h, bricks } = await scene(8000); // enough for the $70 and $10 of the $55
+      noDonors(h, bricks);
+      const p = proposeRebalance(h.db, '2026-11-11');
+      expect(p.poolPayments[0].cents).toBe(8000); expect(p.remainingShortfall).toEqual([]);
+      expect(p.topUps[0]).toMatchObject({ wantedCents: 5500, fundedCents: 1000 });
+      const small = await scene(5000); // not even the overage
+      noDonors(small.h, small.bricks);
+      const q = proposeRebalance(small.h.db, '2026-11-11');
+      expect(q.remainingShortfall).toEqual([{ categoryId: small.bricks, cents: 2000 }]); expect(q.topUps[0].fundedCents).toBe(0);
+    });
+    it('donors give for the top-up too, but never below their own budget + cushion', async () => {
+      const { h, bricks } = await scene(0);
+      h.db.prepare("UPDATE categories SET cushion_cents=999999999 WHERE id NOT IN (?, ?)").run(bricks, h.cats['Manicure']); // only Manicure ($125 budget) can give
+      const p = proposeRebalance(h.db, '2026-11-11');
+      expect(p.donorMoves).toEqual([{ fromCategoryId: h.cats['Manicure'], toCategoryId: bricks, cents: 12500 }]);
+      h.db.prepare("UPDATE categories SET cushion_cents=(11*12500 - 12500 - 9000) WHERE id=?").run(h.cats['Manicure']); // leaves only $90 above its floor
+      expect(proposeRebalance(h.db, '2026-11-11').donorMoves.reduce((a, m) => a + m.cents, 0)).toBe(9000);
+    });
+    it('two overspent envelopes: both overages are covered in priority order before either gets a top-up', async () => {
+      const { addCategory } = await import('../src/core/categories.js');
+      const { h, bricks } = await scene(0);
+      const tiles = addCategory(h.db, { name: 'Tiles', group: 'Home', startMonth: '2026-11', monthlyCents: 15000, kind: 'expense', overagePriority: 2 });
+      const t = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-11-02', amountCents: -25000, descriptor: 'TILES' }); setSplits(h.db, t, [{ categoryId: tiles, amountCents: -25000 }]); // -$100
+      const e = createTransaction(h.db, { accountId: h.wf, kind: 'income', occurredOn: '2026-11-03', amountCents: 20000, descriptor: 'GIG' }); setSplits(h.db, e, [{ categoryId: h.cats['Gig Income'], amountCents: 20000 }]);
+      noDonors(h, bricks, tiles);
+      const p = proposeRebalance(h.db, '2026-11-11');
+      const to = (id: number) => p.poolPayments.filter((m) => m.toCategoryId === id).reduce((a, m) => a + m.cents, 0);
+      expect(to(tiles)).toBe(10000);                       // Tiles' overage is fully covered even though Bricks has higher priority
+      expect(to(bricks)).toBe(7000 + 3000);                // Bricks: its overage, and the remaining $30 toward its top-up
+      expect(p.topUps.find((x) => x.categoryId === tiles)!.fundedCents).toBe(0);
+    });
   });
 
   it('non-discretionary envelopes are asked only after the discretionary ones, and only for what is above budget + cushion (empty cushion = 0)', () => {

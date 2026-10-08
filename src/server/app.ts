@@ -286,7 +286,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
 
   /* ---------- transfers & months ---------- */
   app.get('/api/transfers', async () => db.prepare('SELECT e.*, (SELECT json_group_array(json_object(\'categoryId\', category_id, \'cents\', amount_cents)) FROM envelope_transfer_legs WHERE transfer_id=e.id) legs FROM envelope_transfers e ORDER BY id DESC LIMIT 200').all());
-  app.get('/api/transfers/rebalance', async (req: any) => proposeRebalance(db, req.query.asOf ?? now()));
+  app.get('/api/transfers/rebalance', async (req: any) => proposeRebalance(db, req.query.asOf ?? now(), { topUp: req.query.topUp !== '0' }));
   app.post('/api/transfers/rebalance', async (req) => commitRebalance(db, rec(req.body) as any, actor(req)));
   app.post('/api/transfers/place-pool', async (req) => { const b = rec(req.body); return { id: placePool(db, b.asOf ?? now(), b.poolCategoryId, b.allocations, actor(req)) }; });
   app.post('/api/transfers/manual', async (req) => { const b = rec(req.body); return { id: manualTransfer(db, b.date ?? now(), b.from, b.to, b.cents, b.memo, actor(req)) }; });

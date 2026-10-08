@@ -28,6 +28,8 @@ export interface RebalanceProposal {
   poolPayments: { poolCategoryId: number; toCategoryId: number; cents: number }[];
   donorMoves: { fromCategoryId: number; toCategoryId: number; cents: number }[];
   remainingShortfall: { categoryId: number; cents: number }[];
+  /** Round 2: how much each overspent envelope was also asked to receive toward the share of its budget the month has used, and how much of that was found. */
+  topUps: { categoryId: number; wantedCents: number; fundedCents: number; day: number; days: number; monthlyCents: number }[];
   resulting: Record<number, number>; // balance of every touched category after commit
 }
 
@@ -48,59 +50,82 @@ const EPS = 0.5; // sub-cent legacy drift is not an overage (parity tolerance)
  */
 export function keepFloor(c: { monthly: number; cushion_cents: number | null }): number { return c.monthly + (c.cushion_cents ?? 0); }
 
-/** Auto-proposal in priority order: Gig Income pool first, then discretionary donors, then non-discretionary above budget + cushion (design §13.1). */
-export function proposeRebalance(db: DB, asOf: string): RebalanceProposal {
+/** Days of the month already used at `asOf`, as a fraction (day 11 of a 30-day month: 11/30). */
+export function monthFraction(asOf: string): { day: number; days: number } {
+  const y = Number(asOf.slice(0, 4)), m = Number(asOf.slice(5, 7));
+  return { day: Number(asOf.slice(8, 10)), days: new Date(Date.UTC(y, m, 0)).getUTCDate() };
+}
+
+/**
+ * Auto-proposal in priority order: the income pool first, then discretionary donors, then non-discretionary ones above budget + cushion (design §13.1).
+ * Two rounds, each in priority order. Round 1 covers every overage. Round 2 (unless `topUp: false`) tries to bring each overspent envelope up to the share of its
+ * monthly budget that the month has already used: a category at -$70 with a $150 budget on day 11 of 30 is asked to receive $70 + $150 × 11/30 = $125 in total.
+ * Round 2 only spends what round 1 left, so a top-up can never take money an overage needed.
+ */
+export function proposeRebalance(db: DB, asOf: string, opts: { topUp?: boolean } = {}): RebalanceProposal {
+  const topUp = opts.topUp !== false;
   const cats = loadBalances(db, asOf);
   const bal = new Map(cats.map((c) => [c.id, c.balance]));
   const over = cats.filter((c) => c.kind === 'expense' && c.balance < -EPS)
     .sort((a, b) => (a.overage_priority ?? 1e9) - (b.overage_priority ?? 1e9) || a.balance - b.balance); // most overspent first among equals
+  const overIds = new Set(over.map((c) => c.id));
   const pools = cats.filter((c) => c.kind === 'income_pool' && c.balance > EPS);
   const poolPayments: RebalanceProposal['poolPayments'] = [], donorMoves: RebalanceProposal['donorMoves'] = [];
-  const need = new Map(over.map((c) => [c.id, -c.balance]));
-
-  for (const pool of pools) {
-    let avail = bal.get(pool.id)!;
-    for (const o of over) {
-      if (avail <= 0) break;
-      const n = need.get(o.id)!;
-      if (n <= 0) continue;
-      const pay = Math.min(avail, n);
-      poolPayments.push({ poolCategoryId: pool.id, toCategoryId: o.id, cents: pay });
-      avail -= pay; need.set(o.id, n - pay);
-    }
-    bal.set(pool.id, avail);
-  }
   const donatable = (c: CatInfo) => {
     if (c.kind !== 'expense') return 0;
     return Math.max(0, Math.floor((bal.get(c.id) ?? 0) - keepFloor(c) + EPS));
   };
   const tiers = [cats.filter((c) => c.discretionary), cats.filter((c) => !c.discretionary)];
-  for (const o of over) {
-    for (const tier of tiers) {
-      let n = need.get(o.id)!;
-      if (n <= 0) break;
-      const donors = tier.filter((d) => d.id !== o.id && donatable(d) > 0 && !need.has(d.id));
-      const totalDon = donors.reduce((a, d) => a + donatable(d), 0);
-      if (!totalDon) continue;
-      const take = Math.min(n, totalDon);
-      let given = 0;
-      const shares = donors.map((d) => ({ d, v: Math.floor((take * donatable(d)) / totalDon) }));
-      given = shares.reduce((a, s) => a + s.v, 0);
-      let rem = take - given;
-      for (const s of shares.sort((a, b) => donatable(b.d) - donatable(a.d))) { if (rem <= 0) break; if (s.v < donatable(s.d)) { s.v++; rem--; } }
-      for (const s of shares) if (s.v > 0) { donorMoves.push({ fromCategoryId: s.d.id, toCategoryId: o.id, cents: s.v }); bal.set(s.d.id, (bal.get(s.d.id) ?? 0) - s.v); }
-      need.set(o.id, n - take);
+  /** Fund `need` (category -> cents wanted) in priority order, pool first; returns what is still unfunded. */
+  const fund = (need: Map<number, number>) => {
+    for (const pool of pools) {
+      let avail = bal.get(pool.id)!;
+      for (const o of over) {
+        if (avail <= 0) break;
+        const n = need.get(o.id) ?? 0;
+        if (n <= 0) continue;
+        const pay = Math.min(avail, n);
+        poolPayments.push({ poolCategoryId: pool.id, toCategoryId: o.id, cents: pay });
+        avail -= pay; need.set(o.id, n - pay);
+      }
+      bal.set(pool.id, avail);
     }
+    for (const o of over) {
+      for (const tier of tiers) {
+        const n = need.get(o.id) ?? 0;
+        if (n <= 0) break;
+        const donors = tier.filter((d) => d.id !== o.id && donatable(d) > 0 && !overIds.has(d.id));
+        const totalDon = donors.reduce((a, d) => a + donatable(d), 0);
+        if (!totalDon) continue;
+        const take = Math.min(n, totalDon);
+        const shares = donors.map((d) => ({ d, v: Math.floor((take * donatable(d)) / totalDon) }));
+        let rem = take - shares.reduce((a, s) => a + s.v, 0);
+        for (const s of shares.sort((a, b) => donatable(b.d) - donatable(a.d))) { if (rem <= 0) break; if (s.v < donatable(s.d)) { s.v++; rem--; } }
+        for (const s of shares) if (s.v > 0) { donorMoves.push({ fromCategoryId: s.d.id, toCategoryId: o.id, cents: s.v }); bal.set(s.d.id, (bal.get(s.d.id) ?? 0) - s.v); }
+        need.set(o.id, n - take);
+      }
+    }
+    return need;
+  };
+  const overage = fund(new Map(over.map((c) => [c.id, -c.balance])));
+  const topUps: RebalanceProposal['topUps'] = [];
+  if (topUp) {
+    const { day, days } = monthFraction(asOf);
+    const want = new Map(over.map((c) => [c.id, Math.round((c.monthly * day) / days)] as const).filter(([, v]) => v > 0));
+    const left = fund(new Map(want));
+    for (const o of over) if (want.has(o.id)) topUps.push({ categoryId: o.id, wantedCents: want.get(o.id)!, fundedCents: want.get(o.id)! - (left.get(o.id) ?? 0), day, days, monthlyCents: o.monthly });
   }
-  return finish(db, asOf, cats, poolPayments, donorMoves, [...need].filter(([, v]) => v > 0).map(([categoryId, cents]) => ({ categoryId, cents })));
+  const merge = <T extends { cents: number }>(xs: T[], key: (x: T) => string): T[] => { const m = new Map<string, T>(); for (const x of xs) { const k = key(x); const e = m.get(k); if (e) e.cents += x.cents; else m.set(k, { ...x }); } return [...m.values()]; };
+  return finish(db, asOf, cats, merge(poolPayments, (x) => `${x.poolCategoryId}>${x.toCategoryId}`), merge(donorMoves, (x) => `${x.fromCategoryId}>${x.toCategoryId}`),
+    [...overage].filter(([, v]) => v > 0).map(([categoryId, cents]) => ({ categoryId, cents })), topUps);
 }
 
-function finish(db: DB, asOf: string, cats: CatInfo[], poolPayments: RebalanceProposal['poolPayments'], donorMoves: RebalanceProposal['donorMoves'], remainingShortfall: RebalanceProposal['remainingShortfall']): RebalanceProposal {
+function finish(db: DB, asOf: string, cats: CatInfo[], poolPayments: RebalanceProposal['poolPayments'], donorMoves: RebalanceProposal['donorMoves'], remainingShortfall: RebalanceProposal['remainingShortfall'], topUps: RebalanceProposal['topUps']): RebalanceProposal {
   const resulting: Record<number, number> = {};
   const touch = (id: number) => { if (!(id in resulting)) resulting[id] = cats.find((c) => c.id === id)!.balance; };
   for (const p of poolPayments) { touch(p.poolCategoryId); touch(p.toCategoryId); resulting[p.poolCategoryId] -= p.cents; resulting[p.toCategoryId] += p.cents; }
   for (const d of donorMoves) { touch(d.fromCategoryId); touch(d.toCategoryId); resulting[d.fromCategoryId] -= d.cents; resulting[d.toCategoryId] += d.cents; }
-  return { asOf, poolPayments, donorMoves, remainingShortfall, resulting };
+  return { asOf, poolPayments, donorMoves, remainingShortfall, topUps, resulting };
 }
 
 /** Commit a (possibly hand-edited) proposal: one pool_payment and one reconcile transfer, each summing to zero. */
