@@ -127,4 +127,11 @@ CREATE TABLE history_claims(legacy_id INTEGER NOT NULL, fingerprint TEXT NOT NUL
 CREATE TABLE notices(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, category_id INTEGER, txn_id INTEGER, message TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), dismissed_at TEXT);
 CREATE INDEX notices_open ON notices(dismissed_at);
 `,
+`
+-- weekly budgets: a monthly amount spread over the weeks of each month (weeks are cut at month ends), counting spending in the chosen categories
+CREATE TABLE weekly_budgets(id INTEGER PRIMARY KEY, name TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), week_start INTEGER NOT NULL DEFAULT 1 CHECK(week_start BETWEEN 1 AND 7),
+  rollover INTEGER NOT NULL DEFAULT 0, sort INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE weekly_budget_categories(weekly_id INTEGER NOT NULL REFERENCES weekly_budgets(id) ON DELETE CASCADE, category_id INTEGER NOT NULL REFERENCES categories(id), PRIMARY KEY(weekly_id, category_id));
+CREATE TABLE weekly_favorites(user_id INTEGER NOT NULL REFERENCES users(id), weekly_id INTEGER NOT NULL REFERENCES weekly_budgets(id) ON DELETE CASCADE, PRIMARY KEY(user_id, weekly_id));
+`,
 ];

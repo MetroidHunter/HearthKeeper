@@ -295,3 +295,16 @@ tr.flagged > td { background: color-mix(in srgb, var(--bad, #c0392b) 9%, transpa
 button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=true] { color: var(--bad, #c0392b); }
 .btable .tgt { white-space:nowrap; text-align:right; } .btable .yearly { white-space:nowrap; font-weight:400; }
 .btable td.num button.edit { flex:none; }
+
+/* ---- weekly budgets ----------------------------------------------------------------------------------------------------------- */
+.wk-bar { margin-top:var(--space-3); }
+.wk { margin-top:var(--space-2); }
+.wk-head { display:flex; align-items:center; gap:var(--space-2); padding:14px 16px 4px; flex-wrap:wrap; } .wk-name { font-size:19px; min-width:0; }
+.wk-total b { font-size:20px; font-variant-numeric:tabular-nums; } .wk-sub { padding:0 16px 8px; }
+.wk-table { width:100%; font-size:15px; } .wk-table th, .wk-table td { padding:8px 12px; text-align:left; } .wk-table .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.wk-row.current { background:var(--chip); } .wk-row.past:not(.current) td { color:var(--muted); } .wk-row.past .wk-left { color:inherit; }
+.wk-cats { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:var(--space-3); max-height:220px; overflow:auto; margin-top:var(--space-2); padding:var(--space-2); border:1px solid var(--line); border-radius:8px; }
+.wk-catgroup { display:flex; flex-direction:column; gap:4px; }
+.wk-preview { overflow-x:auto; } .wk-badge { font-size:10px; }
+.wk-tile .wk-month { font-size:12px; }
+@media (max-width:640px) { .wk-head { padding:10px var(--space-3) 2px; } .wk-sub { padding:0 var(--space-3) 6px; } .wk-table { font-size:14px; } .wk-table th, .wk-table td { padding:6px 8px; } .wk-tile .wk-badge, .wk-tile .wk-month { display:none; } .wk-tile button.icon { display:inline; } }

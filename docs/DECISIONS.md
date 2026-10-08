@@ -168,3 +168,13 @@ Each overspent envelope is funded for its overage plus the budget for the days t
 
 ## D86. Analytics chart heights, Explore table controls, and a dismissable "went over budget" heads-up
 (1) Analytics reuses one chart element across tabs, and tabs that need a special height set it directly, so a tall chart's height carried over to the next tab (Category trend after Budget vs actual). Every tab now starts from the 380px default. (2) Explore's Spend by tables have a search box, sortable columns (name, transactions, spent; months open newest first), a footer total for what matches, and the usual pager (25/50/100/200); all client-side since the full list is already loaded. (3) When an AUTOMATIC categorization (a rule in auto mode) takes an envelope's balance from zero-or-more to below zero, a `notices` row is raised and shown at the top of Home with "No action needed" and a Dismiss button. Only the crossing payment raises it, only for recent spending (within 35 days of the newest data, so bulk history imports are silent), and at most one open notice per category; after dismissal the next crossing raises a new one. "Over budget" here means the envelope balance (what the rebalance also calls an overage), not spending above the monthly amount.
+
+## D87. Weekly budgets
+
+A weekly budget is a monthly amount spread over the weeks of each month, counting net spending (refunds count back) in the categories chosen for it. It is a view over existing spending: it moves no money, creates no envelope and changes no category balance.
+
+- **Weeks** start on a chosen weekday (default Monday) and are cut at month ends, so a month can begin and end with a short week. Each week's share is by days, rounded cumulatively, so the weeks add up to the month exactly. The running total by the end of each week is shown as the week's limit.
+- **Overage carries.** A week that goes over reduces the next week's money. Unspent money does *not* carry unless the budget's "rolls into the next week" option is on (default off), so one quiet week does not license a loose one.
+- **Month total** is the monthly amount minus everything spent in the month, independent of the carry option.
+- **Favorites** are per person (`weekly_favorites`) and show on Home as tiles *above* the favorited envelopes. Home's fallback list of a few envelopes appears only when nothing at all is pinned.
+- Categories must be active expense categories. Deleting a weekly budget removes it and its pins and touches no transactions.

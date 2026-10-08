@@ -5,6 +5,7 @@ import { api, money, fmtDate } from '../api.js';
 import { amt, pace, type Cat } from '../shared.js';
 import { showDialog, catSelect, pendingBadge } from '../ui.js';
 import { txnRow, txnHead, type Env } from '../txn.js';
+import { weeklyTile } from '../weekly.js';
 
 const FOLD = 'hk-home-attention-open';
 const foldOpen = () => { try { return localStorage.getItem(FOLD) === '1'; } catch { return false; } }; // remembered per device; collapsed until you open it
@@ -13,11 +14,11 @@ const saveFold = (open: boolean) => { try { localStorage.setItem(FOLD, open ? '1
 /** Home: what needs a person first (collapsible), then favorites, then what just happened; searching and adding come last. */
 @customElement('hk-home')
 export class Home extends Page {
-  @state() inbox: any = null; @state() budget: any = null; @state() recent: any[] = []; @state() cats: Cat[] = []; @state() q = ''; @state() accounts: any[] = [];
+  @state() inbox: any = null; @state() budget: any = null; @state() weekly: any[] = []; @state() recent: any[] = []; @state() cats: Cat[] = []; @state() q = ''; @state() accounts: any[] = [];
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() {
     await this.run(async () => {
-      [this.inbox, this.budget, this.recent, this.cats, this.accounts] = await Promise.all([api.get('/api/inbox?limit=10'), api.get('/api/budget'), api.get('/api/transactions?limit=20'), api.get('/api/categories'), api.get('/api/accounts')]);
+      [this.inbox, this.budget, this.weekly, this.recent, this.cats, this.accounts] = await Promise.all([api.get('/api/inbox?limit=10'), api.get('/api/budget'), api.get('/api/weekly-budgets'), api.get('/api/transactions?limit=20'), api.get('/api/categories'), api.get('/api/accounts')]);
     });
   }
   private env(): Env {
@@ -33,7 +34,8 @@ export class Home extends Page {
     const c = this.inbox.counts;
     const rows: any[] = this.budget?.rows ?? [];
     const favs = rows.filter((r) => r.favorite);
-    const shown = favs.length ? favs : rows.filter((r) => r.kind === 'expense').slice(0, 6);
+    const weeklyFavs = this.weekly.filter((b) => b.favorite);
+    const shown = favs.length || weeklyFavs.length ? favs : rows.filter((r) => r.kind === 'expense').slice(0, 6);
     const need: any[] = this.inbox.items;
     const unc = this.budget?.uncategorized;
     const env = this.env();
@@ -61,12 +63,12 @@ export class Home extends Page {
       </details>
 
       <h2>Favorites</h2>
-      <div class="favs">${shown.map((r: any) => html`<div class="fav ${r.currentCents < 0 ? 'over' : ''}" title="${r.name}: spent ${money(r.spent[0])} of ${money(r.targetCents)} this month">
+      <div class="favs">${weeklyFavs.map((b) => weeklyTile(b, { unfavorite: async () => { await this.run(() => api.del(`/api/weekly-budgets/${b.id}/favorite`)); this.load(); } }))}${shown.map((r: any) => html`<div class="fav ${r.currentCents < 0 ? 'over' : ''}" title="${r.name}: spent ${money(r.spent[0])} of ${money(r.targetCents)} this month">
         <div class="fav-top"><b class="fav-name">${r.name}</b><button class="link icon" title=${r.favorite ? 'Remove from favorites' : 'Add to favorites'} aria-label="Toggle favorite" @click=${() => this.toggleFavorite(r)}>${r.favorite ? '★' : '☆'}</button></div>
         <div class="fav-bal ${r.currentCents < 0 ? 'neg' : r.currentCents > 0 ? 'pos' : ''}">${money(r.currentCents)}</div>
         <div class="bar ${r.currentCents < 0 ? 'over' : ''}"><i style="width:${pace(r.spent[0], r.targetCents)}%"></i></div>
         <div class="fav-sub">${money(r.spent[0])} of ${money(r.targetCents)}</div></div>`)}</div>
-      ${favs.length ? nothing : html`<p class="muted small">Showing a few expense envelopes. Pin your own with ☆ on the Budget page.</p>`}
+      ${favs.length || weeklyFavs.length ? nothing : html`<p class="muted small">Showing a few expense envelopes. Pin your own with ☆ on the Budget page.</p>`}
 
       <h2>Recent</h2>
       <div class="card flush"><div class="list hover">${this.recent.map((t: any) => html`<div class="list-row"><span class="muted" style="width:62px">${fmtDate(t.occurred_on)}</span>

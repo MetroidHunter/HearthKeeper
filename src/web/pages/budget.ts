@@ -5,12 +5,13 @@ import { api, money, parseMoney } from '../api.js';
 import { pace } from '../shared.js';
 import { pageHead, th } from '../ui.js';
 import { draw, theme, PALETTE } from '../charts.js';
+import { weeklyCard, weeklyDialog } from '../weekly.js';
 
 @customElement('hk-budget')
 export class Budget extends Page {
-  @state() data: any = null; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null; @state() editV = ''; @state() editM = '';
+  @state() data: any = null; @state() weekly: any[] = []; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null; @state() editV = ''; @state() editM = '';
   connectedCallback() { super.connectedCallback(); this.load(); }
-  async load() { await this.run(async () => { this.data = await api.get('/api/budget'); this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }); }
+  async load() { await this.run(async () => { [this.data, this.weekly] = await Promise.all([api.get('/api/budget'), api.get('/api/weekly-budgets')]); this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }); }
   updated() { if (this.view === 'pie' && this.pie) this.drawPie(); }
   drawPie() {
     const el = this.querySelector('.chart') as HTMLElement; if (!el) return;
@@ -28,6 +29,12 @@ export class Budget extends Page {
     return html`<div class="pielist">${items.map((i, n) => html`<button class="pierow" ?disabled=${!!g} @click=${() => { if (!g) this.drill = i.name; }}><i style="background:${PALETTE[n % PALETTE.length]}"></i><span class="pn">${i.name}</span><span class="pa">${money(i.cents)}</span><span class="pp">${Math.round((i.cents / total) * 1000) / 10}%</span></button>`)}</div>`;
   }
   async saveBudget(r: any, v: string, month: string) { await this.run(() => api.post(`/api/categories/${r.id}/budget`, { monthlyCents: parseMoney(v), effectiveMonth: month })); this.editing = null; this.load(); }
+  async toggleWeeklyFavorite(b: any) { await this.run(() => (b.favorite ? api.del(`/api/weekly-budgets/${b.id}/favorite`) : api.post(`/api/weekly-budgets/${b.id}/favorite`))); this.load(); }
+  async editWeekly(b?: any) { if (await weeklyDialog(b)) this.load(); }
+  weeklySection() {
+    return html`<div class="row wk-bar"><h2 class="grow" style="margin:0">Weekly budgets</h2><button class="wk-new" @click=${() => this.editWeekly()}>＋ New weekly budget</button></div>
+      ${this.weekly.length ? this.weekly.map((b) => weeklyCard(b, { favorite: () => this.toggleWeeklyFavorite(b), edit: () => this.editWeekly(b) })) : html`<p class="muted small" style="margin:0">A weekly budget spreads a monthly amount over the weeks of the month, so you can see what is left this week. A week that goes over eats into the next.</p>`}`;
+  }
   async toggleFavorite(r: any) { await this.run(() => (r.favorite ? api.del(`/api/favorites/${r.id}`) : api.post('/api/favorites', { categoryId: r.id }))); this.load(); }
   render() {
     const d = this.data; if (!d) return html`<p class="muted">${this.err || 'Loading…'}</p>`;
@@ -42,6 +49,7 @@ export class Budget extends Page {
           <span class="value"><span>${money(h.allocatedCents)}</span> <span class="of">/ ${money(h.incomeCents)}</span> <span class="un ${h.unallocatedCents < 0 ? 'neg' : 'pos'}">(${money(h.unallocatedCents)})</span></span>
           <span class="sub">per month; unallocated is income minus allocated</span></div></div>
       ${unc && unc.count ? html`<a class="stat" href="#/backlog"><span class="label">Needs category</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions have no category yet, so they are not in any envelope below. Categorize them in the Backlog and each amount moves into its category.</span></a>` : nothing}
+      ${this.weeklySection()}
       <div class="tabs"><button aria-pressed=${this.view === 'table'} @click=${() => (this.view = 'table')}>Groups</button><button aria-pressed=${this.view === 'pie'} @click=${() => { this.view = 'pie'; this.drill = null; }}>Pie</button>
         ${this.view === 'pie' ? html`<button @click=${async () => { this.pieMode = this.pieMode === 'allocated' ? 'spent' : 'allocated'; this.drill = null; this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }}>Share of ${this.pieMode} ↔</button>${this.drill ? html`<button @click=${() => (this.drill = null)}>← all groups</button>` : ''}` : ''}</div>
       ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div>${this.pieList()}</div>` : [...groups].map(([g, rows]) => this.group(g, rows))}
