@@ -25,7 +25,7 @@ describe('Weekly budgets', () => {
     $('.wk-save', dlg).click();
     const card = await waitFor(() => $('section[data-weekly]'), 'the weekly budget');
     expect(text($('.wk-name', card))).to.equal('Groceries Weekly');
-    expect(text($('.wk-total', card))).to.contain('· $800.00 a month');
+    expect(text($('.wk-total', card))).to.contain('left of $800.00 this month');
     expect($$('.wkseg', card).length).to.be.greaterThan(3);
     expect($$('.wkseg.current', card)).to.have.length(1);
     // it sits above the grouped budgets
@@ -39,17 +39,16 @@ describe('Weekly budgets', () => {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
     await api('/api/weekly-budgets', { method: 'POST', body: { categoryId: eat.id, weekStart: 1 } });
     const accts = await api('/api/accounts');
-    const [b0] = await api('/api/weekly-budgets');
-    const big = b0.weeks.find((w) => w.state === 'current').availableCents + 5000;                    // $50 more than this week has
-    await api('/api/transactions', { method: 'POST', body: { accountId: accts[0].id, descriptor: 'BIG DINNER', amountCents: -big, categoryId: eat.id } });
+    await api('/api/transactions', { method: 'POST', body: { accountId: accts[0].id, descriptor: 'BIG DINNER', amountCents: -300000, categoryId: eat.id } });
     const [b] = await api('/api/weekly-budgets');
     const fmt = (c) => `${c < 0 ? '-' : ''}$${(Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
     const cur = b.weeks.find((w) => w.state === 'current');
-    expect(b.spentCents).to.be.at.least(big);
-    expect(cur.remainingCents).to.equal(-5000);
+    expect(b.spentCents).to.be.at.least(300000);
+    expect(cur.remainingCents).to.be.lessThan(0);
     await mount('/budget');
     const card = await waitFor(() => $('section[data-weekly]'), 'card');
-    expect(text($('.wk-total', card))).to.contain(`${fmt(b.remainingCents)} left · ${fmt(b.amountCents)} a month`);
+    expect(text($('.wk-total', card))).to.contain(`${fmt(b.remainingCents)} left of ${fmt(b.amountCents)}`);
+    expect(b.remainingCents).to.be.lessThan(0);
     const row = $('.wkseg.current', card);
     expect($('.wkseg-left', row).classList.contains('neg')).to.equal(true);
     const next = b.weeks.find((w) => w.n === cur.n + 1);
@@ -67,25 +66,24 @@ describe('Weekly budgets', () => {
     $('.wk-fav', card).click();
     await waitFor(() => /★/.test(text($('.wk-fav'))), 'starred');
     await mount('/');
-    const row = await waitFor(() => $('section.wk.span'), 'the weekly budget on Home');
+    const row = await waitFor(() => $('section.wk.flat'), 'the weekly budget on Home');
     expect(text($('.wk-name', row))).to.equal('Groceries Weekly');
-    expect(text($('.wk-total', row))).to.contain(`${fmt(wb0(await api('/api/weekly-budgets')))} left · $800.00 a month`);
+    expect(text($('.wk-total', row))).to.contain(`${fmt(wb0(await api('/api/weekly-budgets')))} left of $800.00`);
     expect($$('.wkseg', row).length).to.be.greaterThan(3);                          // the same bar as on Budget
     expect($('.wk-edit', row)).to.not.exist;
-    expect(row.classList.contains('card')).to.equal(true);                           // a card, like the others
-    expect(getComputedStyle(row).borderTopWidth).to.not.equal('0px');
+    expect(getComputedStyle(row).borderTopWidth).to.equal('0px');                    // no card around it
     const grid = $('.favs');
     expect(grid.firstElementChild).to.equal(row);                                    // weekly budgets come first
     expect(row.getBoundingClientRect().width).to.be.at.least(grid.getBoundingClientRect().width - 1);   // across every column
     $('.wk-fav', row).click();                                                       // unpin from Home
-    await waitFor(() => !$('section.wk.span'), 'unpinned');
+    await waitFor(() => !$('section.wk.flat'), 'unpinned');
     // edit, then delete
     await mount('/budget');
     $('.wk-edit').click();
     const dlg = await waitFor(() => $('dialog[open] hk-weekly-form'), 'edit dialog');
     await pickCat($('hk-category-select', dlg), 'Gas');
     $('.wk-save', dlg).click();
-    await waitFor(() => /Gas Weekly/.test(text($('.wk-name'))) && /· \$150\.00 a month/.test(text($('.wk-total'))), 'edited: now follows Gas and its budget');
+    await waitFor(() => /Gas Weekly/.test(text($('.wk-name'))) && /left of \$150\.00 this month/.test(text($('.wk-total'))), 'edited: now follows Gas and its budget');
     $('.wk-edit').click();
     const dlg2 = await waitFor(() => $('dialog[open] .wk-delete'), 'delete button');
     dlg2.click();
@@ -115,7 +113,7 @@ describe('Weekly budgets', () => {
       segs[0].click();
       await waitFor(() => shown().length === 1 && shown()[0].dataset.week === '1', 'the tapped week\'s numbers');
       await mount('/');
-      const row = await waitFor(() => $('section.wk.span'), 'the weekly budget on Home');
+      const row = await waitFor(() => $('section.wk.flat'), 'the weekly budget on Home');
       expect(document.documentElement.scrollWidth).to.be.at.most(390);
       expect(getComputedStyle($('.wkd.sel', row)).display).to.equal('flex');
     } finally { await setViewport({ width: 1280, height: 800 }); }
@@ -149,18 +147,5 @@ describe('Weekly budgets', () => {
     const over = await waitFor(() => $('.wkseg.current.over'), 'the week turns red when it goes over');
     expect(text($('.wkseg-left', over))).to.match(/^-\$[\d,.]+$/);
     expect($('.wkbar > i', over).style.width).to.equal('100%');
-  });
-
-  it('its total is the envelope\'s own balance: the Budget page and Home agree with the weekly budget', async () => {
-    const cats = await api('/api/categories');
-    const eat = cats.find((c) => c.name === 'Eating Out');
-    await api('/api/weekly-budgets', { method: 'POST', body: { categoryId: eat.id } });
-    const fmt = (c) => `${c < 0 ? '-' : ''}$${(Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-    const row = (await api('/api/budget')).rows.find((r) => r.name === 'Eating Out');
-    await mount('/budget');
-    const card = await waitFor(() => $('section[data-weekly]'), 'card');
-    expect(text($('.wk-total b', card))).to.equal(fmt(row.currentCents));
-    const envelope = await waitFor(() => $$('tbody tr.clickable').find((r) => /Eating Out/.test(text(r))), 'the envelope row');
-    expect(text($$('td', envelope)[2])).to.equal(fmt(row.currentCents));                  // the same number in the envelope's Current column
   });
 });

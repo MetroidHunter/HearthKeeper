@@ -44,12 +44,12 @@ export function weekBars(b: any) {
   <div class="wkd-row">${b.weeks.map((w: any) => html`<div class="wkd ${sel === w.n ? 'sel' : ''}" data-week=${w.n}><span class="wkd-dates">${weekLabel(w)}</span><span class="wkd-nums muted">${nums(w)}</span><b class="wkd-left ${tone(w.remainingCents)}">${money(w.remainingCents)}</b></div>`)}</div></div>`;
 }
 
-/** The weekly budget: the month's total left and the week bars. A card on the Budget page; `span` (Home) lets it run across every column of the favorites grid. */
-export function weeklyCard(b: any, on: { favorite: () => void; edit?: () => void }, o: { span?: boolean } = {}) {
-  return html`<section class=${o.span ? 'card flush wk span' : 'card flush wk'} data-weekly=${b.id}>
+/** The weekly budget: the month's total left and the week bars. A card on the Budget page; `flat` (Home) drops the card so it can run across the page. */
+export function weeklyCard(b: any, on: { favorite: () => void; edit?: () => void }, o: { flat?: boolean } = {}) {
+  return html`<section class=${o.flat ? 'wk flat' : 'card flush wk'} data-weekly=${b.id}>
     <div class="wk-head"><button class="link icon wk-fav" title=${b.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${on.favorite}>${b.favorite ? '★' : '☆'}</button>
       <h3 class="grow wk-name">${b.name}</h3>
-      <span class="wk-total ${tone(b.remainingCents)}" title="What the ${b.category} envelope holds now: what was left from earlier months, plus this month's budget, minus what has been spent"><b>${money(b.remainingCents)}</b> <span class="muted small">left · ${money(b.amountCents)} a month</span></span>
+      <span class="wk-total ${tone(b.remainingCents)}" title="The month's amount minus everything spent in it so far"><b>${money(b.remainingCents)}</b> <span class="muted small">left of ${money(b.amountCents)} this month</span></span>
       ${on.edit ? html`<button class="icon wk-edit" title="Edit or delete this weekly budget" aria-label="Edit weekly budget" @click=${on.edit}>✎</button>` : nothing}</div>
     <div class="wk-bars">${weekBars(b)}</div>
   </section>`;

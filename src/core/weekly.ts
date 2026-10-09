@@ -2,11 +2,10 @@ import { DateTime } from 'luxon';
 import type { DB } from './db.js';
 import { audit } from './db.js';
 import { lastDayOfMonth } from './reports.js';
-import { monthlyAmount, getVersions, categoryBalance } from './balance.js';
+import { monthlyAmount, getVersions } from './balance.js';
 
 /**
- * Weekly budgets: a category's monthly budget spread over the weeks of the month, counting what is spent in that category. The first week also gets whatever
- * the envelope held when the month began (with the month's transfers already applied), so the weekly view and the envelope always show the same money left.
+ * Weekly budgets: a category's monthly budget spread over the weeks of the month, counting what is spent in that category.
  * Weeks start on `weekStart` (1 = Monday … 7 = Sunday) and are cut at month ends, so a month usually begins and ends with a short week.
  * Each week gets its share of the month by days (rounded cumulatively, so the weeks add up to the month exactly). A week that goes over eats into
  * the next one, and unspent money carries forward too, so a week's money is its share plus whatever is left from the week before.
@@ -89,20 +88,14 @@ function spentIn(db: DB, ids: number[], from: string, to: string): number {
   return v === 0 ? 0 : -v;
 }
 
-export function weeklyRows(month: string, weekStart: number, amountCents: number, spentOf: (from: string, to: string) => number, today: string, opening = 0): WeekRow[] {
-  let remaining = opening;                                                       // the first week starts with what the envelope held, as of the month's start
+export function weeklyRows(month: string, weekStart: number, amountCents: number, spentOf: (from: string, to: string) => number, today: string): WeekRow[] {
+  let remaining = 0;
   return weeksOfMonth(month, weekStart, amountCents).map((w) => {
-    const carried = remaining;                                                   // what is left (or overspent) from before: the week before, or earlier months
+    const carried = remaining;                                                   // what is left (or overspent) in the week before
     const availableCents = w.allottedCents + carried, spentCents = spentOf(w.from, w.to);
     remaining = availableCents - spentCents;
     return { ...w, carriedCents: carried, availableCents, spentCents, remainingCents: remaining, state: today > w.to ? 'past' : today < w.from ? 'future' : 'current' } as WeekRow;
   });
-}
-
-/** Money moved into (+) or out of (-) the category by envelope transfers (coverages, rebalances) over [from, to]. */
-function movedIn(db: DB, categoryId: number, from: string, to: string): number {
-  return (db.prepare(`SELECT COALESCE(SUM(l.amount_cents),0) v FROM envelope_transfer_legs l JOIN envelope_transfers e ON e.id=l.transfer_id
-    WHERE l.category_id=? AND e.occurred_on BETWEEN ? AND ?`).get(categoryId, from, to) as { v: number }).v;
 }
 
 export interface WeeklyBudget {
@@ -112,23 +105,16 @@ export interface WeeklyBudget {
 
 /**
  * Every weekly budget, laid out for `month` (default: the month of `today`). Its total is the category's own monthly budget for that month (so it follows the
- * category when that changes) and its name is "<category> Weekly". It starts from what the envelope held when the month began, so the money left agrees with
- * the envelope itself: `remainingCents` is the category's balance (the same number the Budget page shows) as of today, or as of the month's end for a past month.
+ * category when that changes) and its name is "<category> Weekly". `remainingCents` is the month's amount minus everything spent in it.
  */
 export function listWeekly(db: DB, today: string, opts: { month?: string; userId?: number } = {}): WeeklyBudget[] {
   const month = opts.month ?? today.slice(0, 7);
-  const first = `${month}-01`, last = lastDayOfMonth(month);
-  const asOf = today < first ? first : today > last ? last : today;
-  const dayBefore = DateTime.fromISO(first, { zone: 'utc' }).minus({ days: 1 }).toISODate()!;
   const favs = new Set(opts.userId ? (db.prepare('SELECT weekly_id FROM weekly_favorites WHERE user_id=?').all(opts.userId) as { weekly_id: number }[]).map((r) => r.weekly_id) : []);
   return (db.prepare('SELECT w.id, w.category_id, w.week_start, c.name category FROM weekly_budgets w JOIN categories c ON c.id=w.category_id ORDER BY w.sort, w.id').all() as any[]).map((b) => {
     const amount = monthlyOf(db, b.category_id, month);
-    // what the envelope held when the month began, with this month's transfers (coverages, rebalances) already applied: they correct the envelope's level
-    // rather than being spending, so they belong to the month's start, not to whichever week they happened in (or an early week would show a deficit they later fixed)
-    const opening = (categoryBalance(db, b.category_id, dayBefore).total ?? 0) + movedIn(db, b.category_id, first, asOf);
-    const weeks = weeklyRows(month, b.week_start, amount, (f, t) => spentIn(db, [b.category_id], f, t), today, opening);
+    const weeks = weeklyRows(month, b.week_start, amount, (f, t) => spentIn(db, [b.category_id], f, t), today);
     const spent = weeks.reduce((a, w) => a + w.spentCents, 0);
     return { id: b.id, name: `${b.category} Weekly`, categoryId: b.category_id, category: b.category, amountCents: amount, weekStart: b.week_start, favorite: favs.has(b.id),
-      month, weeks, spentCents: spent, remainingCents: categoryBalance(db, b.category_id, asOf).total ?? 0, currentWeek: weeks.find((w) => w.state === 'current')?.n ?? null };
+      month, weeks, spentCents: spent, remainingCents: amount - spent, currentWeek: weeks.find((w) => w.state === 'current')?.n ?? null };
   });
 }

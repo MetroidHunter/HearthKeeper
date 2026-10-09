@@ -63,7 +63,7 @@ export class Home extends Page {
       </details>
 
       <h2>Favorites</h2>
-      <div class="favs">${weeklyFavs.map((b) => weeklyCard(b, { favorite: async () => { await this.run(() => api.del(`/api/weekly-budgets/${b.id}/favorite`)); this.load(); } }, { span: true }))}${shown.map((r: any) => html`<div class="fav ${r.currentCents < 0 ? 'over' : ''}" title="${r.name}: spent ${money(r.spent[0])} of ${money(r.targetCents)} this month">
+      <div class="favs">${weeklyFavs.map((b) => weeklyCard(b, { favorite: async () => { await this.run(() => api.del(`/api/weekly-budgets/${b.id}/favorite`)); this.load(); } }, { flat: true }))}${shown.map((r: any) => html`<div class="fav ${r.currentCents < 0 ? 'over' : ''}" title="${r.name}: spent ${money(r.spent[0])} of ${money(r.targetCents)} this month">
         <div class="fav-top"><b class="fav-name">${r.name}</b><button class="link icon" title=${r.favorite ? 'Remove from favorites' : 'Add to favorites'} aria-label="Toggle favorite" @click=${() => this.toggleFavorite(r)}>${r.favorite ? '★' : '☆'}</button></div>
         <div class="fav-bal ${r.currentCents < 0 ? 'neg' : r.currentCents > 0 ? 'pos' : ''}">${money(r.currentCents)}</div>
         <div class="bar ${r.currentCents < 0 ? 'over' : ''}"><i style="width:${pace(r.spent[0], r.targetCents)}%"></i></div>

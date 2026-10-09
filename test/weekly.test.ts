@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { seedHousehold } from './helpers.js';
 import { createTransaction, setSplits } from '../src/core/transactions.js';
 import { setBudget } from '../src/core/categories.js';
-import { createTransfer } from '../src/core/transfers.js';
-import { categoryBalance } from '../src/core/balance.js';
 import { weeksOfMonth, createWeekly, updateWeekly, deleteWeekly, listWeekly, setWeeklyFavorite } from '../src/core/weekly.js';
 import Database from 'better-sqlite3';
 import { MIGRATIONS } from '../src/core/schema.js';
@@ -36,7 +34,6 @@ describe('weeks of a month', () => {
 const scene = () => {
   const h = seedHousehold();
   const spend = (cat: string, day: string, cents: number) => { const id = createTransaction(h.db, { accountId: h.chase, occurredOn: day, amountCents: -cents, descriptor: 'X' }); setSplits(h.db, id, [{ categoryId: h.cats[cat], amountCents: -cents }]); return id; };
-  h.db.prepare("UPDATE categories SET start_month='2026-10' WHERE id=?").run(h.cats['Eating Out']);   // starts this month, so nothing is carried in
   setBudget(h.db, h.cats['Eating Out'], 31000, '2026-01');    // $310 a month: $1,000 a day in October
   const id = createWeekly(h.db, { categoryId: h.cats['Eating Out'] }, 'system', '2026-10-01');
   return { h, spend, id };
@@ -76,35 +73,6 @@ describe('weekly budget', () => {
     expect(b.weeks[1].spentCents).toBe(3000);
     expect(b.spentCents).toBe(3000);
     expect(listWeekly(h.db, '2026-10-14', { month: '2026-09' })[0].spentCents).toBe(7777);
-  });
-  it('starts from what the envelope held when the month began, so its total always agrees with the envelope', () => {
-    const { h, spend } = scene();
-    h.db.prepare("UPDATE categories SET start_month='2026-08' WHERE id=?").run(h.cats['Eating Out']);   // Aug, Sep: $620 accrued before October
-    spend('Eating Out', '2026-08-20', 8000);                        // $80 spent earlier: $540 carried into October
-    spend('Eating Out', '2026-10-02', 3000);
-    spend('Eating Out', '2026-10-06', 9500);
-    createTransfer(h.db, 'manual', '2026-10-07', [{ categoryId: h.cats['Eating Out'], cents: 2500 }, { categoryId: h.cats['Groceries'], cents: -2500 }]);   // $25 covered in
-    for (const today of ['2026-10-01', '2026-10-08', '2026-10-31']) {
-      const [b] = listWeekly(h.db, today);
-      expect(b.remainingCents).toBe(categoryBalance(h.db, h.cats['Eating Out'], today).total);              // the number the Budget page shows for the envelope
-    }
-    const [b] = listWeekly(h.db, '2026-10-31');
-    expect(b.weeks[0].carriedCents).toBe(54000 + 2500);                                                       // what the envelope held on September 30, plus the month's $25 transfer
-    expect(b.weeks.map((w) => w.remainingCents)).toEqual([56500 + 4000 - 3000, 57500 + 7000 - 9500, 55000 + 7000, 62000 + 7000, 69000 + 6000]);   // the transfer does not pose as week 2's money
-    expect(b.weeks.at(-1)!.remainingCents).toBe(b.remainingCents);
-    expect(b.remainingCents).toBe(75000);                                                                     // 3 × 310 − 80 − 30 − 95 + 25 = $750
-    expect(listWeekly(h.db, '2026-10-08')[0].remainingCents).toBe(categoryBalance(h.db, h.cats['Eating Out'], '2026-10-08').total);
-  });
-  it('an overspent envelope that is covered mid-month does not show a deficit in the weeks before the coverage', () => {
-    const { h, spend } = scene();
-    h.db.prepare("UPDATE categories SET start_month='2026-08' WHERE id=?").run(h.cats['Eating Out']);
-    spend('Eating Out', '2026-08-20', 100000);                      // $1,000 spent against $620 accrued: the envelope entered October at -$380
-    spend('Eating Out', '2026-10-02', 3000);
-    createTransfer(h.db, 'manual', '2026-10-06', [{ categoryId: h.cats['Eating Out'], cents: 40000 }, { categoryId: h.cats['Groceries'], cents: -40000 }]);   // covered with $400 in week 2
-    const [b] = listWeekly(h.db, '2026-10-08');
-    expect(b.weeks[0].remainingCents).toBe(-38000 + 40000 + 4000 - 3000);                                   // $30 left, not -$380 until the coverage arrives
-    expect(b.weeks.every((w) => w.remainingCents > 0)).toBe(true);
-    expect(b.remainingCents).toBe(categoryBalance(h.db, h.cats['Eating Out'], '2026-10-08').total);
   });
   it('is named after its category, takes its total from the category budget, and follows it when that changes', () => {
     const { h } = scene();
