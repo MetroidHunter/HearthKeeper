@@ -65,6 +65,9 @@ bootstrap: ## [box, sudo] install or update everything
 	# ---- packages -----------------------------------------------------------------------------------
 	log "system packages"
 	export DEBIAN_FRONTEND=noninteractive
+	# Caddy's old apt repo (dl.cloudsmith.io) now answers 402 Payment Required, which makes `apt-get update` fail; drop it if an earlier bootstrap added it
+	# (the installed caddy keeps working; it just stops coming from that repo)
+	rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 	apt-get update -qq
 	apt-get install -y -qq ca-certificates curl gnupg openssh-client openssl sqlite3 rsync git build-essential python3 debian-keyring debian-archive-keyring apt-transport-https >/dev/null
 	install -d -m 0755 /etc/apt/keyrings
@@ -75,10 +78,15 @@ bootstrap: ## [box, sudo] install or update everything
 	  apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
 	fi
 	if ! command -v caddy >/dev/null; then
-	  log "caddy (official apt repo)"
-	  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-	  curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
-	  apt-get update -qq && apt-get install -y -qq caddy >/dev/null
+	  if [ -n "$$(apt-cache policy caddy | awk '/Candidate:/ && $$2 != "(none)" {print $$2}')" ]; then
+	    log "caddy (distribution package)"
+	    apt-get install -y -qq caddy >/dev/null
+	  else
+	    log "caddy (official .deb from the GitHub release)"
+	    CADDY_VERSION=2.10.0; ARCH=$$(dpkg --print-architecture)
+	    curl -fsSL -o /tmp/caddy.deb "https://github.com/caddyserver/caddy/releases/download/v$${CADDY_VERSION}/caddy_$${CADDY_VERSION}_linux_$${ARCH}.deb"
+	    apt-get install -y -qq /tmp/caddy.deb >/dev/null; rm -f /tmp/caddy.deb
+	  fi
 	fi
 
 	# an e2-micro has ~1 GB RAM: npm ci + vite build need swap

@@ -23,6 +23,7 @@ make push-data SNAPSHOT=hk-prod-20261005T230819Z.sqlite.gz VM=hearthekeeper ZONE
 Snapshots are made with `npm run hk -- snapshot --out <dir>` (check them with `npm run hk -- verify --file <x.sqlite.gz>`). Rebuilding one from the spreadsheets is `tools/xlsx_to_export.py` followed by the `init`, `migrate`, `seed-rules` and `profiles` commands in `docs/RUNBOOK.md`.
 
 ## Things to know
+- **Caddy comes from the distribution package** (or, if the distribution has none, the official `.deb` from Caddy's GitHub release), not from Caddy's old Cloudsmith apt repo, which now answers `402 Payment Required`. `bootstrap` removes that leftover source on boxes set up earlier, so `apt-get update` works again; the installed Caddy is untouched.
 - **Ingest tokens live in the database.** Loading a database loads its tokens; read them with `node --import tsx src/seed/cli.ts tokens` in the checkout. Do not point IFTTT at the box before the data is installed.
 - **The gap.** Anything between your spreadsheet export and the day the webhook starts is brought in with the bank CSV import.
 - **Backups** are GCP disk snapshots (attach a daily schedule to the VM disk). There is no app-level backup job.
