@@ -29,26 +29,15 @@ export function weekBars(b: any) {
   })}</div>`;
 }
 
-/** The weekly budget on the Budget page: the month's total left and the week bars. */
-export function weeklyCard(b: any, on: { favorite: () => void; edit: () => void }) {
-  return html`<section class="card flush wk" data-weekly=${b.id}>
+/** The weekly budget: the month's total left and the week bars. A card on the Budget page; `flat` (Home) drops the card so it can run across the page. */
+export function weeklyCard(b: any, on: { favorite: () => void; edit?: () => void }, o: { flat?: boolean } = {}) {
+  return html`<section class=${o.flat ? 'wk flat' : 'card flush wk'} data-weekly=${b.id}>
     <div class="wk-head"><button class="link icon wk-fav" title=${b.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${on.favorite}>${b.favorite ? '★' : '☆'}</button>
       <h3 class="grow wk-name">${b.name}</h3>
       <span class="wk-total ${tone(b.remainingCents)}" title="The month's amount minus everything spent in it so far"><b>${money(b.remainingCents)}</b> <span class="muted small">left of ${money(b.amountCents)} this month</span></span>
-      <button class="icon wk-edit" title="Edit or delete this weekly budget" aria-label="Edit weekly budget" @click=${on.edit}>✎</button></div>
+      ${on.edit ? html`<button class="icon wk-edit" title="Edit or delete this weekly budget" aria-label="Edit weekly budget" @click=${on.edit}>✎</button>` : nothing}</div>
     <div class="wk-bars">${weekBars(b)}</div>
   </section>`;
-}
-
-/** A Home tile: this week's money left, the whole month as little week bars, and how the month is doing. */
-export function weeklyTile(b: any, on: { unfavorite: () => void }) {
-  const w = b.weeks.find((x: any) => x.n === b.currentWeek) ?? b.weeks.at(-1);
-  return html`<div class="fav wk-tile ${w.remainingCents < 0 ? 'over' : ''}" data-weekly=${b.id} title="${b.name}: ${weekLabel(w)} has ${money(w.availableCents)} to spend (${money(w.allottedCents)} + ${money(w.carriedCents)} carried), ${money(w.spentCents)} spent">
-    <div class="fav-top"><b class="fav-name">${b.name}</b><button class="link icon" title="Remove from favorites" aria-label="Toggle favorite" @click=${on.unfavorite}>★</button></div>
-    <div class="fav-bal ${tone(w.remainingCents)}">${money(w.remainingCents)}</div>
-    <div class="wkbars mini">${b.weeks.map((x: any) => html`<div class="wkseg ${x.state} ${x.remainingCents < 0 ? 'over' : ''}" style="flex-grow:${x.days}"><div class="wkbar"><i style="width:${fill(x)}%"></i></div></div>`)}</div>
-    <div class="fav-sub">${w.remainingCents < 0 ? 'over' : 'left'} this week (${weekLabel(w)})</div>
-    <div class="fav-sub wk-month ${tone(b.remainingCents)}">Month: ${money(b.remainingCents)} left of ${money(b.amountCents)}</div></div>`;
 }
 
 /** Create or edit a weekly budget (with a delete button when editing). Resolves true when something changed. */
