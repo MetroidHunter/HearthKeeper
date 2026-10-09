@@ -310,8 +310,8 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 /* the month as one long bar cut into weeks; each piece is its own progress bar */
 .wk-bars { padding:2px 16px 12px; }
 .wkbars { display:flex; gap:6px; align-items:flex-start; }
-.wkseg { flex:1 1 0; min-width:142px; display:flex; flex-direction:column; gap:2px; }
-.wkseg-top { display:flex; flex-wrap:wrap; justify-content:space-between; column-gap:6px; font-size:12.5px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.wkseg { flex:1 1 0; min-width:170px; display:flex; flex-direction:column; gap:2px; }
+.wkseg-top { display:flex; flex-wrap:wrap; justify-content:space-between; column-gap:6px; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .wkseg-dates { font-weight:600; overflow:hidden; text-overflow:ellipsis; }
 .wkbar { position:relative; height:13px; background:var(--chip); border-radius:5px; overflow:hidden; }
 .wkbar > i { display:block; height:100%; background:var(--brand); border-radius:5px 0 0 5px; transition:width .2s; }
@@ -319,12 +319,21 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 .wkseg.past .wkbar > i { opacity:.65; }
 .wkseg.current .wkbar { box-shadow:0 0 0 1.5px var(--brand); }
 .wk-now { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:var(--ink); opacity:.75; text-decoration:none; }
-.wkseg-left { font-size:15px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; } .wkseg-line { display:flex; flex-wrap:wrap; align-items:baseline; column-gap:5px; flex-wrap:nowrap; white-space:nowrap; } .wkseg-spent { font-size:11.5px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.wkseg-left { font-size:15px; line-height:1.2; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; } .wkseg-line { display:flex; flex-wrap:wrap; align-items:baseline; column-gap:5px; flex-wrap:nowrap; white-space:nowrap; }
 .wkseg.future .wkseg-left { font-weight:600; }
 @media (max-width:640px) {
   .wk-bars { padding:0 var(--space-3) 10px; }
   }
-@media (max-width:760px) { .wkbars { flex-wrap:wrap; row-gap:8px; } .wkbars .wkseg { flex:1 1 calc(50% - 6px); min-width:0; } }
+.wkd-row { display:none; }
+@media (max-width:900px) {
+  /* a phone: the whole month as one proportional strip of bars, full width; tap a week for its numbers underneath */
+  .wkbars { gap:3px; } .wkseg { min-width:0; cursor:pointer; padding:5px 0; gap:0; }
+  .wkseg-top, .wkseg-line { display:none; }
+  .wkbar { height:12px; border-radius:4px; } .wkbar > i { border-radius:4px 0 0 4px; }
+  .wkseg.current .wkbar { box-shadow:none; } .wkseg.sel .wkbar { box-shadow:0 0 0 2px var(--brand); }
+  .wkd-row { display:block; margin-top:2px; } .wkd { display:none; align-items:baseline; gap:10px; flex-wrap:wrap; font-variant-numeric:tabular-nums; } .wkd.sel { display:flex; }
+  .wkd-dates { font-weight:600; } .wkd-nums { font-size:13px; } .wkd-left { margin-left:auto; font-size:17px; }
+}
 
 /* on Home the weekly budget runs across every column of the favorites grid, with no card around it */
 .wk.flat { grid-column:1 / -1; margin:0; background:none; border:0; border-radius:0; padding:0; }

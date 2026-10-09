@@ -15,18 +15,33 @@ const fill = (w: any) => (w.availableCents > 0 ? Math.min(100, Math.max(0, (w.sp
 /** Where today falls inside the current week, as a share of the week's width (the end of today). */
 const todayAt = (w: any) => { const d = (Date.parse(today()) - Date.parse(w.from)) / 86400000 + 1; return Math.min(100, Math.max(0, (d / w.days) * 100)); };
 
+/** What was spent against the week's budget, as "spent/budget". */
+const nums = (w: any) => `${money(w.spentCents)}/${money(w.allottedCents)}`;
+/** The week a phone shows details for: the one tapped last, else this week (or the last one when the month is over). */
+const picked = new Map<number, number>();
+const selectedWeek = (b: any) => picked.get(b.id) ?? b.currentWeek ?? b.weeks.at(-1).n;
+function pick(e: Event, id: number, n: number) {
+  picked.set(id, n);
+  const root = (e.currentTarget as HTMLElement).closest('.wkbars-wrap')!;
+  root.querySelectorAll('[data-week]').forEach((el) => el.classList.toggle('sel', Number((el as HTMLElement).dataset.week) === n));
+}
+
 /**
  * The month as one long bar cut into weeks (each as wide as it has days, so a short week is a short piece). Every piece is its own progress bar:
- * the dates and the week's budget above it, and what is left below it (red when the week went over) with what was spent beside it.
+ * the dates and "spent/budget" above it, and what is left below it (red when the week went over). On a phone the pieces shrink to just the bars
+ * across the full width, and tapping one shows its dates, "spent/budget" and what is left in a line underneath (this week to begin with).
  */
 export function weekBars(b: any) {
-  return html`<div class="wkbars" role="list">${b.weeks.map((w: any) => {
+  const sel = selectedWeek(b);
+  return html`<div class="wkbars-wrap"><div class="wkbars" role="list">${b.weeks.map((w: any) => {
     const over = w.remainingCents < 0;
-    return html`<div class="wkseg ${w.state} ${over ? 'over' : ''}" role="listitem" data-week=${w.n} style="flex-grow:${w.days}" title="${weekLabel(w)}: ${money(w.remainingCents)} ${over ? 'over' : 'left'} (${money(w.availableCents)} to spend: ${money(w.allottedCents)} + ${money(w.carriedCents)} carried), ${money(w.spentCents)} spent">
-      <div class="wkseg-top"><span class="wkseg-dates">${weekLabel(w)}</span><span class="wkseg-budget muted">${money(w.allottedCents)}</span></div>
+    return html`<div class="wkseg ${w.state} ${over ? 'over' : ''} ${sel === w.n ? 'sel' : ''}" role="listitem" data-week=${w.n} style="flex-grow:${w.days}" @click=${(e: Event) => pick(e, b.id, w.n)}
+        title="${weekLabel(w)}: ${money(w.remainingCents)} ${over ? 'over' : 'left'} (${money(w.availableCents)} to spend: ${money(w.allottedCents)} + ${money(w.carriedCents)} carried), ${money(w.spentCents)} spent">
+      <div class="wkseg-top"><span class="wkseg-dates">${weekLabel(w)}</span><span class="wkseg-nums muted">${nums(w)}</span></div>
       <div class="wkbar"><i style="width:${fill(w)}%"></i>${w.state === 'current' ? html`<u class="wk-now" style="left:${todayAt(w)}%" title="Today"></u>` : nothing}</div>
-      <div class="wkseg-line"><b class="wkseg-left ${tone(w.remainingCents)}">${money(w.remainingCents)}</b>${w.state === 'future' && !w.spentCents ? nothing : html` <span class="wkseg-spent muted">${money(w.spentCents)}</span>`}</div>`;
-  })}</div>`;
+      <div class="wkseg-line"><b class="wkseg-left ${tone(w.remainingCents)}">${money(w.remainingCents)}</b></div></div>`;
+  })}</div>
+  <div class="wkd-row">${b.weeks.map((w: any) => html`<div class="wkd ${sel === w.n ? 'sel' : ''}" data-week=${w.n}><span class="wkd-dates">${weekLabel(w)}</span><span class="wkd-nums muted">${nums(w)}</span><b class="wkd-left ${tone(w.remainingCents)}">${money(w.remainingCents)}</b></div>`)}</div></div>`;
 }
 
 /** The weekly budget: the month's total left and the week bars. A card on the Budget page; `flat` (Home) drops the card so it can run across the page. */

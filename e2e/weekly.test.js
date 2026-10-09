@@ -92,19 +92,30 @@ describe('Weekly budgets', () => {
     expect(await api('/api/weekly-budgets')).to.deep.equal([]);
   });
 
-  it('fits a phone: no sideways page scroll on Budget or Home, and the weekly tile is still readable', async () => {
+  it('fits a phone: one full-width strip of week bars (no wrapping), the chosen week\'s numbers underneath, tap another week to switch', async () => {
     const cats = await api('/api/categories');
     const r = await api('/api/weekly-budgets', { method: 'POST', body: { categoryId: cats.find((c) => c.name === 'Car Insurance').id } });
     await api(`/api/weekly-budgets/${r.id}/favorite`, { method: 'POST' });
     await setViewport({ width: 390, height: 800 });
     try {
       await mount('/budget');
-      await waitFor(() => $('section[data-weekly]'), 'card');
+      const card = await waitFor(() => $('section[data-weekly]'), 'card');
       expect(document.documentElement.scrollWidth).to.be.at.most(390);
+      const segs = $$('.wkseg', card);
+      expect(new Set(segs.map((x) => Math.round(x.getBoundingClientRect().top))).size).to.equal(1);                       // all in one row
+      const strip = $('.wkbars', card).getBoundingClientRect();
+      expect(segs.at(-1).getBoundingClientRect().right).to.be.at.least(strip.right - 1);                                      // across the full width
+      expect(getComputedStyle($('.wkseg-top', segs[0])).display).to.equal('none');                                            // the per-week text is folded away
+      const shown = () => $$('.wkd', card).filter((d) => getComputedStyle(d).display !== 'none');
+      expect(shown()).to.have.length(1);
+      expect(shown()[0].dataset.week).to.equal(String($('.wkseg.current', card).dataset.week));                               // this week to begin with
+      expect(text(shown()[0])).to.match(/\$[\d,.]+\/\$[\d,.]+/);
+      segs[0].click();
+      await waitFor(() => shown().length === 1 && shown()[0].dataset.week === '1', 'the tapped week\'s numbers');
       await mount('/');
       const row = await waitFor(() => $('section.wk.flat'), 'the weekly budget on Home');
       expect(document.documentElement.scrollWidth).to.be.at.most(390);
-      expect(text(row)).to.match(/\$/);
+      expect(getComputedStyle($('.wkd.sel', row)).display).to.equal('flex');
     } finally { await setViewport({ width: 1280, height: 800 }); }
   });
 
@@ -127,9 +138,10 @@ describe('Weekly budgets', () => {
     expect(Math.round(parseFloat($('.wkbar > i', now).style.width))).to.be.within(49, 51);                    // half spent, half the bar
     expect($('.wk-now', now)).to.exist;                                                                         // today's marker
     expect(text($('.wkseg-left', now))).to.match(/^\$[\d,.]+$/);                                                 // just the amount, no words
-    expect(text($('.wkseg-line', now))).to.match(/^\$[\d,.]+ \$[\d,.]+$/);                                          // what is left, with what was spent beside it
+    expect(text($('.wkseg-nums', now))).to.match(/^\$[\d,.]+\/\$[\d,.]+$/);                                         // spent/budget in the top corner
+    expect($('.wkseg-top', now).lastElementChild).to.equal($('.wkseg-nums', now));
     expect(now.textContent).to.not.match(/left|carried|over/i);
-    expect(text($('.wkseg-top', now))).to.contain(`$${(cur.allottedCents / 100).toFixed(2)}`);                  // the week's budget above the bar
+    expect(text($('.wkseg-nums', now))).to.contain(`/$${(cur.allottedCents / 100).toFixed(2)}`);                    // the week's budget, after what was spent
     await api('/api/transactions', { method: 'POST', body: { accountId: accts[0].id, descriptor: 'OOPS', amountCents: -500000, categoryId: eat.id } });
     await mount('/budget');
     const over = await waitFor(() => $('.wkseg.current.over'), 'the week turns red when it goes over');
