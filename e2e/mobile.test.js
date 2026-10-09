@@ -1,5 +1,5 @@
 import { setViewport } from '@web/test-runner-commands';
-import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, sleep } from './helpers.js';
+import { expect, mount, reset, waitFor, $, $$, text, byText, trapErrors, sleep, api } from './helpers.js';
 
 const shown = (el) => !!el && getComputedStyle(el).display !== 'none' && el.getClientRects().length > 0;
 
@@ -7,6 +7,26 @@ describe('Budget on a phone (390px wide)', () => {
   let trap;
   beforeEach(async () => { await reset(); trap = trapErrors(); try { localStorage.removeItem('hk-intro-open'); } catch { /* none */ } await setViewport({ width: 390, height: 844 }); await sleep(100); });
   afterEach(async () => { trap.stop(); expect(trap.errs).to.deep.equal([]); await setViewport({ width: 800, height: 600 }); });
+
+  it('every budget row has the same shape, however long the amounts: one line of $spent/$budget ($yearly/yr) with the pencil at the right', async () => {
+    const cats = await api('/api/categories');
+    for (const [name, cents] of [['Gas', 123456789], ['Groceries', 800]]) await api(`/api/categories/${cats.find((c) => c.name === name).id}/budget`, { method: 'POST', body: { monthlyCents: cents, effectiveMonth: new Date().toISOString().slice(0, 7) } });
+    await mount('/budget');
+    await waitFor(() => $$('.brow').length > 10, 'rows');
+    const rows = $$('.brow').filter((r) => shown(r));
+    const gas = rows.find((r) => /^Gas/.test(text($('.brow-name', r))));
+    expect(text($('.brow-nums', gas))).to.match(/^\$[\d,.]+\/\$1,234,567\.89 \(\$14,814,815\/yr\)$/);          // the long case reads the same as the short ones
+    expect(text($('.brow-nums', rows.find((r) => /^Groceries/.test(text($('.brow-name', r))))))).to.match(/^\$[\d,.]+\/\$8\.00 \(\$96\/yr\)$/);
+    for (const r of rows) {
+      const sub = $('.brow-sub', r), nums = $('.brow-nums', r), pencil = $('.bedit', r);
+      expect(sub.getBoundingClientRect().height, `${text($('.brow-name', r))}: one line`).to.be.below(40);
+      expect(text(sub), 'no "of" or "spent" wording').to.not.match(/Spent|of \$|last month/);
+      expect(nums.scrollWidth, `${text($('.brow-name', r))}: nothing cut off`).to.be.at.most(nums.clientWidth + 1);
+      expect(Math.round(pencil.getBoundingClientRect().right), 'pencil at the same right edge').to.equal(Math.round(rows[0].querySelector('.bedit').getBoundingClientRect().right));
+    }
+    expect(new Set(rows.map((r) => Math.round(r.getBoundingClientRect().height))).size, 'rows are all the same height').to.equal(1);
+    expect(document.documentElement.scrollWidth).to.be.at.most(window.innerWidth);
+  });
 
   it('categories are two-line rows (no six-column table), nothing scrolls sideways, and the controls work', async () => {
     await mount('/budget');

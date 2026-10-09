@@ -136,7 +136,9 @@ describe('Weekly budgets', () => {
     segs.forEach((seg, i) => expect(getComputedStyle(seg).flexGrow).to.equal(String(b.weeks[i].days)));      // a short week is a short piece
     const now = $('.wkseg.current', card);
     expect(now).to.exist;
-    expect(Math.round(parseFloat($('.wkbar > i', now).style.width))).to.be.within(49, 51);                    // half spent, half the bar
+    const w = b.weeks.find((x) => x.state === 'current');
+    expect(Math.round(parseFloat($('.wkbar > i', now).style.width))).to.equal(Math.round((w.spentCents / w.availableCents) * 100));   // the bar is as full as the week is spent
+    expect(w.spentCents).to.be.at.least(Math.round(cur.availableCents / 2));
     expect($('.wk-now', now)).to.exist;                                                                         // today's marker
     expect(text($('.wkseg-left', now))).to.match(/^\$[\d,.]+$/);                                                 // just the amount, no words
     expect(text($('.wkseg-nums', now))).to.match(/^\$[\d,.]+\/\$[\d,.]+$/);                                         // spent/budget in the top corner

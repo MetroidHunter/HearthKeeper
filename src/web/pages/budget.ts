@@ -7,6 +7,9 @@ import { pageHead, th } from '../ui.js';
 import { draw, theme, PALETTE } from '../charts.js';
 import { weeklyCard, weeklyDialog } from '../weekly.js';
 
+/** Whole dollars, for the yearly figure on a phone where width is tight. */
+const whole = (c: number) => `$${Math.round(c / 100).toLocaleString('en-US')}`;
+
 @customElement('hk-budget')
 export class Budget extends Page {
   @state() data: any = null; @state() weekly: any[] = []; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null; @state() editV = ''; @state() editM = '';
@@ -67,8 +70,8 @@ export class Budget extends Page {
       <div class="blist">${rows.map((r) => html`<div class="brow" role="link" tabindex="0" @click=${() => (location.hash = `#/categories/${r.id}`)}>
         <div class="brow-top"><button class="link icon bfav" title=${r.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${(e: Event) => { e.stopPropagation(); this.toggleFavorite(r); }}>${r.favorite ? '★' : '☆'}</button>
           <b class="brow-name">${r.name}</b><span class="brow-bal ${r.currentCents < 0 ? 'neg' : r.currentCents > 0 ? 'pos' : ''}">${money(r.currentCents)}</span></div>
-        <div class="brow-sub"><span>${r.kind === 'expense' ? 'Spent' : 'In'} ${money(r.kind === 'expense' ? r.spent[0] : r.gained[0])} of ${money(r.targetCents)}${r.targetCents ? html` <span class="muted small yearly">(${money(r.targetCents * 12)}/yr)</span>` : nothing}<button class="icon bedit" title="Change the monthly amount" aria-label="Edit monthly amount" @click=${(e: Event) => { e.stopPropagation(); this.openEdit(r); }}>✎</button></span><span>${r.kind === 'expense' ? `${money(r.spent[1])} last month` : ''}</span></div>
-        ${r.kind === 'expense' ? html`<div class="bar ${r.spent[0] > r.targetCents ? 'over' : ''}"><i style="width:${pace(r.spent[0], r.targetCents)}%"></i></div>` : nothing}</div>`)}</div></section>`;
+        <div class="brow-sub"><span class="brow-nums" title=${r.targetCents ? `${money(r.targetCents)} a month, ${money(r.targetCents * 12)} a year` : ''}>${money(r.kind === 'expense' ? r.spent[0] : r.gained[0])}/${money(r.targetCents)}${r.targetCents ? html` <span class="yearly">(${whole(r.targetCents * 12)}/yr)</span>` : nothing}</span><button class="icon bedit" title="Change the monthly amount" aria-label="Edit monthly amount" @click=${(e: Event) => { e.stopPropagation(); this.openEdit(r); }}>✎</button></div>
+        <div class="bar ${r.kind === 'expense' && r.spent[0] > r.targetCents ? 'over' : ''}"><i style="width:${pace(r.kind === 'expense' ? r.spent[0] : r.gained[0], r.targetCents)}%"></i></div></div>`)}</div></section>`;
   }
   openEdit(r: any) { this.editV = (r.targetCents / 100).toFixed(2); this.editM = new Date().toISOString().slice(0, 7); this.editing = r; }
   editDialog() {
