@@ -66,17 +66,18 @@ describe('Weekly budgets', () => {
     $('.wk-fav', card).click();
     await waitFor(() => /★/.test(text($('.wk-fav'))), 'starred');
     await mount('/');
-    const row = await waitFor(() => $('section.wk.flat'), 'the weekly budget on Home');
+    const row = await waitFor(() => $('section.wk.span'), 'the weekly budget on Home');
     expect(text($('.wk-name', row))).to.equal('Groceries Weekly');
     expect(text($('.wk-total', row))).to.contain(`${fmt(wb0(await api('/api/weekly-budgets')))} left of $800.00`);
     expect($$('.wkseg', row).length).to.be.greaterThan(3);                          // the same bar as on Budget
     expect($('.wk-edit', row)).to.not.exist;
-    expect(getComputedStyle(row).borderTopWidth).to.equal('0px');                    // no card around it
+    expect(row.classList.contains('card')).to.equal(true);                           // a card, like the others
+    expect(getComputedStyle(row).borderTopWidth).to.not.equal('0px');
     const grid = $('.favs');
     expect(grid.firstElementChild).to.equal(row);                                    // weekly budgets come first
     expect(row.getBoundingClientRect().width).to.be.at.least(grid.getBoundingClientRect().width - 1);   // across every column
     $('.wk-fav', row).click();                                                       // unpin from Home
-    await waitFor(() => !$('section.wk.flat'), 'unpinned');
+    await waitFor(() => !$('section.wk.span'), 'unpinned');
     // edit, then delete
     await mount('/budget');
     $('.wk-edit').click();
@@ -113,7 +114,7 @@ describe('Weekly budgets', () => {
       segs[0].click();
       await waitFor(() => shown().length === 1 && shown()[0].dataset.week === '1', 'the tapped week\'s numbers');
       await mount('/');
-      const row = await waitFor(() => $('section.wk.flat'), 'the weekly budget on Home');
+      const row = await waitFor(() => $('section.wk.span'), 'the weekly budget on Home');
       expect(document.documentElement.scrollWidth).to.be.at.most(390);
       expect(getComputedStyle($('.wkd.sel', row)).display).to.equal('flex');
     } finally { await setViewport({ width: 1280, height: 800 }); }
