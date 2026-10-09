@@ -335,6 +335,5 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
   .wkd-dates { font-weight:600; } .wkd-nums { font-size:13px; } .wkd-left { margin-left:auto; font-size:17px; }
 }
 
-/* on Home the weekly budget runs across every column of the favorites grid, with no card around it */
-.wk.flat { grid-column:1 / -1; margin:0; background:none; border:0; border-radius:0; padding:0; }
-.wk.flat .wk-head, .wk.flat .wk-bars { padding-left:0; padding-right:0; }
+/* on Home the weekly budget runs across every column of the favorites grid */
+.wk.span { grid-column:1 / -1; margin:0; }
