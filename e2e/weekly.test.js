@@ -24,8 +24,8 @@ describe('Weekly budgets', () => {
     const card = await waitFor(() => $('section[data-weekly]'), 'the weekly budget');
     expect(text($('.wk-name', card))).to.equal('Groceries Weekly');
     expect(text($('.wk-total', card))).to.contain('left of $800.00 this month');
-    expect($$('tbody tr.wk-row', card).length).to.be.greaterThan(3);
-    expect($$('tbody tr.wk-row.current', card)).to.have.length(1);
+    expect($$('.wkseg', card).length).to.be.greaterThan(3);
+    expect($$('.wkseg.current', card)).to.have.length(1);
     // it sits above the grouped budgets
     const kids = [...$('main').firstElementChild.children];
     expect(kids.indexOf(card)).to.be.lessThan(kids.findIndex((k) => k.matches('section.group')));
@@ -47,8 +47,8 @@ describe('Weekly budgets', () => {
     const card = await waitFor(() => $('section[data-weekly]'), 'card');
     expect(text($('.wk-total', card))).to.contain(`${fmt(b.remainingCents)} left of ${fmt(b.amountCents)}`);
     expect(b.remainingCents).to.be.lessThan(0);
-    const row = $('tr.wk-row.current', card);
-    expect($('.wk-left', row).classList.contains('neg')).to.equal(true);
+    const row = $('.wkseg.current', card);
+    expect($('.wkseg-left', row).classList.contains('neg')).to.equal(true);
     const next = b.weeks.find((w) => w.n === cur.n + 1);
     if (next) expect(next.carriedCents).to.equal(cur.remainingCents);      // the overage is carried into the next week
     expect(today >= cur.from && today <= cur.to).to.equal(true);
@@ -119,12 +119,14 @@ describe('Weekly budgets', () => {
     expect(now).to.exist;
     expect(Math.round(parseFloat($('.wkbar > i', now).style.width))).to.be.within(49, 51);                    // half spent, half the bar
     expect($('.wk-now', now)).to.exist;                                                                         // today's marker
-    expect(text($('.wkseg-left', now))).to.match(/\$[\d,.]+ left/);
+    expect(text($('.wkseg-left', now))).to.match(/^\$[\d,.]+$/);                                                 // just the amount, no words
+    expect(text($('.wkseg-line', now))).to.match(/^\$[\d,.]+ \$[\d,.]+$/);                                          // what is left, with what was spent beside it
+    expect(now.textContent).to.not.match(/left|carried|over/i);
     expect(text($('.wkseg-top', now))).to.contain(`$${(cur.allottedCents / 100).toFixed(2)}`);                  // the week's budget above the bar
     await api('/api/transactions', { method: 'POST', body: { accountId: accts[0].id, descriptor: 'OOPS', amountCents: -500000, categoryId: eat.id } });
     await mount('/budget');
     const over = await waitFor(() => $('.wkseg.current.over'), 'the week turns red when it goes over');
-    expect(text($('.wkseg-left', over))).to.match(/^-\$.*over$/);
+    expect(text($('.wkseg-left', over))).to.match(/^-\$[\d,.]+$/);
     expect($('.wkbar > i', over).style.width).to.equal('100%');
   });
 });
