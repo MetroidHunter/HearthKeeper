@@ -30,6 +30,7 @@ export async function draw(el: HTMLElement, option: Echarts.EChartsCoreOption, o
   let h = live.get(el);
   if (!h) { const chart = e.init(el); const ro = new ResizeObserver(() => chart.resize()); ro.observe(el); h = { chart, ro }; live.set(el, h); }
   const apply = () => {
+    h!.chart.resize(); // take the container's size right now: the observer only fires on the next frame, and a layout computed at the old size (a treemap) would be drawn first
     const t = theme();
     // Dark mode: tooltips, labels and legends must inherit the theme, not ECharts' light defaults.
     const tooltip = { backgroundColor: t.card, borderColor: t.line, textStyle: { color: t.ink }, ...((option as any).tooltip ?? {}) };
