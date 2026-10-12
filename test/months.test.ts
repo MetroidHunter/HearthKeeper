@@ -112,3 +112,33 @@ describe('months overview (the month-by-month checklist)', () => {
     expect(monthsOverview(h.db, '2026-10-03').find((m) => m.month === '2026-08')!.todo).toBe(0);
   });
 });
+
+describe('months: Spent is net of credits, and the page can show exactly which credits', () => {
+  it('splits Spent into money out and credits booked to expense categories, and lists the biggest credits', () => {
+    const h = seedHousehold();
+    spend(h, h.chase, '2026-03-05', -50_000, 'RENT SHARE', 'Groceries');
+    spend(h, h.chase, '2026-03-06', -20_000, 'EATS', 'Eating Out');
+    spend(h, h.wf, '2026-03-20', 40_000, 'IRS TREAS 310 TAX REF', 'Fees and Taxes'); // a refund deposited straight into an expense envelope
+    spend(h, h.wf, '2026-03-21', 1_500, 'AMAZON REFUND', 'Groceries');
+    spend(h, h.wf, '2026-03-22', 300_000, 'EMPLOYER PAYROLL', 'Gig Income'); // real income: not a credit to spending
+    spend(h, h.chase, '2026-04-02', -1_000, 'APRIL', 'Groceries');
+    const m = monthsOverview(h.db, '2026-04-10').find((r) => r.month === '2026-03')!.stats;
+    expect(m.spent).toBe(70_000 - 41_500); // what the Months page shows today: net
+    expect(m.income).toBe(300_000);
+    expect(m.outflow).toBe(70_000);
+    expect(m.credits.cents).toBe(41_500);
+    expect(m.credits.count).toBe(2);
+    expect(m.outflow - m.credits.cents).toBe(m.spent); // the three numbers always agree
+    expect(m.credits.top.map((c) => [c.descriptor, c.category, c.cents])).toEqual([['IRS TREAS 310 TAX REF', 'Fees and Taxes', 40_000], ['AMAZON REFUND', 'Groceries', 1_500]]);
+    const apr = monthsOverview(h.db, '2026-04-10').find((r) => r.month === '2026-04')!.stats;
+    expect(apr.credits).toEqual({ cents: 0, count: 0, top: [] });
+  });
+
+  it('a split transaction counts only its credit part as a credit', () => {
+    const h = seedHousehold();
+    const id = createTransaction(h.db, { accountId: h.wf, occurredOn: '2026-03-10', amountCents: 10_000, descriptor: 'MIXED DEPOSIT' });
+    setSplits(h.db, id, [{ categoryId: h.cats['Groceries'], amountCents: 12_000 }, { categoryId: h.cats['Eating Out'], amountCents: -2_000 }], 'user');
+    const s = monthsOverview(h.db, '2026-03-15')[0].stats;
+    expect(s.credits.cents).toBe(12_000); expect(s.outflow).toBe(2_000); expect(s.spent).toBe(-10_000);
+  });
+});

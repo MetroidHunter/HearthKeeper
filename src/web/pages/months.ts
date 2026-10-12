@@ -2,7 +2,7 @@ import { html, nothing } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
-import { api, money } from '../api.js';
+import { api, money, fmtDate } from '../api.js';
 import { pageHead } from '../ui.js';
 
 const SHOWN = 12;
@@ -32,10 +32,12 @@ export class Months extends Page {
     return html`<details class="card month ${done ? 'done' : ''}" data-month=${r.month} ?open=${this.isOpen(r)} @toggle=${(e: Event) => this.toggled.set(r.month, (e.target as HTMLDetailsElement).open)}>
       <summary><span class="mh"><b class="mname">${label(r.month)}</b>${r.current ? html`<span class="badge">this month</span>` : nothing}
         ${done ? html`<span class="badge good">✓ nothing to do</span>` : html`<span class="badge warn">${r.todo} to do</span>`}</span>
-        <span class="mstats muted"><span data-tip="Income received in the month" tabindex="0">In ${money(s.income)}</span><span data-tip="Net spending in the month (refunds reduce it)" tabindex="0">Spent ${money(s.spent)}</span>
+        <span class="mstats muted"><span data-tip="Income received in the month" tabindex="0">In ${money(s.income)}</span><span data-tip="Net spending: money out of expense categories minus anything booked into them (refunds, reimbursements). Open the month to see the credits." tabindex="0">Spent ${money(s.spent)}</span>
           <span class=${s.net < 0 ? 'neg' : 'pos'} data-tip="Income minus spending" tabindex="0">${signed(s.net)}</span><span data-tip="What the budget allocated for the month" tabindex="0">plan ${money(s.planned)}</span><span>${s.txns.toLocaleString()} txns</span></span></summary>
       <div class="mbody">
         ${s.overPlan || s.top ? html`<div class="muted small">${s.top ? html`Biggest: <b>${s.top.name}</b> ${money(s.top.cents)}` : nothing}${s.overPlan ? html`${s.top ? ' · ' : ''}<a href="#/budget">${s.overPlan} envelope${s.overPlan === 1 ? '' : 's'} spent more than planned</a>` : nothing}</div>` : nothing}
+        ${s.credits.count ? html`<div class="mcredits muted small" data-credits><b>How Spent ${money(s.spent)} adds up:</b> ${money(s.outflow)} money out − ${money(s.credits.cents)} in credit${s.credits.count === 1 ? '' : 's'} (${s.credits.count} deposit${s.credits.count === 1 ? '' : 's'} or refund${s.credits.count === 1 ? '' : 's'} booked to expense categories).
+          <ul>${s.credits.top.map((c: any) => html`<li>${c.descriptor} <span class="muted">(${c.category}, ${fmtDate(c.date)})</span> <b>${money(c.cents)}</b></li>`)}</ul>${s.credits.count > s.credits.top.length ? html`<span>…and ${s.credits.count - s.credits.top.length} more.</span>` : nothing}</div>` : nothing}
         <div class="mchecks">${r.items.map((i: any) => html`<div class="mcheck ${i.count ? 'todo' : 'ok'}" data-key=${i.key}><span class="mark" aria-hidden="true">${i.count ? '⬜' : '✅'}</span>
           <span class="grow"><span class="mlabel">${i.label}</span>${i.detail ? html`<span class="muted small mdetail">${i.detail}</span>` : nothing}</span>
           ${i.count ? html`<span class="badge warn">${i.count}</span><a class="mfix" href=${i.link}>${i.key === 'coverage' ? 'Import →' : 'Fix →'}</a>` : nothing}</div>`)}</div>

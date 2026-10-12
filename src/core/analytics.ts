@@ -3,7 +3,7 @@ import { categoryBalance, getVersions, monthlyAmount } from './balance.js';
 import { addMonths, monthIndex } from './time.js';
 
 /** Plain-SQL aggregates behind the chart catalog (design §14.2). Spent is net outflow, so refunds reduce it (D13); transfers and accruals never appear. */
-const SPEND_KINDS = "('spending','income','greenlight_allowance','greenlight_return','greenlight_reclass')";
+export const SPEND_KINDS = "('spending','income','greenlight_allowance','greenlight_return','greenlight_reclass')";
 
 export function monthRange(from: string, to: string): string[] {
   const out: string[] = []; for (let m = from; monthIndex(m) <= monthIndex(to); m = addMonths(m, 1)) out.push(m); return out;

@@ -38,7 +38,7 @@ export class Explore extends Page {
   }
   updated() {
     const el = this.querySelector('.chart') as HTMLElement | null; if (!el || !this.res) return;
-    void draw(el, { tooltip: {}, grid: { left: 50, right: 10, top: 10, bottom: 30 }, xAxis: { type: 'category', data: this.res.sparkline.map((s: any) => s.month) }, yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `$${v / 100}` } }, series: [{ type: 'bar', data: this.res.sparkline.map((s: any) => s.cents) }] });
+    void draw(el, { tooltip: { trigger: 'axis', formatter: (ps: any) => { const p = [].concat(ps)[0] as any; return `${p.axisValueLabel ?? p.name}<br/><b>${money(p.value)}</b>`; } }, grid: { left: 50, right: 10, top: 10, bottom: 30 }, xAxis: { type: 'category', data: this.res.sparkline.map((s: any) => s.month) }, yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `$${Math.round(v / 100).toLocaleString('en-US')}` } }, series: [{ type: 'bar', data: this.res.sparkline.map((s: any) => s.cents) }] });
   }
   render() {
     return html`${pageHead('Explore', 'Search and slice your spending any way you like: by category, merchant, month or account.', 'Click any number to see the transactions behind it.')}${this.err ? html`<p class="err">${this.err}</p>` : ''}

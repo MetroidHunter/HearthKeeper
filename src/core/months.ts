@@ -1,6 +1,6 @@
 import type { DB } from './db.js';
 import { INBOX_WHERE } from './reports.js';
-import { incomeVsSpend, monthlySpend, monthRange } from './analytics.js';
+import { incomeVsSpend, monthlySpend, monthRange, SPEND_KINDS } from './analytics.js';
 import { getVersions, monthlyAmount } from './balance.js';
 import { daysBetween } from './time.js';
 import { unpairedLegs } from '../ingest/pairing.js';
@@ -19,7 +19,9 @@ export const NEEDS_WHERE: Record<string, string> = {
 };
 
 export interface MonthItem { key: string; label: string; count: number; detail?: string; link: string }
-export interface MonthStats { income: number; spent: number; net: number; planned: number; txns: number; overPlan: number; top: { name: string; cents: number } | null }
+/** Spent is NET: money out of expense categories minus anything booked into them (refunds, reimbursements, a tax refund put back into the budget). This shows both sides. */
+export interface MonthCredits { cents: number; count: number; top: { id: number; date: string; descriptor: string; category: string; cents: number }[] }
+export interface MonthStats { income: number; spent: number; outflow: number; credits: MonthCredits; net: number; planned: number; txns: number; overPlan: number; top: { name: string; cents: number } | null }
 export interface MonthRow { month: string; current: boolean; items: MonthItem[]; todo: number; stats: MonthStats }
 
 const lastDay = (m: string) => { const [y, mo] = m.split('-').map(Number); return `${m}-${String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0')}`; };
@@ -69,11 +71,18 @@ export function monthsOverview(db: DB, today: string): MonthRow[] {
   const spend = monthlySpend(db, months[0], cur);
   const cats = db.prepare("SELECT id, start_month FROM categories WHERE kind='expense'").all() as { id: number; start_month: string }[];
   const vers = new Map(cats.map((c) => [c.id, getVersions(db, c.id)])); const startOf = new Map(cats.map((c) => [c.id, c.start_month]));
+  const flow = new Map((db.prepare(`SELECT substr(t.occurred_on,1,7) m, SUM(CASE WHEN s.amount_cents>0 THEN s.amount_cents ELSE 0 END) cr, SUM(CASE WHEN s.amount_cents>0 THEN 1 ELSE 0 END) n, SUM(CASE WHEN s.amount_cents<0 THEN -s.amount_cents ELSE 0 END) o
+    FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id JOIN categories c ON c.id=s.category_id WHERE c.kind='expense' AND t.status!='void' AND t.kind IN ${SPEND_KINDS} GROUP BY m`).all() as { m: string; cr: number; n: number; o: number }[]).map((r) => [r.m, r] as const));
+  const topCredits = new Map<string, MonthCredits['top']>();
+  for (const r of db.prepare(`SELECT t.id, t.occurred_on d, COALESCE(t.descriptor_clean, t.descriptor_raw) descriptor, c.name category, s.amount_cents cents FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id JOIN categories c ON c.id=s.category_id
+    WHERE c.kind='expense' AND t.status!='void' AND t.kind IN ${SPEND_KINDS} AND s.amount_cents>0 ORDER BY s.amount_cents DESC, t.id`).all() as { id: number; d: string; descriptor: string; category: string; cents: number }[]) {
+    const k = r.d.slice(0, 7), list = topCredits.get(k) ?? []; if (list.length < 3) { list.push({ id: r.id, date: r.d, descriptor: r.descriptor, category: r.category, cents: r.cents }); topCredits.set(k, list); }
+  }
   const stats = (m: string, i: number): MonthStats => {
     const v = iv.get(m); let top: MonthStats['top'] = null, over = 0;
     for (const r of spend.rows) { const spent = r.values[i] ?? 0; if (spent > 0 && (!top || spent > top.cents)) top = { name: r.key, cents: spent };
       if (r.id !== null && startOf.has(r.id) && startOf.get(r.id)! <= m && spent > monthlyAmount(vers.get(r.id)!, m) && monthlyAmount(vers.get(r.id)!, m) > 0) over++; }
-    return { income: v?.income ?? 0, spent: v?.spent ?? 0, net: (v?.income ?? 0) - (v?.spent ?? 0), planned: v?.allocated ?? 0, txns: txns.get(m) ?? 0, overPlan: over, top };
+    const f = flow.get(m); return { income: v?.income ?? 0, spent: v?.spent ?? 0, outflow: f?.o ?? 0, credits: { cents: f?.cr ?? 0, count: f?.n ?? 0, top: topCredits.get(m) ?? [] }, net: (v?.income ?? 0) - (v?.spent ?? 0), planned: v?.allocated ?? 0, txns: txns.get(m) ?? 0, overPlan: over, top };
   };
   return months.map((m, i) => {
     const q = (k: string) => `month=${m}&needs=${k}`;
