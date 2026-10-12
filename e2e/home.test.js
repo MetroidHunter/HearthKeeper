@@ -20,7 +20,7 @@ describe('Home (phone view)', () => {
     const last = kids.at(-1);
     expect(byText('button', /Add transaction/, last)).to.exist; // add transaction is the very last thing
     const inbox = await api('/api/inbox');
-    expect(text($('details.fold'))).to.match(new RegExp(`${inbox.counts.total} item`)); // the headline count is the true count
+    expect(text($('details.fold'))).to.match(new RegExp(`${inbox.counts.total} need`)); // the headline count is the true count
     expect($('.trow.txn[data-cat=missing]', $('details.fold'))).to.exist; // a missing category is a dropdown in the row
   });
 
@@ -71,7 +71,7 @@ describe('Home (phone view)', () => {
     const opt = $('button.quick', card);
     opt.click();
     let dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'confirm dialog');
-    expect(text(dlg)).to.match(/Balance now/); expect(text(dlg)).to.match(/Balance after/);
+    expect(text(dlg)).to.match(/→/); expect(dlg.querySelector(".impact-new")).to.exist; expect(dlg.querySelector(".cat-note")).to.exist;
     byText('button', /^Cancel$/, dlg).click();
     await new Promise((r) => setTimeout(r, 150));
     expect((await api('/api/inbox')).counts.needsCategory).to.equal(before); // cancelling changed nothing

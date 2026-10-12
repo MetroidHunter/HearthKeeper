@@ -49,14 +49,10 @@ export class Home extends Page {
       <details class="fold" ?open=${open} @toggle=${(e: Event) => saveFold((e.currentTarget as HTMLDetailsElement).open)}>
         <summary><h2>Needs attention</h2><span class="badge ${c.total ? 'warn' : 'good'}">${c.total}</span><span class="fold-hint muted small">${c.total ? (open ? 'tap to collapse' : 'tap to open') : 'all caught up'}</span></summary>
         <div class="stack" style="margin-top:12px">
-          <div class="card"><div class="row"><b style="font-size:18px">${c.total} item${c.total === 1 ? '' : 's'} need${c.total === 1 ? 's' : ''} a decision</b><span class="grow"></span><a href="#/backlog"><button>Open Backlog</button></a></div>
-            <div class="list" style="margin-top:8px">
-              <div class="list-row"><span class="grow">Need a category</span><b>${c.needsCategory}</b></div>
-              <div class="list-row"><span class="grow">Flagged for follow-up</span><b>${c.flagged}</b></div>
-              <div class="list-row"><span class="grow">Waiting on an Amazon/Venmo/PayPal note</span><b>${c.needsNote}</b></div>
-              <div class="list-row"><span class="grow">Pending charges that never posted</span><b>${c.stale}</b></div></div>
-            <p class="muted small" style="margin-bottom:0">One transaction can be in more than one group, so these add up to more than ${c.total}. The Backlog groups uncategorized items by merchant, so it shows fewer lines than this count.</p></div>
-          ${unc && unc.count ? html`<div class="stat"><span class="label">Sitting in "Needs category"</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions with no category (${money(unc.spendCents)} out, ${money(unc.incomeCents)} in). Categorizing one moves its amount out of here and into that category.</span></div>` : nothing}
+          <div class="card attn-sum"><div class="row" style="gap:8px"><b>${c.total} need${c.total === 1 ? 's' : ''} a decision</b>
+            ${c.needsCategory ? html`<span class="chip">${c.needsCategory} need a category</span>` : nothing}${c.flagged ? html`<span class="chip">${c.flagged} flagged</span>` : nothing}${c.needsNote ? html`<span class="chip">${c.needsNote} waiting on a note</span>` : nothing}${c.stale ? html`<span class="chip">${c.stale} never posted</span>` : nothing}
+            <span class="grow"></span><a href="#/backlog" title="One transaction can be in more than one group, so the groups add up to more than ${c.total}. The Backlog groups uncategorized items by merchant, so it shows fewer lines.">Backlog</a></div></div>
+          ${unc && unc.count ? html`<div class="muted small" style="margin:0 2px">"Needs category" holds ${money(unc.netCents)} across ${unc.count} transactions (${money(unc.spendCents)} out, ${money(unc.incomeCents)} in). Categorizing moves each amount into its category.</div>` : nothing}
           ${need.length === 0 ? html`<div class="card muted">All caught up.</div>` : html`<div class="card flush txnlist">${txnHead()}${need.slice(0, 10).map((t: any) => txnRow(env, t, { reload: () => this.load() }))}</div>`}
           ${c.total > need.length ? html`<div class="card row"><span class="grow muted">Showing the ${need.length} most recent of ${c.total}.</span><a href="#/backlog"><button class="primary">Keep going in Backlog</button></a></div>` : nothing}
         </div>
@@ -81,8 +77,8 @@ export class Home extends Page {
   async addDialog() {
     let desc = '', cents = 0, cat: number | null = null, account = this.accounts[0]?.id ?? 1;
     await showDialog<boolean>((close) => html`<h3 class="title">Add a transaction</h3>
-      <div class="stack"><div class="row"><input class="grow" placeholder="What was it?" @input=${(e: any) => (desc = e.target.value)} /><input style="width:7rem" inputmode="decimal" placeholder="12.50" @input=${(e: any) => (cents = -Math.round(parseFloat(e.target.value || '0') * 100))} /></div>
-      <div class="row">${catSelect(this.cats, null, (id) => (cat = id), { placeholder: 'Category (type to search)' })}<select @change=${(e: any) => (account = Number(e.target.value))}>${this.accounts.map((a: any) => html`<option value=${a.id}>${a.name}</option>`)}</select></div></div>
+      <div class="stack adddlg"><div class="adddlg-row"><input class="grow" placeholder="What was it?" @input=${(e: any) => (desc = e.target.value)} /><input class="addamt" inputmode="decimal" placeholder="12.50" @input=${(e: any) => (cents = -Math.round(parseFloat(e.target.value || '0') * 100))} /></div>
+      <div class="adddlg-row">${catSelect(this.cats, null, (id) => (cat = id), { placeholder: 'Category (type to search)' })}<select @change=${(e: any) => (account = Number(e.target.value))}>${this.accounts.map((a: any) => html`<option value=${a.id}>${a.name}</option>`)}</select></div></div>
       <div class="actions"><button @click=${() => close(false)}>Cancel</button><button class="primary save" @click=${async () => { await this.run(() => api.post('/api/transactions', { accountId: account, descriptor: desc || 'Manual entry', amountCents: cents, categoryId: cat || undefined })); close(true); }}>Save</button></div>`, { dismiss: false });
     this.load();
   }

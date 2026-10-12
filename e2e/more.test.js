@@ -166,8 +166,8 @@ describe('Transfers: rebalance', () => {
     const accts = await api('/api/accounts');
     const chase = accts.find((a) => a.name === 'Chase Prime Visa').id, wf = accts.find((a) => /Wells Fargo Brys/.test(a.name)).id;
     // overspend Pets, and earn Gig Income so the pool can pay first
-    await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'VET BILL', amountCents: -2_000_000, categoryId: id('Pets') } });
-    await api('/api/transactions', { method: 'POST', body: { accountId: wf, descriptor: 'GIG PAYMENT', amountCents: 300_000, categoryId: id('Gig Income') } });
+    await api('/api/transactions', { method: 'POST', body: { accountId: chase, occurredOn: '2026-10-10', descriptor: 'VET BILL', amountCents: -2_000_000, categoryId: id('Pets') } });
+    await api('/api/transactions', { method: 'POST', body: { accountId: wf, occurredOn: '2026-10-10', descriptor: 'GIG PAYMENT', amountCents: 300_000, categoryId: id('Gig Income') } });
     await mount('/transfers');
     byText('button', /^Propose$/).click();
     await waitFor(() => /Resulting balances/.test(text(document.body)), 'proposal');
@@ -188,8 +188,8 @@ describe('Transfers: top-up toggle', () => {
     const cats = await api('/api/categories'); const id = (n) => cats.find((c) => c.name === n).id;
     const accts = await api('/api/accounts');
     const chase = accts.find((a) => a.name === 'Chase Prime Visa').id, wf = accts.find((a) => /Wells Fargo Brys/.test(a.name)).id;
-    await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'VET BILL', amountCents: -2_000_000, categoryId: id('Pets') } });
-    await api('/api/transactions', { method: 'POST', body: { accountId: wf, descriptor: 'GIG PAYMENT', amountCents: 5_000_000, categoryId: id('Gig Income') } });
+    await api('/api/transactions', { method: 'POST', body: { accountId: chase, occurredOn: '2026-10-10', descriptor: 'VET BILL', amountCents: -2_000_000, categoryId: id('Pets') } });
+    await api('/api/transactions', { method: 'POST', body: { accountId: wf, occurredOn: '2026-10-10', descriptor: 'GIG PAYMENT', amountCents: 5_000_000, categoryId: id('Gig Income') } });
     const withTop = await api(`/api/transfers/rebalance?asOf=2026-10-11`); const without = await api(`/api/transfers/rebalance?asOf=2026-10-11&topUp=0`);
     const sum = (p) => p.poolPayments.filter((m) => m.toCategoryId === id('Pets')).reduce((a, m) => a + m.cents, 0);
     expect(sum(withTop) - sum(without), 'the top-up is the budget for the 20 days that remain of 31').to.equal(Math.round(8000 * 20 / 31));

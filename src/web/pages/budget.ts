@@ -12,7 +12,7 @@ const whole = (c: number) => `$${Math.round(c / 100).toLocaleString('en-US')}`;
 
 @customElement('hk-budget')
 export class Budget extends Page {
-  @state() data: any = null; @state() weekly: any[] = []; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null; @state() editV = ''; @state() editM = '';
+  @state() data: any = null; @state() weekly: any[] = []; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null; @state() editV = ''; @state() editM = ''; @state() q = '';
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { [this.data, this.weekly] = await Promise.all([api.get('/api/budget'), api.get('/api/weekly-budgets')]); this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }); }
   updated() { if (this.view === 'pie' && this.pie) this.drawPie(); }
@@ -42,7 +42,8 @@ export class Budget extends Page {
   render() {
     const d = this.data; if (!d) return html`<p class="muted">${this.err || 'Loading…'}</p>`;
     const h = d.header; const groups = new Map<string, any[]>();
-    for (const r of d.rows) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
+    const needle = this.q.trim().toLowerCase();
+    for (const r of d.rows.filter((x: any) => !needle || x.name.toLowerCase().includes(needle) || (x.group ?? '').toLowerCase().includes(needle))) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
     const unc = d.uncategorized;
     return html`${pageHead('Budget', 'Every envelope, grouped, with what you planned for it each month, what is left in it, and how this month is going. Money you do not spend stays in the envelope and rolls forward.', 'Click a category to see its history and transactions. Use the pencil to change a monthly amount; the old value is kept in its timeline. ☆ pins a category to Home.')}
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
@@ -53,9 +54,10 @@ export class Budget extends Page {
           <span class="sub">per month; unallocated is income minus allocated</span></div></div>
       ${unc && unc.count ? html`<a class="stat" href="#/backlog"><span class="label">Needs category</span><span class="value ${unc.netCents < 0 ? 'neg' : ''}">${money(unc.netCents)}</span><span class="sub">${unc.count} transactions have no category yet, so they are not in any envelope below. Categorize them in the Backlog and each amount moves into its category.</span></a>` : nothing}
       ${this.weeklySection()}
+      ${this.view === 'table' ? html`<input class="bsearch" type="search" placeholder="Find an envelope" aria-label="Find an envelope" .value=${this.q} @input=${(e: any) => (this.q = e.target.value)} />` : nothing}
       <div class="tabs"><button aria-pressed=${this.view === 'table'} @click=${() => (this.view = 'table')}>Groups</button><button aria-pressed=${this.view === 'pie'} @click=${() => { this.view = 'pie'; this.drill = null; }}>Pie</button>
         ${this.view === 'pie' ? html`<button @click=${async () => { this.pieMode = this.pieMode === 'allocated' ? 'spent' : 'allocated'; this.drill = null; this.pie = await api.get(`/api/budget/pie?mode=${this.pieMode}`); }}>Share of ${this.pieMode} ↔</button>${this.drill ? html`<button @click=${() => (this.drill = null)}>← all groups</button>` : ''}` : ''}</div>
-      ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div>${this.pieList()}</div>` : [...groups].map(([g, rows]) => this.group(g, rows))}
+      ${this.view === 'pie' ? html`<div class="card"><div class="chart"></div><div class="muted">${this.drill ? this.drill : 'Click a group to drill into its categories.'}</div>${this.pieList()}</div>` : groups.size ? [...groups].map(([g, rows]) => this.group(g, rows)) : html`<p class="muted">No envelope matches "${this.q}".</p>`}
       ${this.editing ? this.editDialog() : ''}`;
   }
   group(name: string, rows: any[]) {
