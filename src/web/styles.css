@@ -339,3 +339,11 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 
 /* on Home the weekly budget runs across every column of the favorites grid, with no card around it */
 .wk.span { grid-column:1 / -1; margin:0; }
+
+/* Needs attention: compact summary, one-line categorize impact, add-transaction dialog */
+.attn-sum { padding:var(--space-2) var(--space-3); } .attn-sum .chip { font-size:12.5px; }
+.impact1 .impact-line { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; }
+.impact1 .impact-new { font-size:20px; }
+.bsearch { width:100%; margin:var(--space-3) 0; }
+.adddlg-row { display:flex; gap:var(--space-2); align-items:center; } .adddlg-row > * { min-width:0; } .adddlg-row hk-category-select { flex:1 1 0; min-width:0; } .adddlg-row select { flex:0 1 40%; min-width:0; } .addamt { width:7rem; flex:0 0 auto; }
+@media (max-width:640px) { .adddlg-row { flex-wrap:wrap; } .adddlg-row .grow, .adddlg-row hk-category-select, .adddlg-row select { flex:1 1 100%; } .addamt { flex:1 1 100%; width:100%; } }

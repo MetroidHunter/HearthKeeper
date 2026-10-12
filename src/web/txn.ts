@@ -93,31 +93,33 @@ export function splitDialog(env: Env, t: TxnLike): Promise<{ parts: { categoryId
  * tick "Make a rule" and say what it should match, how it applies (suggest or auto) and its priority; the backtest shows what it would have done.
  * Merchants are never learned silently any more: what you choose is counted (that is the merchant's suggestion), and rules are always your own decision.
  */
-export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: number, opts: { groupName?: string; count?: number; seed?: { merchant?: string | null; descriptor: string } } = {}): Promise<{ ok: boolean; rule?: RuleSpec; flag?: { reason: string } }> {
+export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: number, opts: { groupName?: string; count?: number; seed?: { merchant?: string | null; descriptor: string } } = {}): Promise<{ ok: boolean; rule?: RuleSpec; flag?: { reason: string }; note?: string }> {
   const cat = env.cats.find((c) => c.id === categoryId);
   const row = env.rows.find((r) => r.id === categoryId);
   const delta = txns.reduce((a, t) => a + (t.effective_cents ?? t.amount_cents), 0); // a Greenlight reclass is booked at its real spend, not its zero total
   const before = row?.currentCents ?? null, after = before === null ? null : before + delta;
   const spendDelta = -delta; // negative transactions are spending
   const seed = opts.seed ?? { merchant: txns[0]?.merchant, descriptor: txns[0]?.descriptor_clean || txns[0]?.descriptor_raw || '' };
-  const draft = { on: false, clauses: [{ alts: [seed.merchant ? { field: 'merchant', value: seed.merchant } : { field: 'descriptor', value: seed.descriptor }] }] as RuleClause[], mode: 'suggest' as 'suggest' | 'auto', priority: 100, flagOn: false, flagReason: '' };
+  const draft = { on: false, clauses: [{ alts: [seed.merchant ? { field: 'merchant', value: seed.merchant } : { field: 'descriptor', value: seed.descriptor }] }] as RuleClause[], mode: 'suggest' as 'suggest' | 'auto', priority: 100, flagOn: false, flagReason: '', note: txns[0]?.note ?? '' };
+  const single = txns.length === 1 && !opts.count; // one transaction can take a note here; a merchant group cannot
   let bt: { matched: number; byCategory: Record<string, number> } | null = null, btTimer: any, btSeq = 0;
   const matchOf = () => matchFromClauses(draft.clauses);
   const ruleOk = () => !draft.on || (clausesValid(draft.clauses) && Number.isInteger(draft.priority) && draft.priority >= 1 && draft.priority <= 9999);
-  return new Promise<{ ok: boolean; rule?: RuleSpec; flag?: { reason: string } }>((resolve) => {
+  return new Promise<{ ok: boolean; rule?: RuleSpec; flag?: { reason: string }; note?: string }>((resolve) => {
     void showDialog<boolean>((close) => {
       const box = document.createElement('div');
       const draw = () => render(tpl(), box);
       const test = () => { bt = null; clearTimeout(btTimer); const mine = ++btSeq; if (!draft.on || !clausesValid(draft.clauses)) return draw(); btTimer = setTimeout(async () => { try { const r = await api.post('/api/rules/backtest', { match: matchOf() }); if (mine === btSeq) { bt = r; draw(); } } catch { /* the preview is optional */ } }, 250); draw(); };
-      const impact = html`<div class="card"><div class="impact">
-        <b>${cat?.name}</b><span class="muted small">Balance now</span><span class="muted small">This change</span><span class="muted small">Balance after</span>
-        <span class="muted small">${row ? `Monthly target ${money(row.targetCents)}` : ''}</span><span class="mono">${before === null ? 'N/A' : money(before)}</span><span class="mono ${delta < 0 ? 'neg' : 'pos'}">${money(delta, { sign: true })}</span><b class="mono ${after !== null && after < 0 ? 'neg' : ''}">${after === null ? 'N/A' : money(after)}</b>
-        ${row && row.kind === 'expense' ? html`<span class="muted small">Spent this month</span><span class="mono">${money(row.spent[0])}</span><span class="mono">${money(spendDelta, { sign: true })}</span><span class="mono">${money(row.spent[0] + spendDelta)}</span>` : nothing}
-      </div>${row && row.targetCents > 0 && row.kind === 'expense' ? html`<div class="bar ${row.spent[0] + spendDelta > row.targetCents ? 'over' : ''}" style="margin-top:10px"><i style="width:${pace(row.spent[0] + spendDelta, row.targetCents)}%"></i></div>` : nothing}
-      ${after !== null && after < 0 && (before ?? 0) >= 0 ? html`<p class="neg" style="margin:10px 0 0">This pushes ${cat?.name} ${money(-after)} into overspending.</p>` : nothing}</div>`;
+      const spentAfter = row && row.kind === 'expense' ? row.spent[0] + spendDelta : null;
+      const impact = html`<div class="card impact1">
+        <div class="impact-line"><b>${cat?.name}</b><span class="impact-eq mono"><span class="muted">${before === null ? 'N/A' : money(before)}</span> <span class="${delta < 0 ? 'neg' : 'pos'}">${money(delta, { sign: true })}</span> → <b class="impact-new ${after !== null && after < 0 ? 'neg' : ''}">${after === null ? 'N/A' : money(after)}</b></span></div>
+        <div class="muted small">${row ? `Balance left in the envelope${spentAfter !== null ? ` · spent this month ${money(row.spent[0])} → ${money(spentAfter)}` : ''}${row.targetCents ? ` · target ${money(row.targetCents)}/mo` : ''}` : ''}</div>
+        ${row && row.targetCents > 0 && row.kind === 'expense' ? html`<div class="bar ${spentAfter! > row.targetCents ? 'over' : ''}" style="margin-top:8px"><i style="width:${pace(spentAfter!, row.targetCents)}%"></i></div>` : nothing}
+        ${after !== null && after < 0 && (before ?? 0) >= 0 ? html`<p class="neg" style="margin:8px 0 0">This pushes ${cat?.name} ${money(-after)} into overspending.</p>` : nothing}</div>`;
       const tpl = () => html`<h3 class="title">Categorize as ${cat?.name ?? 'this category'}?</h3>
         <p class="muted small">${txns.length === 1 && !opts.count ? `${txns[0].descriptor_clean || txns[0].descriptor_raw}, ${fmtDate(txns[0].occurred_on)}` : `${opts.count ?? txns.length} transactions${opts.groupName ? ` from ${opts.groupName}` : ''}`} · total ${money(delta)}</p>
         ${impact}
+        ${single ? html`<input class="cat-note" style="width:100%;margin-top:10px" placeholder="Add a note (optional)" aria-label="Note" .value=${draft.note} @input=${(e: any) => { draft.note = e.target.value; }} />` : nothing}
         <label class="row makerule" style="margin-top:12px"><input type="checkbox" id="make-rule" .checked=${draft.on} @change=${(e: any) => { draft.on = e.target.checked; test(); }} /> <span>Make a rule so this happens automatically next time</span></label>
         ${draft.on ? html`<div class="card ruleform" style="margin-top:8px">${ruleBuilder(draft.clauses, test, seed.merchant ? undefined : RULE_FIELDS.filter(([f]) => f !== 'merchant'))}
           <div class="row" style="margin-top:8px"><label class="muted small">When it matches <select class="rf-mode" @change=${(e: any) => { draft.mode = e.target.value; draw(); }}><option value="suggest" ?selected=${draft.mode === 'suggest'}>suggest ${cat?.name ?? ''}</option><option value="auto" ?selected=${draft.mode === 'auto'}>file it automatically</option></select></label>
@@ -129,7 +131,7 @@ export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: n
         <div class="actions"><button class="cancel" @click=${() => close(false)}>Cancel</button><button class="primary confirm" autofocus ?disabled=${!ruleOk()} @click=${() => close(true)}>${draft.on ? 'Yes, categorize and make the rule' : 'Yes, categorize'}</button></div>`;
       draw();
       return html`${box}`;
-    }, { dismiss: false }).then((ok) => resolve({ ok: ok === true, rule: ok === true && draft.on && ruleOk() ? { match: matchOf(), mode: draft.mode, priority: draft.priority } : undefined, flag: ok === true && draft.flagOn ? { reason: draft.flagReason.trim() } : undefined }));
+    }, { dismiss: false }).then((ok) => resolve({ ok: ok === true, rule: ok === true && draft.on && ruleOk() ? { match: matchOf(), mode: draft.mode, priority: draft.priority } : undefined, flag: ok === true && draft.flagOn ? { reason: draft.flagReason.trim() } : undefined, note: ok === true && single && draft.note.trim() !== (txns[0]?.note ?? '').trim() ? draft.note.trim() : undefined }));
   });
 }
 
@@ -153,9 +155,9 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
     catch (e) { await alertBox('That did not save', `${(e as Error).message}. Nothing was changed.`); await hooks.reload(); }
   };
   const decide = async (categoryId: number) => {
-    const { ok, rule, flag } = await confirmCategorize(env, [t], categoryId);
+    const { ok, rule, flag, note } = await confirmCategorize(env, [t], categoryId);
     if (!ok) return;
-    await attempt(() => env.categorize([t.id], categoryId, rule, flag), `Categorized as ${env.cats.find((c) => c.id === categoryId)?.name ?? 'the category'}${rule ? ' and rule saved' : ''}${flag ? ', flagged for review' : ''}`);
+    await attempt(async () => { await env.categorize([t.id], categoryId, rule, flag); if (note) await patch({ note }); }, `Categorized as ${env.cats.find((c) => c.id === categoryId)?.name ?? 'the category'}${rule ? ' and rule saved' : ''}${flag ? ', flagged for review' : ''}`);
   };
   const patch = (body: unknown) => api.patch(`/api/transactions/${t.id}`, body);
   const saveNote = (v: string) => { const n = v.trim(); if (n) void attempt(() => patch({ note: n }), 'Note saved'); };
