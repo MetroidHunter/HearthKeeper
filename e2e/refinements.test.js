@@ -31,7 +31,7 @@ for (const [label, size] of [['desktop', { width: 1280, height: 800 }], ['mobile
       if (seen.note) setInput(seen.note, 'bought for the party');
       await confirmDialog(/Yes, categorize/);
       expect(seen.oldGrid, 'the old before/after grid is gone').to.equal(false);
-      expect(seen.line).to.match(/→\s*-?\$[\d,]+\.\d\d$/); // ends on the new total
+      expect(seen.line).to.match(/-?\$[\d,]+\.\d\d$/); // ends on the new total
       expect(seen.hasNew).to.equal(true);
       expect(seen.right).to.be.at.most(window.innerWidth);
       expect(seen.note, 'a note field').to.exist;

@@ -71,7 +71,7 @@ describe('Home (phone view)', () => {
     const opt = $('button.quick', card);
     opt.click();
     let dlg = await waitFor(() => $$('dialog').find((d) => d.open && /Categorize as/.test(text(d))), 'confirm dialog');
-    expect(text(dlg)).to.match(/→/); expect(dlg.querySelector(".impact-new")).to.exist; expect(dlg.querySelector(".cat-note")).to.exist;
+    expect(dlg.querySelector(".impact-arrow")).to.exist; expect(dlg.querySelector(".impact-new")).to.exist; expect(dlg.querySelector(".cat-note")).to.exist;
     byText('button', /^Cancel$/, dlg).click();
     await new Promise((r) => setTimeout(r, 150));
     expect((await api('/api/inbox')).counts.needsCategory).to.equal(before); // cancelling changed nothing

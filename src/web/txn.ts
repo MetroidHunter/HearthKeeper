@@ -111,25 +111,47 @@ export async function confirmCategorize(env: Env, txns: TxnLike[], categoryId: n
       const draw = () => render(tpl(), box);
       const test = () => { bt = null; clearTimeout(btTimer); const mine = ++btSeq; if (!draft.on || !clausesValid(draft.clauses)) return draw(); btTimer = setTimeout(async () => { try { const r = await api.post('/api/rules/backtest', { match: matchOf() }); if (mine === btSeq) { bt = r; draw(); } } catch { /* the preview is optional */ } }, 250); draw(); };
       const spentAfter = row && row.kind === 'expense' ? row.spent[0] + spendDelta : null;
-      const impact = html`<div class="card impact1">
-        <div class="impact-line"><b>${cat?.name}</b><span class="impact-eq mono"><span class="muted">${before === null ? 'N/A' : money(before)}</span> <span class="${delta < 0 ? 'neg' : 'pos'}">${money(delta, { sign: true })}</span> → <b class="impact-new ${after !== null && after < 0 ? 'neg' : ''}">${after === null ? 'N/A' : money(after)}</b></span></div>
-        <div class="muted small">${row ? `Balance left in the envelope${spentAfter !== null ? ` · spent this month ${money(row.spent[0])} → ${money(spentAfter)}` : ''}${row.targetCents ? ` · target ${money(row.targetCents)}/mo` : ''}` : ''}</div>
-        ${row && row.targetCents > 0 && row.kind === 'expense' ? html`<div class="bar ${spentAfter! > row.targetCents ? 'over' : ''}" style="margin-top:8px"><i style="width:${pace(spentAfter!, row.targetCents)}%"></i></div>` : nothing}
+      // The bar is this month's spending against the monthly budget: spent so far (green), what this adds (or frees up), and what is left (grey).
+      // When it pushes past the budget the bar stretches to fit and a tick marks the budget. The new part grows in from the current level when the dialog opens.
+      let grown = false;
+      const barOf = () => {
+        if (!row || row.kind !== 'expense' || !(row.targetCents > 0) || spentAfter === null) return nothing;
+        const spent = row.spent[0], target = row.targetCents;
+        const added = spendDelta >= 0 ? spendDelta : Math.min(spent, -spendDelta); // what the new segment shows: more spending, or spending taken back
+        const keep = spendDelta >= 0 ? spent : Math.max(0, spent - added); // the green part: the spend that stays
+        const scale = Math.max(target, spent, spentAfter, 1);
+        const pct = (c: number) => (c / scale) * 100;
+        const over = spentAfter > target;
+        const label = (c: number, text: string) => (pct(c) >= 20 ? text : '');
+        const newLabel = (spendDelta >= 0 ? '+' : '−') + money(added);
+        const left = Math.max(0, scale - keep - added);
+        const chip = (cls: string, c: number, t: string) => (pct(c) < 20 && c > 0 ? html`<span class="chip-key"><i class="dot ${cls}"></i>${t}</span>` : nothing); // a segment too narrow to hold its figure gets it up here instead
+        return html`<div class="impact-bar-head small"><span class="muted">Budget ${money(target)}/mo</span><span class="keys">${chip('spent', keep, `spent ${money(keep)}`)}${chip(over ? 'over' : spendDelta < 0 ? 'freed' : 'new', added, newLabel)}${chip('left', left, `${money(left)} left`)}</span></div>
+          <div class="impact-bar" data-spent=${keep} data-delta=${added} data-scale=${scale} role="img" aria-label=${`Spent ${money(keep)}, ${spendDelta >= 0 ? 'adding' : 'freeing'} ${money(added)}, ${money(left)} left of ${money(target)}`}>
+            <span class="seg seg-spent" style="width:${pct(keep)}%">${label(keep, money(keep))}</span><span class="seg seg-new ${over ? 'over' : spendDelta < 0 ? 'freed' : ''}" style="width:${grown ? pct(added) : 0}%">${grown ? label(added, newLabel) : ''}</span><span class="seg seg-left">${label(left, money(left))}</span>
+            ${over ? html`<i class="impact-tick" style="left:${pct(target)}%" title="Monthly budget"></i>` : nothing}</div>`;
+      };
+      const impact = () => html`<div class="card impact1">
+        <div class="impact-line"><b>${cat?.name}</b><span class="impact-eq mono"><span class="muted">${before === null ? 'N/A' : money(before)}</span><span class="impact-delta ${delta < 0 ? 'neg' : 'pos'}">${money(delta, { sign: true })}</span>
+          <svg class="impact-arrow" width="16" height="12" viewBox="0 0 16 12" aria-hidden="true"><path d="M1 6h13M9.5 1.5 14 6l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <b class="impact-new ${after !== null && after < 0 ? 'neg' : ''}">${after === null ? 'N/A' : money(after)}</b></span></div>
+        ${barOf()}
         ${after !== null && after < 0 && (before ?? 0) >= 0 ? html`<p class="neg" style="margin:8px 0 0">This pushes ${cat?.name} ${money(-after)} into overspending.</p>` : nothing}</div>`;
       const tpl = () => html`<h3 class="title">Categorize as ${cat?.name ?? 'this category'}?</h3>
         <p class="muted small">${txns.length === 1 && !opts.count ? `${txns[0].descriptor_clean || txns[0].descriptor_raw}, ${fmtDate(txns[0].occurred_on)}` : `${opts.count ?? txns.length} transactions${opts.groupName ? ` from ${opts.groupName}` : ''}`} · total ${money(delta)}</p>
-        ${impact}
+        ${impact()}
         ${single ? html`<input class="cat-note" style="width:100%;margin-top:10px" placeholder="Add a note (optional)" aria-label="Note" .value=${draft.note} @input=${(e: any) => { draft.note = e.target.value; }} />` : nothing}
-        <label class="row makerule" style="margin-top:12px"><input type="checkbox" id="make-rule" .checked=${draft.on} @change=${(e: any) => { draft.on = e.target.checked; test(); }} /> <span>Make a rule so this happens automatically next time</span></label>
+        <label class="row makerule" style="margin-top:12px"><input type="checkbox" id="make-rule" .checked=${draft.on} @change=${(e: any) => { draft.on = e.target.checked; test(); }} /> <span>Make this a rule</span></label>
         ${draft.on ? html`<div class="card ruleform" style="margin-top:8px">${ruleBuilder(draft.clauses, test, seed.merchant ? undefined : RULE_FIELDS.filter(([f]) => f !== 'merchant'))}
           <div class="row" style="margin-top:8px"><label class="muted small">When it matches <select class="rf-mode" @change=${(e: any) => { draft.mode = e.target.value; draw(); }}><option value="suggest" ?selected=${draft.mode === 'suggest'}>suggest ${cat?.name ?? ''}</option><option value="auto" ?selected=${draft.mode === 'auto'}>file it automatically</option></select></label>
             <label class="muted small" data-tip="Lower numbers are checked first. If two rules match, the lower number wins." tabindex="0">Priority <input class="rf-pri" type="number" min="1" max="9999" step="1" style="width:5rem" .value=${String(draft.priority)} @input=${(e: any) => { draft.priority = Number(e.target.value); draw(); }} /></label></div>
           <p class="muted small rf-bt" style="margin:8px 0 0" aria-live="polite">${bt ? html`This rule would have matched <b>${bt.matched}</b> past transaction${bt.matched === 1 ? '' : 's'}${bt.matched ? `: ${Object.entries(bt.byCategory).map(([k, v]) => `${v} ${k}`).join(', ')}` : ''}.` : clausesValid(draft.clauses) ? 'Checking your history…' : 'Fill in every condition.'}
             Rules you make always come before the merchant's usual category, which only ever suggests.</p></div>` : nothing}
-        <label class="row flagrow" style="margin-top:8px"><input type="checkbox" id="flag-it" .checked=${draft.flagOn} @change=${(e: any) => { draft.flagOn = e.target.checked; draw(); }} /> <span>Flag for review <span class="muted small">(it stays flagged until you unflag it)</span></span></label>
+        <label class="row flagrow" style="margin-top:8px"><input type="checkbox" id="flag-it" .checked=${draft.flagOn} @change=${(e: any) => { draft.flagOn = e.target.checked; draw(); }} /> <span>Flag for review</span></label>
         ${draft.flagOn ? html`<input class="flag-reason" style="width:100%;margin-top:6px" placeholder="Why? (optional)" aria-label="Reason for the flag" .value=${draft.flagReason} @input=${(e: any) => { draft.flagReason = e.target.value; }} />` : nothing}
         <div class="actions"><button class="cancel" @click=${() => close(false)}>Cancel</button><button class="primary confirm" autofocus ?disabled=${!ruleOk()} @click=${() => close(true)}>${draft.on ? 'Yes, categorize and make the rule' : 'Yes, categorize'}</button></div>`;
       draw();
+      setTimeout(() => { grown = true; draw(); }, 80); // the new part of the bar grows in from the current level
       return html`${box}`;
     }, { dismiss: false }).then((ok) => resolve({ ok: ok === true, rule: ok === true && draft.on && ruleOk() ? { match: matchOf(), mode: draft.mode, priority: draft.priority } : undefined, flag: ok === true && draft.flagOn ? { reason: draft.flagReason.trim() } : undefined, note: ok === true && single && draft.note.trim() !== (txns[0]?.note ?? '').trim() ? draft.note.trim() : undefined }));
   });

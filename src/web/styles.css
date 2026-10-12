@@ -350,3 +350,18 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 .update-log { margin:var(--space-3) 0 0; padding:var(--space-3); max-height:240px; overflow:auto; background:var(--chip); border-radius:8px; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
 #admin-update .row { align-items:flex-start; } @media (max-width:640px) { #admin-update .run-update { flex:1 1 100%; min-height:44px; } }
 .mcredits ul { margin:4px 0 0; padding-left:18px; } .mcredits li { overflow-wrap:anywhere; }
+
+/* categorize dialog: one change line, and the bar of spent / added / left */
+.impact1 .impact-eq { display:inline-flex; align-items:center; gap:8px; flex-wrap:nowrap; }
+.impact1 .impact-line { align-items:center; }
+.impact-arrow { flex:none; color:var(--muted); display:block; }
+.impact-bar-head { display:flex; justify-content:space-between; margin-top:10px; }
+.impact-bar { position:relative; display:flex; height:22px; border-radius:99px; overflow:hidden; background:var(--chip); margin-top:4px; font-size:12px; font-weight:600; }
+.impact-bar .seg { display:flex; align-items:center; justify-content:center; white-space:nowrap; overflow:hidden; min-width:0; }
+.impact-bar .seg-spent { background:var(--brand); color:#fff; flex:none; }
+.impact-bar .seg-new { background:var(--warn); color:#fff; flex:none; transition:width .8s cubic-bezier(.2,.7,.2,1); }
+.impact-bar .seg-new.over { background:var(--bad); } .impact-bar .seg-new.freed { background:repeating-linear-gradient(135deg,var(--brand) 0 4px,transparent 4px 8px); color:var(--ink); }
+.impact-bar .seg-left { flex:1 1 0; color:var(--muted); }
+.impact-tick { position:absolute; top:0; bottom:0; width:2px; background:var(--ink); opacity:.7; }
+@media (prefers-reduced-motion:reduce) { .impact-bar .seg-new { transition:none; } }
+.impact-bar-head .keys { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; } .chip-key { display:inline-flex; align-items:center; gap:4px; font-weight:600; } .chip-key .dot { width:8px; height:8px; border-radius:99px; background:var(--muted); } .chip-key .dot.spent { background:var(--brand); } .chip-key .dot.new { background:var(--warn); } .chip-key .dot.over { background:var(--bad); } .chip-key .dot.freed { background:var(--brand); opacity:.5; }
