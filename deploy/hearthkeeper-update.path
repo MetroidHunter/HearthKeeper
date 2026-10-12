@@ -1,0 +1,9 @@
+[Unit]
+Description=Run a HearthKeeper update when the admin asks for one in Settings
+
+[Path]
+# the web app (unprivileged) drops this file; it never runs anything as root itself
+PathExists=/var/lib/hearthkeeper/update.request
+
+[Install]
+WantedBy=multi-user.target

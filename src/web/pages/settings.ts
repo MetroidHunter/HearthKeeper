@@ -21,9 +21,32 @@ export function deviceName(ua?: string | null) {
 /** Notifications settings (design §15.3): verbose by default; quiet hours and lock-screen privacy off until you want them. */
 @customElement('hk-settings')
 export class Settings extends Page {
-  @state() prefs: any = null; @state() digest: any = null; @state() status = ''; @state() theme: Theme = getTheme(); @state() devices: any[] = []; @state() thisEndpoint: string | null = null; @state() canPush = true; @state() accounts: any[] = [];
+  @state() adminUp: any = null; private adminTimer: any; @state() prefs: any = null; @state() digest: any = null; @state() status = ''; @state() theme: Theme = getTheme(); @state() devices: any[] = []; @state() thisEndpoint: string | null = null; @state() canPush = true; @state() accounts: any[] = [];
   connectedCallback() { super.connectedCallback(); this.load(); }
-  async load() { await this.run(async () => { [this.prefs, this.digest, this.devices, this.accounts] = await Promise.all([api.get('/api/me/notify-prefs'), api.get('/api/digest'), api.get('/api/push/devices'), api.get('/api/accounts')]); }); this.thisEndpoint = (await this.thisSub())?.endpoint ?? null; }
+  disconnectedCallback() { super.disconnectedCallback(); clearInterval(this.adminTimer); }
+  async load() { await this.run(async () => { [this.prefs, this.digest, this.devices, this.accounts] = await Promise.all([api.get('/api/me/notify-prefs'), api.get('/api/digest'), api.get('/api/push/devices'), api.get('/api/accounts')]); }); this.thisEndpoint = (await this.thisSub())?.endpoint ?? null; await this.loadAdmin(); }
+  /** Admin-only: who sees this is decided by the server (HK_ADMIN_EMAILS); everyone else gets {admin:false} and no section. Polls while an update is in flight. */
+  async loadAdmin() {
+    try { this.adminUp = await api.get('/api/admin/update'); } catch { /* the app restarts itself during an update; keep what we have and try again */ }
+    const busy = this.adminUp?.admin && (this.adminUp.pending || this.adminUp.state === 'running');
+    clearInterval(this.adminTimer); if (busy) this.adminTimer = setInterval(() => void this.loadAdmin(), 3000);
+  }
+  async runUpdate() {
+    if (!(await confirmBox({ title: 'Update the server?', body: 'This pulls the latest code from git, rebuilds, and restarts HearthKeeper (the same as running "sudo make update" on the VM). The app will be unavailable for a minute or so.', confirm: 'Yes, update now' }))) return;
+    await this.run(() => api.post('/api/admin/update'));
+    toast('Update requested'); await this.loadAdmin();
+  }
+  adminSection() {
+    const a = this.adminUp; if (!a?.admin) return nothing;
+    const busy = a.pending || a.state === 'running';
+    const label = a.pending ? 'Update requested, waiting for the server to start it…' : a.state === 'running' ? `Update running since ${a.startedAt ?? 'just now'}…` : a.state === 'ok' ? `Last update succeeded${a.finishedAt ? ` (${a.finishedAt})` : ''}.` : a.state === 'failed' ? `Last update failed${a.finishedAt ? ` (${a.finishedAt})` : ''}.` : 'No update has run yet.';
+    return html`<h2>Admin</h2>
+      <div class="card" id="admin-update"><h3>Update the server</h3>
+        <p class="muted small" style="margin-top:0">Pulls the latest code from git, rebuilds and restarts HearthKeeper. Only you can see this.</p>
+        <div class="row"><button class="primary run-update" ?disabled=${!a.ready || busy} @click=${() => this.runUpdate()}>Update the server</button>
+          <span class="grow ${a.state === 'failed' ? 'neg' : ''}" role="status">${a.ready ? label : 'Not set up yet: run "sudo make update" on the VM once to install the update service.'}</span></div>
+        ${a.tail ? html`<pre class="update-log">${a.tail}</pre>` : nothing}</div>`;
+  }
   /** This browser's own push subscription, if it has one. Never waits forever: a browser with no service worker answers null. */
   private async thisSub(): Promise<PushSubscription | null> {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) { this.canPush = false; return null; }
@@ -93,6 +116,7 @@ export class Settings extends Page {
           ${wf.map((a) => html`<div class="row"><span class="grow">${a.name}</span><input class="last4" inputmode="numeric" maxlength="4" size="4" placeholder="1234" aria-label="Last 4 digits of ${a.name}" .value=${a.last4 ?? ''} @change=${async (e: any) => { try { await api.patch(`/api/accounts/${a.id}`, { last4: e.target.value }); a.last4 = e.target.value || null; toast('Saved'); } catch (x: any) { toast(x.message ?? 'Could not save'); await this.load(); } }} /></div>`)}</div>` : nothing; })()}
       <h2>Today's digest preview</h2>
       <div class="card"><b>${this.digest?.text}</b>
-        ${this.digest?.autoCategorized.length ? html`<h2>Auto-categorized in the last day</h2>${this.digest.autoCategorized.slice(0, 12).map((a: any) => html`<div class="row"><span class="grow">${a.descriptor}</span><span class="muted">${a.category ?? ''}</span></div>`)}` : ''}</div>`;
+        ${this.digest?.autoCategorized.length ? html`<h2>Auto-categorized in the last day</h2>${this.digest.autoCategorized.slice(0, 12).map((a: any) => html`<div class="row"><span class="grow">${a.descriptor}</span><span class="muted">${a.category ?? ''}</span></div>`)}` : ''}</div>
+      ${this.adminSection()}`;
   }
 }

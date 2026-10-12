@@ -2,6 +2,9 @@
  * API server for the browser e2e suite: demo data, dev auth, and a /__e2e/reset route that restores the pristine demo state.
  * Started by web-test-runner.config.mjs. Never part of the production build.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openDb, type DB } from '../src/core/db.js';
 import { buildApp } from '../src/server/app.js';
 import { seedDemo } from '../src/seed/demo.js';
@@ -23,9 +26,16 @@ reset(db);
 const auth = { mode: 'dev' as 'dev' | 'google', allowlist: ['me@example.com'], googleClientId: 'e2e-client-id.apps.googleusercontent.com', sessionSecret: 'e2e-secret' };
 // fake Google: 'good-token' is an allowed user, 'stranger-token' is a valid Google user who is not on the allowlist
 const verifyIdToken = async (t: string) => (t === 'good-token' ? 'me@example.com' : t === 'stranger-token' ? 'stranger@example.com' : null);
-const app = buildApp(db, { auth, verifyIdToken });
+const dir = mkdtempSync(join(tmpdir(), 'hk-e2e-admin-'));
+const admin = { emails: ['dev'], requestFile: join(dir, 'update.request'), logFile: join(dir, 'update.log'), unitFile: join(dir, 'unit') };
+const resetAdmin = () => { admin.emails = ['dev']; rmSync(admin.requestFile, { force: true }); rmSync(admin.logFile, { force: true }); writeFileSync(admin.unitFile, ''); };
+resetAdmin();
+const app = buildApp(db, { auth, verifyIdToken, admin });
+// admin update: choose who is an admin / whether the server is set up, and stand in for the root systemd unit by writing its log (and consuming the request)
+app.post('/__e2e/admin', async (req) => { const b = req.body as { emails?: string[]; ready?: boolean }; if (b.emails) admin.emails = b.emails; if (b.ready === false) rmSync(admin.unitFile, { force: true }); return { ok: true }; });
+app.post('/__e2e/admin-log', async (req) => { const b = req.body as { text: string; consume?: boolean }; writeFileSync(admin.logFile, b.text); if (b.consume) rmSync(admin.requestFile, { force: true }); return { ok: true }; });
 app.post('/__e2e/auth-mode', async (req) => { auth.mode = (req.body as { mode: 'dev' | 'google' }).mode; return { ok: true, mode: auth.mode }; });
-app.post('/__e2e/reset', async () => { auth.mode = 'dev'; reset(db); return { ok: true }; });
+app.post('/__e2e/reset', async () => { auth.mode = 'dev'; resetAdmin(); reset(db); return { ok: true }; });
 // an imported-from-the-sheet style row with no category, then the same grandfathering the real server runs at startup
 app.post('/__e2e/seed-reserved', async () => {
   const acct = (db.prepare('SELECT id FROM accounts ORDER BY id LIMIT 1').get() as { id: number }).id;

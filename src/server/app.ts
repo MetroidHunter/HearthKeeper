@@ -1,3 +1,4 @@
+import { isAdmin, requestUpdate, updateStatus, type AdminConfig } from '../ops/updater.js';
 import { listWeekly, weeksOfMonth, createWeekly, updateWeekly, deleteWeekly, setWeeklyFavorite } from '../core/weekly.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { DB } from '../core/db.js';
@@ -43,7 +44,7 @@ export function isPublicHttps(u: string): boolean {
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 
-export interface AppOptions { auth: AuthConfig; notifier?: Notifier; verifyIdToken?: (idToken: string) => Promise<string | null>; staticDir?: string; now?: () => string }
+export interface AppOptions { auth: AuthConfig; notifier?: Notifier; verifyIdToken?: (idToken: string) => Promise<string | null>; staticDir?: string; now?: () => string; admin?: AdminConfig }
 
 export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 }); // 1 MB default; only the CSV import routes (behind auth) get more
@@ -264,6 +265,16 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/transactions/:id/item-splits', async (req: any) => proposeItemSplits(db, Number(req.params.id)));
   app.get('/api/transactions/:id/history', async (req: any) => db.prepare("SELECT id, action, before_json, after_json, actor, at FROM audit_log WHERE entity IN ('transaction','transaction_splits') AND entity_id=? ORDER BY id DESC").all(String(req.params.id)));
   app.get('/api/audit', async (req: any) => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?').all(Number(req.query.limit ?? 200)));
+
+  /* ---------- admin: update the server (only for HK_ADMIN_EMAILS; see src/ops/updater.ts) ---------- */
+  app.get('/api/admin/update', async (req: any) => (isAdmin(opts.admin, req.user) ? updateStatus(opts.admin!) : { admin: false }));
+  app.post('/api/admin/update', async (req: any, reply) => {
+    if (!isAdmin(opts.admin, req.user)) return reply.code(403).send({ error: 'admin only' });
+    const err = requestUpdate(opts.admin!, actor(req));
+    if (err) return reply.code(409).send({ error: err });
+    audit(db, 'admin', 'server', 'update_requested', undefined, undefined, actor(req));
+    return { ok: true };
+  });
 
   /* ---------- rules & merchants ---------- */
   app.get('/api/rules', async () => db.prepare('SELECT id, enabled, priority, match_json, action_json, mode, origin, hit_count, last_hit_at, notes FROM rules ORDER BY priority, id').all());

@@ -347,3 +347,5 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 .bsearch { width:100%; margin:var(--space-3) 0; }
 .adddlg-row { display:flex; gap:var(--space-2); align-items:center; } .adddlg-row > * { min-width:0; } .adddlg-row hk-category-select { flex:1 1 0; min-width:0; } .adddlg-row select { flex:0 1 40%; min-width:0; } .addamt { width:7rem; flex:0 0 auto; }
 @media (max-width:640px) { .adddlg-row { flex-wrap:wrap; } .adddlg-row .grow, .adddlg-row hk-category-select, .adddlg-row select { flex:1 1 100%; } .addamt { flex:1 1 100%; width:100%; } }
+.update-log { margin:var(--space-3) 0 0; padding:var(--space-3); max-height:240px; overflow:auto; background:var(--chip); border-radius:8px; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+#admin-update .row { align-items:flex-start; } @media (max-width:640px) { #admin-update .run-update { flex:1 1 100%; min-height:44px; } }

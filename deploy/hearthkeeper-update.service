@@ -1,0 +1,9 @@
+[Unit]
+Description=HearthKeeper update (sudo make update)
+
+[Service]
+Type=oneshot
+# @REPO@ is replaced with the checkout this was installed from
+WorkingDirectory=@REPO@
+ExecStart=/bin/bash @REPO@/deploy/run-update.sh @REPO@
+TimeoutStartSec=1800

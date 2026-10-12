@@ -138,7 +138,11 @@ bootstrap: ## [box, sudo] install or update everything
 	sed "s/hearth\.example\.com/$$HK_DOMAIN/g" deploy/Caddyfile > /etc/caddy/Caddyfile
 	caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 	install -m 0644 deploy/hearthkeeper.service /etc/systemd/system/hearthkeeper.service
+	# one-button updates from Settings: the app drops a request file, this root-owned path unit runs `make update` in its own unit (it must outlive the app restart below)
+	install -m 0644 deploy/hearthkeeper-update.path /etc/systemd/system/hearthkeeper-update.path
+	sed "s#@REPO@#$$SRC_DIR#g" deploy/hearthkeeper-update.service > /etc/systemd/system/hearthkeeper-update.service
 	systemctl daemon-reload
+	systemctl enable --now hearthkeeper-update.path >/dev/null
 	systemctl enable --now hearthkeeper.service >/dev/null
 	systemctl restart hearthkeeper.service
 	systemctl reload-or-restart caddy

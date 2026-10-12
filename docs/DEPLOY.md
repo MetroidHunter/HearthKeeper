@@ -28,3 +28,11 @@ Snapshots are made with `npm run hk -- snapshot --out <dir>` (check them with `n
 - **The gap.** Anything between your spreadsheet export and the day the webhook starts is brought in with the bank CSV import.
 - **Backups** are GCP disk snapshots (attach a daily schedule to the VM disk). There is no app-level backup job.
 - **Privacy.** A snapshot holds your whole financial history plus ingest secrets and push keys. Delete local copies when done.
+
+## One-button updates (Settings > Admin)
+
+The admin (`HK_ADMIN_EMAILS`, default `bksepulv@gmail.com`) sees **Update the server** in Settings. It does what `sudo make update` does, without the web app ever holding root: the app (unprivileged, `NoNewPrivileges`) only writes `/var/lib/hearthkeeper/update.request`; the root-owned `hearthkeeper-update.path` unit sees it and runs `deploy/run-update.sh` as `hearthkeeper-update.service`, a separate unit that survives the app restart. The run is logged to `/var/log/hearthkeeper-update.log` between `== update started` and `== update finished` markers, which Settings shows.
+
+- **First time:** run `sudo make update` (or `sudo make bootstrap`) on the VM once; that installs the units. Until then the button is disabled and says so.
+- **Failures** (for example uncommitted changes in the checkout) appear in Settings with the log tail; the full log is the file above.
+- It pulls whatever branch the checkout tracks, with `git pull --ff-only`.

@@ -22,7 +22,10 @@ const app = buildApp(db, {
   notifier,
   auth: { mode, allowlist: (process.env.HK_ALLOWED_EMAILS ?? '').split(',').map((s) => s.trim()).filter(Boolean), googleClientId: process.env.HK_GOOGLE_CLIENT_ID, sessionSecret: process.env.HK_SESSION_SECRET ?? randomBytes(32).toString('hex') },
   staticDir: existsSync(staticDir) ? staticDir : undefined,
+  // one-button server update: the app only drops a request file; a root-owned systemd path unit does the work (deploy/hearthkeeper-update.*)
+  admin: { emails: (process.env.HK_ADMIN_EMAILS ?? 'bksepulv@gmail.com').split(',').map((s) => s.trim()).filter(Boolean), requestFile: `${dataDir}/update.request`, logFile: process.env.HK_UPDATE_LOG ?? '/var/log/hearthkeeper-update.log', unitFile: '/etc/systemd/system/hearthkeeper-update.path' },
 });
 startScheduler(db, notifier);
+
 const port = Number(process.env.PORT ?? 8080);
 app.listen({ port, host: process.env.HOST ?? '127.0.0.1' }).then(() => console.log(`HearthKeeper listening on :${port} (auth=${mode})`));
