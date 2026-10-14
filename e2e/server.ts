@@ -53,6 +53,12 @@ app.post('/__e2e/push-device', async (req) => {
   db.prepare('INSERT OR REPLACE INTO push_subscriptions(user_id, endpoint, p256dh, auth, user_agent) VALUES (?,?,?,?,?)').run(uid, b.endpoint, 'k', 'a', b.ua);
   return { ok: true };
 });
+// a pending alert (the real-time Chase/Wells Fargo kind) on a named account, which only a bank file can post
+app.post('/__e2e/provisional', async (req) => {
+  const b = req.body as { account: string; date: string; cents: number; descriptor: string };
+  const acct = (db.prepare('SELECT id FROM accounts WHERE name=?').get(b.account) as { id: number }).id;
+  return { id: createTransaction(db, { accountId: acct, occurredOn: b.date, amountCents: b.cents, descriptor: b.descriptor, status: 'provisional', authorizedAt: `${b.date}T18:00:00Z` }) };
+});
 const port = Number(process.env.E2E_API_PORT ?? 8765);
 await app.listen({ port, host: '127.0.0.1' });
 console.log(`E2E_READY ${port}`);

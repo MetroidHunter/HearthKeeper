@@ -120,6 +120,7 @@ export function commitImport(db: DB, institution: string, csv: string, spec?: Pr
     const cleaned = dates.length ? dedupeAgainstHistory(db, { from: dates[0], to: dates[dates.length - 1] }) : { duplicates: 0 }; // and tidy any row an earlier import put on top of history
     const pairs = pairTransfers(db);
     db.prepare("UPDATE accounts SET last_synced_at=datetime('now') WHERE id=?").run(accountId);
+    markStale(db); // the new file may show some pending alerts are overdue
     audit(db, 'import', prof.id, 'commit', undefined, { institution, imported: fresh.length, already });
     // Amazon / Venmo / PayPal charges need a note: flag them now (and match any notes already received), not whenever the 10-minute timer next runs
     const nm = runNoteMatcher(db);
@@ -195,11 +196,25 @@ export function supersedeProvisional(db: DB, provId: number, postedId: number): 
   db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(provId);
 }
 
-/** Provisionals with no posted match after N days become stale and show up in the Inbox. */
-export function markStale(db: DB, today: string, days = 7): number {
-  const rows = db.prepare("SELECT id, occurred_on FROM transactions WHERE status='provisional' AND superseded_by IS NULL AND greenlight_ref IS NULL").all() as any[];
+/**
+ * How far the bank's own files say this account has posted: the latest posted date among rows that came from an upload (alerts and hand-entered rows carry no
+ * fingerprint, so they are not uploads). Null when nothing has ever been uploaded for the account.
+ */
+export function uploadFrontier(db: DB, accountId: number): string | null {
+  return (db.prepare("SELECT MAX(COALESCE(posted_on, occurred_on)) d FROM transactions WHERE account_id=? AND status='posted' AND fingerprint IS NOT NULL").get(accountId) as { d: string | null }).d;
+}
+
+/**
+ * "Never posted" is decided by the bank files, not the calendar: a pending alert is overdue only once an upload for the SAME account has posted something later than the
+ * alert's date and still does not contain it. An alert from 10/02 is just pending while the last upload ends before 10/02 (or none exists), however long ago that was.
+ * Runs after every import and on the housekeeping timer; it also puts a charge back to pending when no upload shows it is overdue. Returns how many became "never posted".
+ */
+export function markStale(db: DB): number {
+  const frontier = new Map<number, string | null>(); const front = (a: number) => (frontier.has(a) ? frontier.get(a)! : (frontier.set(a, uploadFrontier(db, a)), frontier.get(a)!));
+  const overdue = (r: { account_id: number; occurred_on: string }) => { const f = front(r.account_id); return f !== null && r.occurred_on < f; };
   let n = 0;
-  for (const r of rows) if (daysBetween(r.occurred_on, today) > days) { db.prepare("UPDATE transactions SET status='stale' WHERE id=?").run(r.id); n++; }
+  for (const r of db.prepare("SELECT id, account_id, occurred_on FROM transactions WHERE status='provisional' AND superseded_by IS NULL AND greenlight_ref IS NULL").all() as any[]) if (overdue(r)) { db.prepare("UPDATE transactions SET status='stale' WHERE id=?").run(r.id); n++; }
+  for (const r of db.prepare("SELECT id, account_id, occurred_on FROM transactions WHERE status='stale' AND kind!='ignored' AND superseded_by IS NULL AND greenlight_ref IS NULL").all() as any[]) if (!overdue(r)) db.prepare("UPDATE transactions SET status='provisional' WHERE id=?").run(r.id);
   return n;
 }
 

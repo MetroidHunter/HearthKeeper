@@ -42,7 +42,8 @@ describe('months overview (the month-by-month checklist)', () => {
     const h = seedHousehold();
     const a = spend(h, h.chase, '2026-09-05', -500, 'NOTE ME', 'Groceries'); h.db.prepare("UPDATE transactions SET note_state='needs_note' WHERE id=?").run(a);
     const f = spend(h, h.chase, '2026-09-06', -500, 'FLAG ME', 'Groceries'); h.db.prepare('UPDATE transactions SET flagged=1 WHERE id=?').run(f);
-    const p = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-09-07', amountCents: -800, descriptor: 'PENDING', status: 'provisional' }); markStale(h.db, '2026-10-04');
+    const p = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-09-07', amountCents: -800, descriptor: 'PENDING', status: 'provisional' });
+    const cover = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-09-20', postedOn: '2026-09-20', amountCents: -100, descriptor: 'BANK FILE ROW', fingerprint: 'cover-1' }); setSplits(h.db, cover, [{ categoryId: h.cats['Groceries'], amountCents: -100 }], 'user'); markStale(h.db); // the Chase file runs to 9/20 and does not have the 9/07 charge
     spend(h, h.chase, '2026-09-08', -900, 'TWIN'); spend(h, h.chase, '2026-09-08', -900, 'TWIN'); // identical and unconfirmed: possibly the same charge twice (confirming a row accepts it)
     let rows = monthsOverview(h.db, '2026-10-04');
     expect(['note', 'flag', 'stale', 'dupes'].map((k) => item(rows, '2026-09', k).count)).toEqual([1, 1, 1, 1]);

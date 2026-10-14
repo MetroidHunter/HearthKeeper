@@ -332,7 +332,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/imports/commit', BIG, async (req) => { const b = rec(req.body); return commitImport(db, b.institution, b.csv, b.spec, { accountId: b.accountId, filename: b.filename }); });
   app.post('/api/imports/notes', BIG, async (req) => { const b = rec(req.body); const n = importNotesCsv(db, b.csv, b.source ?? 'amazon'); return { ...n, ...runNoteMatcher(db) }; });
   app.get('/api/coverage', async () => coverage(db, now()));
-  app.post('/api/maintenance/stale', async () => ({ stale: markStale(db, now()) }));
+  app.post('/api/maintenance/stale', async () => ({ stale: markStale(db) }));
 
   /* ---------- migration review (design D32, §18.4) ---------- */
   app.get('/api/migration', async () => { const items = worksheetItems(db); return { report: loadReport(db), worksheet: items, total: items.reduce((a, i) => a + i.amountCents, 0) }; });

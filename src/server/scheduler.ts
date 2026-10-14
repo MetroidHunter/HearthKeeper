@@ -11,8 +11,7 @@ import type { Notifier } from '../notify/notifier.js';
 export function startScheduler(db: DB, notifier?: Notifier, onAlert: (kind: string, detail: unknown) => void = (k, d) => console.warn('[alert]', k, JSON.stringify(d))) {
   const tick = async () => {
     try {
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-      markStale(db, today);
+      markStale(db);
       runNoteMatcher(db);
       const silent = silentTokens(db);
       if (silent.length) onAlert('silence', silent);

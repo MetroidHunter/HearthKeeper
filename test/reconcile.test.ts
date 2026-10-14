@@ -8,6 +8,8 @@ import { categoryBalance } from '../src/core/balance.js';
 
 const HDR = 'Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n';
 const spec = (csv: string) => { const m = suggestMapping(parseCsv(csv)); return { columnMap: m.columnMap, dateFormat: m.dateFormat, signRule: m.signRule, skipRows: 0 }; };
+/** A row from a bank file (it has a fingerprint) posted on `date`: the upload now reaches that far, so older pending alerts that are not in it are overdue. */
+const covered = (h: any, date: string) => createTransaction(h.db, { accountId: h.chase, occurredOn: date, postedOn: date, amountCents: -123, descriptor: 'BANK FILE ROW', fingerprint: `cover-${date}` });
 const prov = (h: any, date: string, cents: number, desc: string) => createTransaction(h.db, { accountId: h.chase, occurredOn: date, amountCents: cents, descriptor: desc, status: 'provisional', authorizedAt: `${date}T18:00:00Z` });
 
 describe('provisional -> posted reconciliation (review findings)', () => {
@@ -15,7 +17,7 @@ describe('provisional -> posted reconciliation (review findings)', () => {
     const h = seedHousehold();
     const p = prov(h, '2026-10-01', -2500, 'STARBUCKS'); classify(h.db, p);
     setSplits(h.db, p, [{ categoryId: h.cats['Eating Out'], amountCents: -2500 }], 'user');
-    expect(markStale(h.db, '2026-10-10')).toBe(1);
+    covered(h, '2026-10-05'); expect(markStale(h.db)).toBe(1);
     const csv = HDR + '10/03/2026,10/04/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n';
     const r = commitImport(h.db, 'Chase', csv, spec(csv));
     expect(r.supersededProvisionals).toBe(1);
@@ -65,21 +67,21 @@ describe('provisional -> posted reconciliation (review findings)', () => {
 describe('a pending charge that the bank posts months later', () => {
   it('a charge hidden as "never posted" counts again when the bank file finally posts it; other hidden rows stay hidden', () => {
     const h = seedHousehold();
-    const p = prov(h, '2026-07-01', -2500, 'STARBUCKS'); markStale(h.db, '2026-10-06'); ignoreTransaction(h.db, p, 'pending charge never posted', 'user');
+    const p = prov(h, '2026-07-01', -2500, 'STARBUCKS'); covered(h, '2026-07-20'); markStale(h.db); ignoreTransaction(h.db, p, 'pending charge never posted', 'user');
     const q = prov(h, '2026-07-01', -1500, 'PAYPAL TRANSFER'); ignoreTransaction(h.db, q, 'rule: own transfer');
     const csv = HDR + '07/03/2026,07/04/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n07/03/2026,07/04/2026,PAYPAL TRANSFER,Food,Sale,-15.00,\n';
     expect(commitImport(h.db, 'Chase', csv, spec(csv)).supersededProvisionals).toBe(2);
-    const kinds = h.db.prepare("SELECT descriptor_raw d, kind, review_state r FROM transactions WHERE status='posted' ORDER BY id").all();
+    const kinds = h.db.prepare("SELECT descriptor_raw d, kind, review_state r FROM transactions WHERE status='posted' AND descriptor_raw!='BANK FILE ROW' ORDER BY id").all();
     expect(kinds).toEqual([{ d: 'STARBUCKS #12 SEATTLE WA', kind: 'spending', r: 'needs_category' }, { d: 'PAYPAL TRANSFER', kind: 'ignored', r: 'not_needed' }]);
   });
   it('a stale pending charge is matched by date, not by when the file is uploaded: three months later is the same as a week later, and a posting date more than 5 days off is a separate charge', () => {
     const h = seedHousehold();
-    const p = prov(h, '2026-07-01', -2500, 'STARBUCKS'); markStale(h.db, '2026-10-06');
+    const p = prov(h, '2026-07-01', -2500, 'STARBUCKS'); covered(h, '2026-07-20'); markStale(h.db);
     setSplits(h.db, p, [{ categoryId: h.cats['Eating Out'], amountCents: -2500 }], 'user');
     const near = HDR + '07/03/2026,07/04/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n';
     expect(commitImport(h.db, 'Chase', near, spec(near)).supersededProvisionals).toBe(1);
-    expect(h.db.prepare("SELECT category_id c FROM transaction_splits WHERE transaction_id=(SELECT id FROM transactions WHERE status='posted')").get()).toEqual({ c: h.cats['Eating Out'] });
-    const h2 = seedHousehold(); prov(h2, '2026-07-01', -2500, 'STARBUCKS'); markStale(h2.db, '2026-10-06');
+    expect(h.db.prepare("SELECT category_id c FROM transaction_splits WHERE transaction_id=(SELECT id FROM transactions WHERE status='posted' AND descriptor_raw LIKE 'STARBUCKS%')").get()).toEqual({ c: h.cats['Eating Out'] });
+    const h2 = seedHousehold(); prov(h2, '2026-07-01', -2500, 'STARBUCKS');
     const far = HDR + '07/09/2026,07/10/2026,STARBUCKS #12 SEATTLE WA,Food,Sale,-25.00,\n';
     expect(commitImport(h2.db, 'Chase', far, spec(far)).supersededProvisionals).toBe(0); // the stale row stays, flagged "never posted", until you hide it
     expect(h2.db.prepare("SELECT status, COUNT(*) c FROM transactions GROUP BY status ORDER BY status").all()).toEqual([{ status: 'posted', c: 1 }, { status: 'stale', c: 1 }]);
