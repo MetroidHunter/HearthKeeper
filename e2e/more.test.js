@@ -83,8 +83,7 @@ describe('Months checklist and dashboard', () => {
     await waitFor(() => /#\/transactions/.test(location.hash), 'transactions page');
     await waitFor(() => $('.needs-chip'), 'filter chip');
     expect(text($('.needs-chip'))).to.match(/need a category/);
-    await waitFor(() => /of \d+/.test(text($('.pager'))), 'pager');
-    expect(text($('.pager'))).to.match(new RegExp(`of ${want}\\b`));
+    await waitFor(() => new RegExp(`of ${want}\\b`).test(text($('.pager'))), `the pager to show all ${want} (not the empty "of 0" it starts with)`);
     byText('button', /Back to Months/).click();
     await waitFor(() => $('details.month'), 'back on Months');
   });
