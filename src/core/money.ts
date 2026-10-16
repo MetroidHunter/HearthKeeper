@@ -13,9 +13,10 @@ export function parseCents(input: string | number): number {
   return neg ? -cents : cents;
 }
 
+/** Whole cents only: legacy budgets and splits carry fractional cents (400/12), so a balance can be 4919.77 "cents". It is rounded, never printed as text. */
 export function formatCents(c: number): string {
-  const sign = c < 0 ? '-' : '';
-  const a = Math.abs(c);
+  const a = Math.round(Math.abs(c));
+  const sign = c < 0 && a > 0 ? '-' : '';
   return `${sign}$${Math.floor(a / 100).toLocaleString('en-US')}.${String(a % 100).padStart(2, '0')}`;
 }
 

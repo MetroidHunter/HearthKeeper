@@ -59,6 +59,13 @@ app.post('/__e2e/provisional', async (req) => {
   const acct = (db.prepare('SELECT id FROM accounts WHERE name=?').get(b.account) as { id: number }).id;
   return { id: createTransaction(db, { accountId: acct, occurredOn: b.date, amountCents: b.cents, descriptor: b.descriptor, status: 'provisional', authorizedAt: `${b.date}T18:00:00Z` }) };
 });
+// an over-budget heads-up exactly as an older version stored it (an unrounded amount in the text)
+app.post('/__e2e/notice', async (req) => {
+  const b = req.body as { message: string };
+  const cat = (db.prepare("SELECT id FROM categories WHERE kind='expense' ORDER BY id LIMIT 1").get() as { id: number }).id;
+  db.prepare("INSERT INTO notices(kind, category_id, txn_id, message) VALUES ('over_budget', ?, NULL, ?)").run(cat, b.message);
+  return { ok: true };
+});
 const port = Number(process.env.E2E_API_PORT ?? 8765);
 await app.listen({ port, host: '127.0.0.1' });
 console.log(`E2E_READY ${port}`);

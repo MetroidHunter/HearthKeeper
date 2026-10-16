@@ -23,5 +23,7 @@ export function noteOverage(db: DB, txnId: number, categoryId: number): void {
     .run(categoryId, txnId, `${c.name} went over budget: ${formatCents(after)} left in it after ${t.name} (${formatCents(-t.a)}) was filed there automatically.`);
 }
 
-export const openNotices = (db: DB) => db.prepare('SELECT id, kind, category_id, txn_id, message, created_at FROM notices WHERE dismissed_at IS NULL ORDER BY id DESC LIMIT 20').all();
+/** Notices written before amounts were rounded hold things like "-$49.19.773092": dollars, then cents with a fraction. Read them as the cents they were and round. */
+const repair = (message: string) => message.replace(/(-?)\$([\d,]+)\.(\d{1,2})\.(\d+)/g, (_m, neg: string, dollars: string, c: string, frac: string) => formatCents((neg ? -1 : 1) * (Number(dollars.replace(/,/g, '')) * 100 + Number(`${c}.${frac}`))));
+export const openNotices = (db: DB) => (db.prepare('SELECT id, kind, category_id, txn_id, message, created_at FROM notices WHERE dismissed_at IS NULL ORDER BY id DESC LIMIT 20').all() as { message: string }[]).map((n) => ({ ...n, message: repair(n.message) }));
 export const dismissNotice = (db: DB, id: number) => db.prepare("UPDATE notices SET dismissed_at=datetime('now') WHERE id=? AND dismissed_at IS NULL").run(id).changes > 0;
