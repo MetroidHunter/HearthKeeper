@@ -26,12 +26,17 @@ describe('the over-budget heads-up', () => {
     setSplits(h.db, id, [{ categoryId: cat, amountCents: -8391 }], 'rule');
     noteOverage(h.db, id, cat);
     const msg = (openNotices(h.db) as any[])[0].message as string;
-    expect(msg).toBe('Makeup went over budget: -$33.91 left in it after SEPHORA SOUTHCENTER ($83.91) was filed there automatically.');
+    expect(msg).toBe('Makeup is $33.91 over budget after SEPHORA SOUTHCENTER ($83.91).');
   });
-  it('a notice already stored with a garbled amount is shown repaired', () => {
+  it('a notice already stored with a garbled amount, in the old long wording, is shown repaired and shortened', () => {
     const h = seedHousehold();
     const cat = h.cats['Groceries'];
     h.db.prepare("INSERT INTO notices(kind, category_id, txn_id, message) VALUES ('over_budget', ?, NULL, ?)").run(cat, 'Makeup went over budget: -$49.19.773092000046745 left in it after SEPHORA SOUTHCENTER ($83.91) was filed there automatically.');
-    expect((openNotices(h.db) as any[])[0].message).toBe('Makeup went over budget: -$49.20 left in it after SEPHORA SOUTHCENTER ($83.91) was filed there automatically.');
+    expect((openNotices(h.db) as any[])[0].message).toBe('Makeup is $49.20 over budget after SEPHORA SOUTHCENTER ($83.91).'); // and in the shorter wording
+  });
+  it('a notice stored in the old long wording with clean amounts is shortened too', () => {
+    const h = seedHousehold();
+    h.db.prepare("INSERT INTO notices(kind, category_id, txn_id, message) VALUES ('over_budget', ?, NULL, ?)").run(h.cats['Groceries'], 'Eating Out went over budget: -$40.00 left in it after BIGSHOP 1 ($50.00) was filed there automatically.');
+    expect((openNotices(h.db) as any[])[0].message).toBe('Eating Out is $40.00 over budget after BIGSHOP 1 ($50.00).');
   });
 });

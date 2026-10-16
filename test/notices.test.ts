@@ -21,7 +21,7 @@ describe('heads-up when an automatic categorization pushes an envelope over budg
     const n = openNotices(h.db) as any[];
     expect(n).toHaveLength(1);
     expect(n[0]).toMatchObject({ kind: 'over_budget', category_id: h.cats['Eating Out'], txn_id: crossing });
-    expect(n[0].message).toMatch(/^Eating Out went over budget: -\$40\.00 left in it after BIGSHOP 1 \(\$50\.00\) was filed there automatically\.$/);
+    expect(n[0].message).toBe('Eating Out is $40.00 over budget after BIGSHOP 1 ($50.00).');
     spend(2000);                               // already over: nothing new to say while this one is open
     expect(openNotices(h.db)).toHaveLength(1);
     expect(inbox(h.db, '2026-10-06').notices).toHaveLength(1);  // Home gets it with the inbox

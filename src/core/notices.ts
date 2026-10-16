@@ -20,10 +20,15 @@ export function noteOverage(db: DB, txnId: number, categoryId: number): void {
   if (before < -EPS || after >= -EPS) return; // only the payment that crossed the line
   if (db.prepare("SELECT 1 FROM notices WHERE kind='over_budget' AND category_id=? AND dismissed_at IS NULL").get(categoryId)) return;
   db.prepare("INSERT INTO notices(kind, category_id, txn_id, message) VALUES ('over_budget', ?, ?, ?)")
-    .run(categoryId, txnId, `${c.name} went over budget: ${formatCents(after)} left in it after ${t.name} (${formatCents(-t.a)}) was filed there automatically.`);
+    .run(categoryId, txnId, `${c.name} is ${formatCents(-after)} over budget after ${t.name} (${formatCents(-t.a)}).`);
 }
 
-/** Notices written before amounts were rounded hold things like "-$49.19.773092": dollars, then cents with a fraction. Read them as the cents they were and round. */
-const repair = (message: string) => message.replace(/(-?)\$([\d,]+)\.(\d{1,2})\.(\d+)/g, (_m, neg: string, dollars: string, c: string, frac: string) => formatCents((neg ? -1 : 1) * (Number(dollars.replace(/,/g, '')) * 100 + Number(`${c}.${frac}`))));
+/**
+ * Notices written by older versions: amounts with unrounded cents ("-$49.19.773092": dollars, then cents with a fraction) are read as the cents they were and rounded,
+ * and the old long wording ("went over budget: -$40.00 left in it after X ($50.00) was filed there automatically.") becomes the short one.
+ */
+const repair = (message: string) => message
+  .replace(/(-?)\$([\d,]+)\.(\d{1,2})\.(\d+)/g, (_m, neg: string, dollars: string, c: string, frac: string) => formatCents((neg ? -1 : 1) * (Number(dollars.replace(/,/g, '')) * 100 + Number(`${c}.${frac}`))))
+  .replace(/^(.+) went over budget: -?(\$[\d,]+\.\d{2}) left in it after (.+) \((\$[\d,]+\.\d{2})\) was filed there automatically\.$/, '$1 is $2 over budget after $3 ($4).');
 export const openNotices = (db: DB) => (db.prepare('SELECT id, kind, category_id, txn_id, message, created_at FROM notices WHERE dismissed_at IS NULL ORDER BY id DESC LIMIT 20').all() as { message: string }[]).map((n) => ({ ...n, message: repair(n.message) }));
 export const dismissNotice = (db: DB, id: number) => db.prepare("UPDATE notices SET dismissed_at=datetime('now') WHERE id=? AND dismissed_at IS NULL").run(id).changes > 0;

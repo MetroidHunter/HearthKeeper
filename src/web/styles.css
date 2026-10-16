@@ -365,3 +365,5 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 .impact-tick { position:absolute; top:0; bottom:0; width:2px; background:var(--ink); opacity:.7; }
 @media (prefers-reduced-motion:reduce) { .impact-bar .seg-new { transition:none; } }
 .impact-bar-head .keys { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; } .chip-key { display:inline-flex; align-items:center; gap:4px; font-weight:600; } .chip-key .dot { width:8px; height:8px; border-radius:99px; background:var(--muted); } .chip-key .dot.spent { background:var(--brand); } .chip-key .dot.new { background:var(--warn); } .chip-key .dot.over { background:var(--bad); } .chip-key .dot.freed { background:var(--brand); opacity:.5; }
+/* heads-up on Home: on a phone the message gets the full width and the two actions sit on their own line, right-aligned */
+@media (max-width:640px) { .notice .row { row-gap:var(--space-2); } .notice .row > .grow { flex:1 1 calc(100% - 44px); } .notice .row > a { margin-left:auto; } }

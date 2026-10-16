@@ -210,8 +210,9 @@ describe('Home heads-up for a budget pushed over by an automatic categorization'
     await api('/api/transactions', { method: 'POST', body: { accountId: chase, descriptor: 'CHIPOTLE 7777', amountCents: -5_000_000 } });
     await mount('/');
     const n = await waitFor(() => $('.notice[data-notice]'), 'the heads-up');
-    expect(text(n)).to.match(/Eating Out went over budget.*left in it after CHIPOTLE 7777 \(\$50,000\.00\) was filed there automatically\./);
-    expect(text(n)).to.match(/No action needed/);
+    expect(text(n)).to.match(/Eating Out is \$[\d,.]+ over budget after CHIPOTLE 7777 \(\$50,000\.00\)\./);
+    expect(text(n), 'short and direct: no filler').to.not.match(/No action needed|filed there automatically/);
+    expect($('.dismiss-notice', n)).to.exist;
     expect($('a', n).getAttribute('href')).to.match(/^#\/categories\/\d+$/);
     byText('button', /^Dismiss$/, n).click();
     await waitFor(() => !$('.notice[data-notice]'), 'gone after dismissing');
