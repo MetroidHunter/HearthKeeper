@@ -2,7 +2,7 @@ import { html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney, fmtDate } from '../api.js';
-import { thisMonth, type Cat } from '../shared.js';
+import { thisMonth, ruleSummary, type Cat } from '../shared.js';
 import { pageHead, th, catSelect, showDialog, confirmBox } from '../ui.js';
 
 @customElement('hk-categories')
@@ -36,9 +36,9 @@ export class Categories extends Page {
   detailView() {
     const d = this.detail; const c = d.category;
     return html`<div class="row"><a href="#/categories">← Categories</a>${c.status === 'retired' && c.name.toLowerCase() !== 'needs category' ? html`<button class="unretire primary right" @click=${() => this.unretire(c)}>Unretire</button>` : nothing}</div><h1>${c.name} ${c.status === 'retired' ? html`<span class="badge">retired</span>` : nothing}</h1>
-      <div class="grid2"><div class="card"><div class="muted">Balance</div><b style="font-size:22px">${money(d.balance.total)}</b><div class="muted">transactions ${money(d.balance.splits)} · transfers ${money(d.balance.transfers)} · accrued ${money(d.balance.accrued)}</div></div>
+      <div class="grid2"><div class="card"><div class="muted">Balance</div><b style="font-size:22px">${money(d.balance.total)}</b><div class="bal-parts"><div><div class="muted small">Transactions</div><b>${money(d.balance.splits)}</b></div><div><div class="muted small">Transfers</div><b>${money(d.balance.transfers)}</b></div><div><div class="muted small">Accrued</div><b>${money(d.balance.accrued)}</b></div></div></div>
         <div class="card"><div class="muted">Budget history</div>${d.history.map((h: any) => html`<div class="row"><span>${h.effective_month}</span><span>${h.from_cents == null ? 'start' : money(h.from_cents)} → <b>${money(h.monthly_cents)}</b></span><span class="muted">${h.reason ?? ''}${h.plan_id ? ` · plan #${h.plan_id}` : ''}</span></div>`)}</div></div>
-      <h2>Rules pointing here</h2><div class="card">${d.rules.length ? d.rules.map((r: any) => html`<div>${r.notes ?? `rule #${r.id}`} <span class="badge">${r.mode}</span></div>`) : html`<span class="muted">None.</span>`}</div>
+      <h2>Rules pointing here</h2><div class="card">${d.rules.length ? d.rules.map((r: any) => html`<div class="cat-rule">${ruleSummary(r)} <span class="badge">${r.mode}</span></div>`) : html`<span class="muted">None.</span>`}</div>
       <h2>Recent transactions</h2><div class="card"><table><tbody>${d.transactions.map((t: any) => html`<tr><td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw}</td><td class="num ${t.amount_cents < 0 ? 'neg' : 'pos'}">${money(t.amount_cents)}</td></tr>`)}</tbody></table></div>`;
   }
 }

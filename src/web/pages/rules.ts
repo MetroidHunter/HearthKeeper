@@ -3,7 +3,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api } from '../api.js';
-import { type Cat } from '../shared.js';
+import { ruleSummary, type Cat } from '../shared.js';
 import { ruleBuilder, clausesValid, matchFromClauses, type RuleClause } from '../txn.js';
 import { pageHead, th, catSelect, showDialog, promptBox, confirmBox, toast } from '../ui.js';
 
@@ -17,12 +17,7 @@ export class Rules extends Page {
   connectedCallback() { super.connectedCallback(); this.load(); }
   async load() { await this.run(async () => { [this.rules, this.cats] = await Promise.all([api.get('/api/rules'), api.get('/api/categories')]); await this.loadMerchants(); }); }
   async loadMerchants() { this.merch = await api.get(`/api/merchants?limit=${PAGE}&offset=${this.mpage * PAGE}${this.mq ? `&q=${encodeURIComponent(this.mq)}` : ''}${this.onlyNew ? '&review=nohistory' : ''}`); }
-  summary(r: any) {
-    const usd = (n: number) => `$${(n / 100).toFixed(2)}`;
-    const one = (c: any) => c.field === 'amount_abs' ? `amount ${({ eq: 'is', gte: '≥', lte: '≤', between: 'between' } as any)[c.op] ?? c.op} ${c.op === 'between' ? `${usd(c.value[0])} and ${usd(c.value[1])}` : usd(c.value)}`
-      : `${c.field} ${c.op} ${JSON.stringify(c.value)}`;
-    try { return JSON.parse(r.match_json).all_of.map((c: any) => (c.any_of ? `(${c.any_of.map(one).join(' OR ')})` : one(c))).join(' AND '); } catch { return ''; }
-  }
+  summary(r: any) { return ruleSummary(r); }
   act(r: any) { const a = JSON.parse(r.action_json); return a.type === 'categorize' ? a.category : a.type; }
   render() {
     return html`${pageHead('Rules & merchants', 'Rules are decisions you made and keep: "when the description contains X, use category Y". Merchants are only a memory of what you have chosen before; they suggest, and never decide.', 'Make a rule with "New rule", or while categorizing by ticking "Make a rule" in the confirmation dialog. When a rule and a merchant disagree, the rule wins, and both answers are offered as buttons. A merchant you keep choosing the same thing for can be turned into a rule here with "Make a rule…".')}

@@ -43,7 +43,11 @@ export class Budget extends Page {
     const d = this.data; if (!d) return html`<p class="muted">${this.err || 'Loading…'}</p>`;
     const h = d.header; const groups = new Map<string, any[]>();
     const needle = this.q.trim().toLowerCase();
-    for (const r of d.rows.filter((x: any) => !needle || x.name.toLowerCase().includes(needle) || (x.group ?? '').toLowerCase().includes(needle))) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
+    const matching = d.rows.filter((x: any) => !needle || x.name.toLowerCase().includes(needle) || (x.group ?? '').toLowerCase().includes(needle));
+    const isOver = (x: any) => x.kind === 'expense' && x.spent[0] > x.targetCents; // the same test as the red pace bar
+    const over = matching.filter(isOver);
+    if (over.length) groups.set('Over budget', over); // over-budget envelopes lead the page, out of their usual groups
+    for (const r of matching.filter((x: any) => !isOver(x))) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
     const unc = d.uncategorized;
     return html`${pageHead('Budget', 'Every envelope, grouped, with what you planned for it each month, what is left in it, and how this month is going. Money you do not spend stays in the envelope and rolls forward.', 'Click a category to see its history and transactions. Use the pencil to change a monthly amount; the old value is kept in its timeline. ☆ pins a category to Home.')}
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
