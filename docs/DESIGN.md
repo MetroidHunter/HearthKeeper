@@ -865,7 +865,7 @@ You said the priority is that Marion's and Miracle's money never lands in the wr
 
 CRUD with stable IDs, so **renaming never breaks history** (the sheet keys everything by name). Fields: name, group, kind, discretionary, cushion, start month, status.
 
-- **Add category:** name, group, start month (default current), initial monthly amount (creates the first version), discretionary or not, optional starter rule. Validation requires a start month, preventing the `historicalBudget` throw on a missing Start Date.
+- **Add category:** a dialog asking for name, group and first month (default current). It takes no money: a new category is an empty envelope with no budget version, and stays off the Budget page until a plan (or the Budget pencil) gives it one. See D88. Discretionary or not, optional starter rule. Validation requires a start month, preventing the `historicalBudget` throw on a missing Start Date.
 - **Retire category:** one action sets status `retired`, appends a `0` version effective the chosen month, hides it from pickers, and *preserves* all transactions. If the balance is non-zero, it offers a one-step **transfer of the remaining balance** to another envelope. Migration also lists categories that look retired but are unflagged (Rent, Lovesac Couch, Car Payment, Game Subs, Boiling Point [OBSERVED]).
 
 ### 12.2 Changing one category's amount (the quick path)

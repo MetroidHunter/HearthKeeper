@@ -369,3 +369,26 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 .impact-bar-head .keys { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; } .chip-key { display:inline-flex; align-items:center; gap:4px; font-weight:600; } .chip-key .dot { width:8px; height:8px; border-radius:99px; background:var(--muted); } .chip-key .dot.spent { background:var(--brand); } .chip-key .dot.new { background:var(--warn); } .chip-key .dot.over { background:var(--bad); } .chip-key .dot.freed { background:var(--brand); opacity:.5; }
 /* heads-up on Home: on a phone the message gets the full width and the two actions sit on their own line, right-aligned */
 @media (max-width:640px) { .notice .row { row-gap:var(--space-2); } .notice .row > .grow { flex:1 1 calc(100% - 44px); } .notice .row > a { margin-left:auto; } }
+
+/* Earnings: a scenario's lines read as small labelled cards on a phone, and the editor lines wrap inside the card */
+.eline { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--space-3); margin-top:var(--space-3); }
+.eline > * { min-width:0; } .eline .f { display:flex; flex-direction:column; gap:2px; font-size:13px; }
+.eline .e-person { width:6rem; } .eline .e-label { width:7rem; } .eline .gross { width:8rem; } .eline .work, .eline .tax { width:4rem; }
+.eline .e-rec { display:flex; align-items:center; gap:6px; } .eline .e-sum { margin-left:auto; }
+@media (max-width:640px) {
+  .eline { display:grid; grid-template-columns:1fr 1fr; align-items:end; padding-top:var(--space-3); border-top:1px solid var(--line); }
+  .eline .e-person, .eline .e-label, .eline .gross, .eline .work, .eline .tax { width:100%; box-sizing:border-box; }
+  .eline .f:first-of-type, .eline .e-sum, .eline .e-rec { grid-column:1 / -1; } .eline .e-sum { margin-left:0; } .eline .e-del { justify-self:end; grid-column:1 / -1; }
+  .earn-table thead { display:none; } .earn-table, .earn-table tbody { display:block; }
+  .earn-table tr { display:grid; grid-template-columns:1fr 1fr; gap:2px var(--space-3); padding:var(--space-3) 0; border-top:1px solid var(--line); }
+  .earn-table td { display:flex; justify-content:space-between; gap:var(--space-2); padding:2px 0; border:0; min-width:0; }
+  .earn-table td.el-name { grid-column:1 / -1; font-weight:600; display:block; }
+  .earn-table td[data-label]::before { content:attr(data-label); color:var(--muted); font-size:13px; }
+}
+/* Plans: the go-live diff scrolls inside its own box rather than pushing the dialog wider than the screen */
+.diff-wrap { overflow-x:auto; max-width:100%; }
+@media (max-width:640px) { .diff-table th, .diff-table td { padding-left:6px; padding-right:6px; } .diff-table td:first-child { overflow-wrap:anywhere; } }
+/* Categories: the retire / unretire dialogs */
+.retire-balance { margin:var(--space-3) 0; } .retire-balance b { font-size:20px; }
+.retire-rules { margin-top:var(--space-4); display:flex; flex-direction:column; gap:var(--space-2); } .retire-rules .cat-rule { font-size:14px; overflow-wrap:anywhere; }
+.add-error { margin:0; padding:var(--space-3); border:1px solid var(--bad); border-radius:var(--radius-sm); background:color-mix(in srgb, var(--bad) 10%, transparent); }

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { seedHousehold } from './helpers.js';
 import { categoryBalance, checkInvariants } from '../src/core/balance.js';
-import { setBudget, retireCategory } from '../src/core/categories.js';
+import { setBudget, retireCategory, retirePreview } from '../src/core/categories.js';
 import { createTransaction, setSplits, classify } from '../src/core/transactions.js';
 import { createTransfer, proposeRebalance, commitRebalance, placePool, adjustment } from '../src/core/transfers.js';
 import { processGreenlightMessage } from '../src/greenlight/engine.js';
@@ -46,8 +46,10 @@ describe('property: conservation of money (design §7.8, §17.5)', () => {
       }
       identity();
       // retiring a category moves its balance in one transfer and preserves the identity
-      retireCategory(db, h.cats['Manicure'], '2026-12', { moveBalanceTo: h.cats['Groceries'], asOf });
-      expect(categoryBalance(db, h.cats['Manicure'], asOf).total).toBe(0);
+      if (retirePreview(db, h.cats['Manicure'], '2026-12', { asOf }).canRetire) {
+        retireCategory(db, h.cats['Manicure'], '2026-12', { moveBalanceTo: h.cats['Groceries'], asOf });
+        expect(categoryBalance(db, h.cats['Manicure'], asOf).total).toBe(0);
+      } else expect(() => retireCategory(db, h.cats['Manicure'], '2026-12', { moveBalanceTo: h.cats['Groceries'], asOf })).toThrow(/cannot retire/i); // an overspent envelope stays
       expect(checkInvariants(db)).toEqual([]);
       void names;
     });

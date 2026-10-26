@@ -17,7 +17,10 @@ export function budgetPage(db: DB, today: string, periods?: [Period, Period], us
   const [a, b] = periods ?? [monthPeriod(m), monthPeriod(prevMonthKey(m))];
   const alloc = currentAllocation(db, m);
   const favs = new Set(userId ? (db.prepare('SELECT category_id FROM favorites WHERE user_id=?').all(userId) as any[]).map((r) => r.category_id) : []);
-  const cats = db.prepare("SELECT c.id, g.name grp, c.name, c.kind FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id WHERE c.status='active' ORDER BY g.sort, g.name, c.sort, c.name").all() as any[];
+  // Only envelopes that are in the plan: one with a budget set at some point, or one that has had money move through it. A freshly added category waits off the page until it is given a budget.
+  const cats = db.prepare(`SELECT c.id, g.name grp, c.name, c.kind FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id WHERE c.status='active'
+    AND (EXISTS (SELECT 1 FROM category_budget_versions v WHERE v.category_id=c.id) OR EXISTS (SELECT 1 FROM transaction_splits s WHERE s.category_id=c.id) OR EXISTS (SELECT 1 FROM envelope_transfer_legs l WHERE l.category_id=c.id))
+    ORDER BY g.sort, g.name, c.sort, c.name`).all() as any[];
   const rows: BudgetRow[] = cats.map((c) => {
     const pa = periodTotals(db, c.id, a.from, a.to), pb = periodTotals(db, c.id, b.from, b.to);
     return { id: c.id, group: c.grp, name: c.name, kind: c.kind, targetCents: alloc.byCategory[c.id] ?? 0, currentCents: categoryBalance(db, c.id, today).total,

@@ -30,8 +30,8 @@ export function clickedBackdrop(d: HTMLDialogElement, e: MouseEvent) {
 }
 
 /* ---------- dialogs: native <dialog>, shown modally, so they always sit on top of the page ---------- */
-/** `dismiss` (default true): a click outside closes it. Dialogs that ask for a decision pass false so a stray click never answers them (Esc still cancels). */
-export function showDialog<T = undefined>(body: (close: (v?: T) => void) => TemplateResult, opts: { wide?: boolean; dismiss?: boolean } = {}): Promise<T | undefined> {
+/** `dismiss` (default true): a click outside closes it. The body gets `update` to re-render itself. Dialogs that ask for a decision pass false so a stray click never answers them (Esc still cancels). */
+export function showDialog<T = undefined>(body: (close: (v?: T) => void, update: () => void) => TemplateResult, opts: { wide?: boolean; dismiss?: boolean } = {}): Promise<T | undefined> {
   return new Promise((resolve) => {
     const d = document.createElement('dialog');
     if (opts.wide) d.classList.add('wide');
@@ -40,7 +40,8 @@ export function showDialog<T = undefined>(body: (close: (v?: T) => void) => Temp
     const close = (v?: T) => { if (done) return; done = true; d.close(); resolve(v); };
     d.addEventListener('close', () => { if (!done) { done = true; resolve(undefined); } d.remove(); });
     if (opts.dismiss !== false) d.addEventListener('click', (e) => { if (clickedBackdrop(d, e)) close(undefined); });
-    render(body(close), d);
+    const update = () => render(body(close, update), d); // a dialog whose content changes while it is open (a message, a chosen option) calls update()
+    update();
     d.showModal();
   });
 }

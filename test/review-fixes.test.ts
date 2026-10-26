@@ -38,8 +38,10 @@ describe('review fixes: rounding and retire', () => {
     setBudget(h.db, c, 10000, '2026-01', { reason: 'legacy' });
     const id = createTransaction(h.db, { accountId: h.chase, occurredOn: '2026-01-31', amountCents: -2000, descriptor: 'LATE' });
     setSplits(h.db, id, [{ categoryId: c, amountCents: -2000 }]);
+    h.db.prepare("INSERT INTO envelope_transfers(id, occurred_on, kind) VALUES (900, '2026-01-10', 'adjustment')").run();
+    h.db.prepare('INSERT INTO envelope_transfer_legs(transfer_id, category_id, amount_cents) VALUES (900, ?, 5000)').run(c); // some money in, so the envelope may retire
     const r = retireCategory(h.db, c, '2026-01', { moveBalanceTo: to, actor: 'test' });
-    expect(r.remainingCents).toBe(-2000); // the Jan-31 spend is included (old asOf was the 28th)
+    expect(r.remainingCents).toBe(3000); // the Jan-31 spend is included (old asOf was the 28th): 5000 - 2000
     expect(categoryBalanceAt(h, c)).toBe(0);
   });
   it('rebalance never proposes a fractional-cent move', () => {

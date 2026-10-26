@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { DB } from '../core/db.js';
 import { audit } from '../core/db.js';
 import { registerAuth, type AuthConfig } from './auth.js';
-import { addCategory, budgetHistory, retireCategory, unretireCategory, setBudget } from '../core/categories.js';
+import { addCategory, budgetHistory, retireCategory, retirePreview, rulesForCategory, unretireCategory, setBudget } from '../core/categories.js';
 import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod, transactionContext } from '../core/reports.js';
 import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust } from '../core/plans.js';
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
@@ -174,7 +174,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   /* ---------- categories & budgets ---------- */
   app.get('/api/categories', async () => { // monthly_cents: the budget in force this month, so a cushion ("above the budget") can be shown as the balance an envelope keeps
     const month = now().slice(0, 7);
-    return (db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all() as any[]).map((c) => ({ ...c, monthly_cents: monthlyAmount(getVersions(db, c.id), month) }));
+    const today = now(); // balance_cents: what is in the envelope today (null for reference categories, which hold no money)
+    return (db.prepare('SELECT c.*, g.name group_name FROM categories c LEFT JOIN category_groups g ON g.id=c.group_id ORDER BY g.name, c.name').all() as any[]).map((c) => ({ ...c, monthly_cents: monthlyAmount(getVersions(db, c.id), month), balance_cents: categoryBalance(db, c.id, today).total }));
   });
   app.post('/api/categories', async (req) => ({ id: addCategory(db, rec(req.body) as any, actor(req)) }));
   app.patch('/api/categories/:id', async (req: any) => {
@@ -190,11 +191,11 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.get('/api/categories/:id', async (req: any) => {
     const id = Number(req.params.id);
     return { category: db.prepare('SELECT * FROM categories WHERE id=?').get(id), balance: categoryBalance(db, id, now()), history: budgetHistory(db, id),
-      rules: db.prepare("SELECT * FROM rules WHERE action_json LIKE ?").all(`%"${(db.prepare('SELECT name FROM categories WHERE id=?').get(id) as any)?.name}"%`),
+      rules: rulesForCategory(db, id), retire: retirePreview(db, id, now().slice(0, 7), { today: now() }),
       transactions: db.prepare('SELECT t.* FROM transactions t JOIN transaction_splits s ON s.transaction_id=t.id WHERE s.category_id=? ORDER BY t.occurred_on DESC LIMIT 100').all(id) };
   });
-  app.post('/api/categories/:id/retire', async (req: any) => { const b = rec(req.body); return retireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { moveBalanceTo: b.moveBalanceTo, actor: actor(req) }); });
-  app.post('/api/categories/:id/unretire', async (req: any) => { const b = rec(req.body); return unretireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { monthlyCents: b.monthlyCents, actor: actor(req) }); });
+  app.post('/api/categories/:id/retire', async (req: any) => { const b = rec(req.body); return retireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { moveBalanceTo: b.moveBalanceTo, disableRules: b.disableRules === true, today: now(), actor: actor(req) }); });
+  app.post('/api/categories/:id/unretire', async (req: any) => { const b = rec(req.body); return unretireCategory(db, Number(req.params.id), b.month ?? now().slice(0, 7), { monthlyCents: b.monthlyCents, enableRules: b.enableRules === true, actor: actor(req) }); });
   app.post('/api/favorites', async (req: any) => { const b = rec(req.body); db.prepare('INSERT OR IGNORE INTO favorites(user_id, category_id) VALUES (?,?)').run(userIdOf(req) ?? 1, b.categoryId); return { ok: true }; });
   app.delete('/api/favorites/:categoryId', async (req: any) => { db.prepare('DELETE FROM favorites WHERE user_id=? AND category_id=?').run(userIdOf(req) ?? 1, Number(req.params.categoryId)); return { ok: true }; });
 
@@ -311,7 +312,11 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   /* ---------- transfers & months ---------- */
   app.get('/api/transfers', async () => db.prepare('SELECT e.*, (SELECT json_group_array(json_object(\'categoryId\', category_id, \'cents\', amount_cents)) FROM envelope_transfer_legs WHERE transfer_id=e.id) legs FROM envelope_transfers e ORDER BY id DESC LIMIT 200').all());
   app.get('/api/transfers/rebalance', async (req: any) => proposeRebalance(db, req.query.asOf ?? now(), { topUp: req.query.topUp !== '0' }));
-  app.post('/api/transfers/rebalance', async (req) => commitRebalance(db, rec(req.body) as any, actor(req)));
+  app.post('/api/transfers/rebalance', async (req) => {
+    const b = rec(req.body) as any;
+    if (!(b.poolPayments?.length || b.donorMoves?.length)) throw new Error('Nothing to commit: there must be at least one move');
+    return commitRebalance(db, { asOf: b.asOf, poolPayments: b.poolPayments ?? [], donorMoves: b.donorMoves ?? [] }, actor(req));
+  });
   app.post('/api/transfers/place-pool', async (req) => { const b = rec(req.body); return { id: placePool(db, b.asOf ?? now(), b.poolCategoryId, b.allocations, actor(req)) }; });
   app.post('/api/transfers/manual', async (req) => { const b = rec(req.body); return { id: manualTransfer(db, b.date ?? now(), b.from, b.to, b.cents, b.memo, actor(req)) }; });
   app.post('/api/transfers/adjustment', async (req) => { const b = rec(req.body); return { id: adjustment(db, b.date ?? now(), b.categoryId, b.cents, b.reason, actor(req)) }; });

@@ -51,7 +51,7 @@ describe('unretire', () => {
     setBudget(h.db, c, 40000, '2026-01', { reason: 'legacy' });
     retireCategory(h.db, c, '2026-06', { actor: 'test' });
     const retired = categoryBalance(h.db, c, '2026-09-30').accrued;
-    expect(unretireCategory(h.db, c, '2026-09', { actor: 'test' })).toEqual({ monthlyCents: 40000 });
+    expect(unretireCategory(h.db, c, '2026-09', { actor: 'test' })).toEqual({ monthlyCents: 40000, rulesEnabled: 0 });
     expect((h.db.prepare('SELECT status FROM categories WHERE id=?').get(c) as any).status).toBe('active');
     expect(categoryBalance(h.db, c, '2026-10-31').accrued - retired).toBe(80000); // September and October accrue again
     expect(() => unretireCategory(h.db, c, '2026-09')).toThrow(/not retired/);

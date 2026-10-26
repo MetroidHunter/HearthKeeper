@@ -205,16 +205,17 @@ describe('Categories', () => {
   beforeEach(async () => { await reset(); trap = trapErrors(); });
   afterEach(() => { trap.stop(); expect(trap.errs).to.deep.equal([]); });
 
-  it('adds a category with a start month and first budget version, and shows its history', async () => {
+  it('adds a category (no money yet), and its history gains an entry once a budget is set', async () => {
     await mount('/categories');
-    await waitFor(() => $$('tbody tr').length > 5, 'categories');
-    const form = $$('.card').find((c) => /Add category/.test(text(c)));
-    const [name, group, , monthly] = $$('input', form);
-    setInput(name, 'E2E Hobby'); setInput(group, 'Fun'); setInput(monthly, '75');
-    await waitFor(() => !byText('button', /^Add$/, form).disabled, 'Add to enable once a name is typed');
-    byText('button', /^Add$/, form).click();
+    (await waitFor(() => $('button.add-category'), 'Add button')).click();
+    const d = await waitFor(() => $$('dialog').find((x) => x.open), 'add dialog');
+    setInput($('input[aria-label="Name"]', d), 'E2E Hobby'); setInput($('input[aria-label="Group"]', d), 'Fun');
+    await waitFor(() => !byText('button', /^Add category$/, d).disabled, 'Add to enable once a name is typed');
+    byText('button', /^Add category$/, d).click();
     await waitFor(() => $$('tbody tr').some((r) => /E2E Hobby/.test(text(r))), 'new row');
     const id = (await api('/api/categories')).find((c) => c.name === 'E2E Hobby').id;
+    expect((await api(`/api/categories/${id}`)).history).to.deep.equal([]);
+    await api(`/api/categories/${id}/budget`, { method: 'POST', body: { monthlyCents: 7500, effectiveMonth: new Date().toISOString().slice(0, 7) } });
     location.hash = `#/categories/${id}`;
     await waitFor(() => /Budget history/.test(text(document.body)) && /\$75\.00/.test(text(document.body)), 'history timeline');
   });

@@ -18,14 +18,6 @@ describe('Budgets show their yearly amount', () => {
     await waitFor(() => /Enter an amount/.test(text($('.yearly-now', dlg))), 'no number, no total');
   });
 
-  it('adding a category shows what its monthly amount comes to in a year', async () => {
-    await mount('/categories');
-    const input = await waitFor(() => $('input[aria-label="Monthly amount"]'), 'the monthly box');
-    expect($('.yearly-add')).to.not.exist;
-    setInput(input, '30');
-    await waitFor(() => /= \$360\.00 a year/.test(text($('.yearly-add'))), 'yearly hint');
-  });
-
   it('the Categories page explains the cushion as "above the budget" and shows what each envelope keeps (budget + cushion)', async () => {
     await mount('/categories');
     const row = await waitFor(() => $$('tbody tr').find((r) => /Groceries/.test(text(r))), 'Groceries row');

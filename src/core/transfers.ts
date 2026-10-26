@@ -17,11 +17,20 @@ export function createTransfer(db: DB, kind: TransferKind, occurredOn: string, l
     return id;
   })();
 }
-export const manualTransfer = (db: DB, date: string, from: number, to: number, cents: number, memo?: string, actor?: string) =>
-  createTransfer(db, 'manual', date, [{ categoryId: from, cents: -cents }, { categoryId: to, cents }], memo, actor);
-/** Zero-out: single-leg write-off, allowed to be unbalanced (D31). */
-export const adjustment = (db: DB, date: string, categoryId: number, cents: number, reason: string, actor?: string) =>
-  createTransfer(db, 'adjustment', date, [{ categoryId, cents }], reason, actor);
+/** A transfer moves real money: whole cents, more than $0. */
+function assertAmount(cents: unknown): asserts cents is number {
+  if (typeof cents !== 'number' || !Number.isInteger(cents) || cents <= 0) throw new Error('The amount must be more than $0 (in whole cents)');
+}
+export const manualTransfer = (db: DB, date: string, from: number, to: number, cents: number, memo?: string, actor?: string) => {
+  assertAmount(cents);
+  if (from === to) throw new Error('From and to must be different envelopes');
+  return createTransfer(db, 'manual', date, [{ categoryId: from, cents: -cents }, { categoryId: to, cents }], memo, actor);
+};
+/** Zero-out: single-leg write-off, allowed to be unbalanced (D31). The amount is signed (a write-off is negative) but never $0. */
+export const adjustment = (db: DB, date: string, categoryId: number, cents: number, reason: string, actor?: string) => {
+  if (typeof cents !== 'number' || !Number.isInteger(cents) || cents === 0) throw new Error('The amount must be more than $0 (in whole cents)');
+  return createTransfer(db, 'adjustment', date, [{ categoryId, cents }], reason, actor);
+};
 
 export interface RebalanceProposal {
   asOf: string;
@@ -134,6 +143,7 @@ function finish(db: DB, asOf: string, cats: CatInfo[], poolPayments: RebalancePr
 /** Commit a (possibly hand-edited) proposal: one pool_payment and one reconcile transfer, each summing to zero. */
 export function commitRebalance(db: DB, p: Pick<RebalanceProposal, 'asOf' | 'poolPayments' | 'donorMoves'>, actor?: string): { poolTransfer?: number; reconcileTransfer?: number } {
   const out: { poolTransfer?: number; reconcileTransfer?: number } = {};
+  for (const m of [...p.poolPayments, ...p.donorMoves]) assertAmount(m.cents);
   const agg = (moves: { fromCategoryId?: number; poolCategoryId?: number; toCategoryId: number; cents: number }[]): Leg[] => {
     const m = new Map<number, number>();
     for (const x of moves) { const f = (x.fromCategoryId ?? x.poolCategoryId)!; m.set(f, (m.get(f) ?? 0) - x.cents); m.set(x.toCategoryId, (m.get(x.toCategoryId) ?? 0) + x.cents); }
@@ -148,6 +158,8 @@ export function commitRebalance(db: DB, p: Pick<RebalanceProposal, 'asOf' | 'poo
 
 /** Place what's left in a pool by hand (D12). No templates; must not exceed the pool balance. */
 export function placePool(db: DB, asOf: string, poolCategoryId: number, allocations: Leg[], actor?: string): number {
+  if (!allocations.length) throw new Error('Nothing to place: there must be at least one envelope with an amount');
+  for (const l of allocations) assertAmount(l.cents);
   const total = allocations.reduce((a, l) => a + l.cents, 0);
   const avail = categoryBalance(db, poolCategoryId, asOf).total ?? 0;
   if (total > avail) throw new Error(`placing ${total} exceeds pool balance ${avail}`);
