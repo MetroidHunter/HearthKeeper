@@ -197,13 +197,17 @@ export function makeLive(db: DB, planId: number, opts: { effectiveMonth: string;
   db.transaction(() => {
     const p = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as any;
     if (p.status === 'live') throw new Error('Plan is already live');
+    // remember everything this go-live displaces, so a plan that has not taken effect yet can be cancelled
+    const undo = { sourcePlanId: planId, month: opts.effectiveMonth, prevLiveId: (db.prepare("SELECT id FROM budget_plans WHERE status='live'").get() as any)?.id ?? null,
+      superseded: db.prepare('SELECT id, effective_month FROM budget_plans WHERE made_live_at IS NOT NULL AND effective_month>?').all(opts.effectiveMonth) as any[], displaced: [] as any[], transfers: [] as number[] };
     for (const r of diff.rows) {
+      undo.displaced.push(...db.prepare('SELECT category_id, effective_month, monthly_cents, plan_id, reason, created_by FROM category_budget_versions WHERE category_id=? AND effective_month>=?').all(r.categoryId, opts.effectiveMonth));
       const later = db.prepare('DELETE FROM category_budget_versions WHERE category_id=? AND effective_month>?').run(r.categoryId, opts.effectiveMonth).changes;
       if (later) audit(db, 'budget_version', r.categoryId, 'drop_later', undefined, { dropped: later, after: opts.effectiveMonth }, opts.actor);
     }
     for (const r of diff.rows) setBudget(db, r.categoryId, r.newCents, opts.effectiveMonth, { planId, reason: `plan: ${p.name}`, actor: opts.actor });
     // money moves first, so an envelope that is topped up can then retire
-    for (const m of planActions(db, planId).filter((a) => a.kind === 'move')) createTransfer(db, 'manual', `${opts.effectiveMonth}-01`, [{ categoryId: m.category_id, cents: -m.cents! }, { categoryId: m.to_category_id!, cents: m.cents! }], `plan: ${p.name}`, opts.actor ?? 'system');
+    for (const m of planActions(db, planId).filter((a) => a.kind === 'move')) undo.transfers.push(createTransfer(db, 'manual', `${opts.effectiveMonth}-01`, [{ categoryId: m.category_id, cents: -m.cents! }, { categoryId: m.to_category_id!, cents: m.cents! }], `plan: ${p.name}`, opts.actor ?? 'system'));
     for (const r of planActions(db, planId).filter((a) => a.kind === 'retire')) retireCategory(db, r.category_id, opts.effectiveMonth, { moveBalanceTo: r.to_category_id ?? undefined, disableRules: true, today, actor: opts.actor });
     // a plan that was made live for a later month and has not taken effect is overridden by this one
     db.prepare('UPDATE budget_plans SET effective_month=NULL WHERE made_live_at IS NOT NULL AND effective_month>?').run(opts.effectiveMonth);
@@ -211,10 +215,31 @@ export function makeLive(db: DB, planId: number, opts: { effectiveMonth: string;
     // Going live from an archived snapshot is a fresh live row: clone it so the archive stays immutable.
     let liveId = planId;
     if (p.status === 'archived') liveId = cloneAsLive(db, planId);
-    db.prepare("UPDATE budget_plans SET status='live', income_snapshot_cents=?, made_live_at=datetime('now'), made_live_by=?, effective_month=? WHERE id=?").run(diff.incomeNew, opts.actor ?? 'system', opts.effectiveMonth, liveId);
+    db.prepare("UPDATE budget_plans SET status='live', income_snapshot_cents=?, made_live_at=datetime('now'), made_live_by=?, effective_month=?, undo_json=? WHERE id=?").run(diff.incomeNew, opts.actor ?? 'system', opts.effectiveMonth, JSON.stringify(undo), liveId);
     audit(db, 'plan', liveId, 'make_live', undefined, { diff: diff.rows.length, effectiveMonth: opts.effectiveMonth, moves: diff.moves.length, retired: diff.retires.length }, opts.actor);
   })();
   return diff;
+}
+/**
+ * Cancel a plan that was made live for a later month and has not taken effect: its budget versions go, what it deleted or overwrote comes back,
+ * its (future-dated) transfers are removed, the plan that was live is live again, and the plan returns to a draft you can edit or schedule again.
+ * A plan whose month has arrived is in force and is replaced by making another plan live instead.
+ */
+export function cancelScheduled(db: DB, planId: number, opts: { today?: string; actor?: string } = {}): void {
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  db.transaction(() => {
+    const p = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as any;
+    if (!p || p.status !== 'live' || !p.effective_month || p.effective_month <= monthOf(today) || !p.undo_json) throw new Error('Only a scheduled plan (made live for a later month) can be cancelled');
+    const u = JSON.parse(p.undo_json) as { sourcePlanId: number; month: string; prevLiveId: number | null; superseded: { id: number; effective_month: string }[]; displaced: any[]; transfers: number[] };
+    db.prepare('DELETE FROM category_budget_versions WHERE plan_id=? AND effective_month=?').run(u.sourcePlanId, u.month);
+    const put = db.prepare('INSERT OR REPLACE INTO category_budget_versions(category_id, monthly_cents, effective_month, plan_id, reason, created_by) VALUES (?,?,?,?,?,?)');
+    for (const v of u.displaced) put.run(v.category_id, v.monthly_cents, v.effective_month, v.plan_id, v.reason, v.created_by);
+    for (const t of u.transfers) { db.prepare('DELETE FROM envelope_transfer_legs WHERE transfer_id=?').run(t); db.prepare('DELETE FROM envelope_transfers WHERE id=?').run(t); }
+    if (u.prevLiveId) db.prepare("UPDATE budget_plans SET status='live' WHERE id=?").run(u.prevLiveId);
+    for (const s of u.superseded) db.prepare('UPDATE budget_plans SET effective_month=? WHERE id=?').run(s.effective_month, s.id);
+    db.prepare("UPDATE budget_plans SET status='draft', effective_month=NULL, made_live_at=NULL, made_live_by=NULL, income_snapshot_cents=NULL, undo_json=NULL, version=version+1 WHERE id=?").run(planId);
+    audit(db, 'plan', planId, 'cancel_scheduled', undefined, { month: u.month, restoredVersions: u.displaced.length, transfersRemoved: u.transfers.length }, opts.actor);
+  })();
 }
 function cloneAsLive(db: DB, archivedId: number): number {
   const a = db.prepare('SELECT name, scenario_id FROM budget_plans WHERE id=?').get(archivedId) as any;

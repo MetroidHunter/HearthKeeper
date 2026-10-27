@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { thisMonth } from '../shared.js';
-import { pageHead, th, showDialog } from '../ui.js';
+import { pageHead, th, showDialog, confirmBox } from '../ui.js';
 import { draw, theme, PALETTE } from '../charts.js';
 
 const monthLabel = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -30,6 +30,12 @@ export class Plans extends Page {
   async setItem(catId: number, v: string) { await this.run(() => api.put(`/api/plans/${this.cur.plan.id}/items/${catId}`, { monthlyCents: parseMoney(v) })); await this.load(); }
   async showDiff() { await this.run(async () => { this.diff = await api.get(`/api/plans/${this.cur.plan.id}/diff?month=${this.month}`); this.confirmText = ''; }); }
   async go() { await this.run(async () => { await api.post(`/api/plans/${this.cur.plan.id}/make-live`, { effectiveMonth: this.month, confirmRestate: this.confirmText }); this.diff = null; await this.load(); }); }
+  async cancelScheduled() {
+    const p = this.cur.plan; const inForce = this.plans.find((x) => x.phase === 'live');
+    const ok = await confirmBox({ title: `Cancel "${p.name}"?`, confirm: 'Cancel the go-live', cancel: 'Keep it scheduled', danger: true,
+      body: html`<p>It was set to go live in <b>${p.effective_month}</b>. Cancelling puts the plan back to a <b>draft</b> you can edit or schedule again, and undoes what the go-live set up: its budget amounts for ${p.effective_month} and any money moves dated then. ${inForce ? html`<b>${inForce.name}</b> stays the budget in force.` : nothing}</p>` });
+    if (ok) { await this.run(() => api.post(`/api/plans/${p.id}/cancel`, {})); await this.load(); }
+  }
   async removeAction(id: number) { await this.run(() => api.del(`/api/plans/${this.cur.plan.id}/actions/${id}`)); await this.load(); }
 
   render() {
@@ -79,7 +85,8 @@ export class Plans extends Page {
     return html`<div class="plan-back"><a href="#/plans">← Plans</a></div>
       ${pageHead(p.name, 'This plan as a budget: every category with its monthly amount, grouped, and a pie of where the money goes. A draft can be edited; make it live to start using it.', 'Add moves or retirements under "At go-live" and they happen once, together with the plan, in the month you pick.')}${this.err ? html`<p class="err">${this.err}</p>` : nothing}
       <div class="row" style="margin-bottom:10px"><span class="badge plan-phase ${c.phase === 'live' ? 'good' : 'warn'}">${phaseText({ phase: c.phase, effective_month: p.effective_month })}</span>
-        ${p.status !== 'draft' ? html`<button @click=${() => this.create('plan', p.id)}>Clone</button>` : nothing}</div>
+        ${p.status !== 'draft' ? html`<button @click=${() => this.create('plan', p.id)}>Clone</button>` : nothing}
+        ${c.phase === 'scheduled' ? html`<button class="cancel-scheduled" @click=${() => this.cancelScheduled()}>Cancel scheduled go-live</button>` : nothing}</div>
       <div class="grid3 bstats pstats">
         <div class="stat combo"><span class="label">Allocated / income (unallocated)</span><span class="value"><span>${money(h.allocatedCents)}</span> <span class="of">/ ${money(h.incomeCents)}</span> <span class="un ${h.unallocatedCents < 0 ? 'neg' : 'pos'}">(${money(h.unallocatedCents)})</span></span><span class="sub">per month; unallocated is income minus allocated</span></div>
         <div class="stat plan"><span class="label">Earnings</span><select aria-label="Earnings scenario" ?disabled=${!draft} @change=${async (e: any) => { await this.run(() => api.put(`/api/plans/${p.id}/scenario`, { scenarioId: Number(e.target.value) || null })); await this.load(); }}>

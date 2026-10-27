@@ -56,4 +56,18 @@ describe('plans API', () => {
     expect(ok.statusCode).toBe(200);
     expect((h.db.prepare('SELECT status FROM categories WHERE id=?').get(h.cats['Manicure']) as any).status).toBe('retired');
   });
+
+  it('cancels a scheduled plan (back to a draft); anything else is a 400', async () => {
+    const { h, call, live, draft } = api();
+    expect((await call('POST', `/api/plans/${draft}/cancel`)).statusCode).toBe(400);   // a draft
+    expect((await call('POST', `/api/plans/${live}/cancel`)).statusCode).toBe(400);    // in force
+    await call('PUT', `/api/plans/${draft}/items/${h.cats['Groceries']}`, { monthlyCents: 95000 });
+    await call('POST', `/api/plans/${draft}/make-live`, { effectiveMonth: '2026-11' });
+    expect((await call('GET', '/api/plans')).json().find((p: any) => p.id === draft).phase).toBe('scheduled');
+    expect((await call('POST', `/api/plans/${draft}/cancel`)).statusCode).toBe(200);
+    const after = (await call('GET', '/api/plans')).json();
+    expect(after.find((p: any) => p.id === draft)).toMatchObject({ phase: 'draft', effective_month: null });
+    expect(after.find((p: any) => p.id === live).phase).toBe('live');
+    expect((await call('GET', '/api/budget?today=2026-11-02')).json().rows.find((r: any) => r.name === 'Groceries').targetCents).toBe(80000);
+  });
 });

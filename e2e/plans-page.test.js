@@ -160,6 +160,33 @@ for (const [name, width, height] of [['desktop', 1280, 800], ['mobile', 390, 844
       expect(text($$('tbody tr').find((r) => /Current budget/.test(text(r))))).to.match(/live/i);
     });
 
+    it('a scheduled plan can be cancelled: it goes back to a draft and nothing it set remains', async () => {
+      const draft = await draftFromApi();
+      const g = await cat('Groceries'); const eo = await cat('Eating Out');
+      await api(`/api/plans/${draft}/items/${g.id}`, { method: 'PUT', body: { monthlyCents: 95000 } });
+      await api(`/api/plans/${draft}/actions`, { method: 'POST', body: { kind: 'move', fromCategoryId: g.id, toCategoryId: eo.id, cents: 1000 } });
+      await api(`/api/plans/${draft}/make-live`, { method: 'POST', body: { effectiveMonth: nextMonth() } });
+      await mount(`/plans/${draft}`);
+      await waitFor(() => /scheduled/i.test(text($('.plan-phase'))), 'scheduled');
+      expect(byText('button', /Make live/), 'a scheduled plan is already live').to.equal(undefined);
+      byText('button', /Cancel scheduled go-live/).click();
+      const d = await waitFor(dlg, 'the confirmation');
+      expect(text(d)).to.contain(nextMonth()).and.to.match(/draft/i).and.to.match(/Current budget/);
+      expect(d.scrollWidth).to.be.at.most(d.clientWidth + 1);
+      byText('button', /^Keep it scheduled$/, d).click();
+      await waitFor(() => !dlg(), 'dialog closed');
+      expect((await api('/api/plans')).find((p) => p.id === draft).phase, 'keeping it changes nothing').to.equal('scheduled');
+      byText('button', /Cancel scheduled go-live/).click();
+      byText('button', /^Cancel the go-live$/, await waitFor(dlg, 'confirmation again')).click();
+      await waitFor(async () => (await api('/api/plans')).find((p) => p.id === draft).phase === 'draft', 'back to a draft');
+      await waitFor(() => /draft/i.test(text($('.plan-phase'))) && byText('button', /Make live/) && $('.add-move'), 'editable again');
+      expect((await api(`/api/budget?today=${nextMonth()}-02`)).header.livePlan).to.equal('Current budget');
+      expect((await api(`/api/budget?today=${nextMonth()}-02`)).rows.find((r) => r.name === 'Groceries').targetCents).to.equal(80000);
+      expect((await api('/api/transfers')).filter((t) => t.kind === 'manual')).to.have.length(0);
+      expect((await livePlan()).name).to.equal('Current budget');
+      noSideScroll();
+    });
+
     it('a retroactive go-live still needs RESTATE typed', async () => {
       const draft = await draftFromApi();
       const g = await cat('Groceries');

@@ -154,4 +154,8 @@ DROP TABLE wf_old;
 CREATE TABLE budget_plan_actions(id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('move','retire')),
   category_id INTEGER NOT NULL REFERENCES categories(id), to_category_id INTEGER REFERENCES categories(id), cents INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 `,
+`
+-- what a go-live displaced (budget versions it deleted or overwrote, the plan that was live, its transfers), so a plan that has not taken effect yet can be cancelled cleanly
+ALTER TABLE budget_plans ADD COLUMN undo_json TEXT;
+`,
 ];

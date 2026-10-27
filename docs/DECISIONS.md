@@ -188,3 +188,4 @@ A weekly budget spreads **one category's monthly budget** over the weeks of the 
 - **Transfers move whole cents above $0.** Manual moves (also between two different envelopes), pool placements and rebalance commits refuse $0, negative or empty input, in the UI (buttons stay off) and the API.
 - **Going live in the current month restates that month.** A plan that zeroes a category effective this month removes this month's accrual from it, so an envelope that was exactly at $0 goes negative by that month's amount while the new category gains it (total money is conserved). Pick next month to avoid that.
 
+- **A scheduled plan can be cancelled.** Go-live records what it displaced (budget versions it deleted or overwrote, the plan that was live, its transfers). Cancelling a plan whose month has not started restores all of it and returns the plan to a draft. A plan whose month has arrived is in force and is replaced by making another plan live.
