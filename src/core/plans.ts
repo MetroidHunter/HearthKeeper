@@ -1,8 +1,12 @@
 import { audit, type DB } from './db.js';
 import { categoryBalance, getVersions, monthlyAmount } from './balance.js';
-import { setBudget } from './categories.js';
+import { setBudget, retireCategory, retirePreview, rulesForCategory } from './categories.js';
+import { createTransfer } from './transfers.js';
+import { formatCents as usd } from './money.js';
 import { scenarioMonthlyNet } from './earnings.js';
 import { monthOf } from './time.js';
+
+type PlanRow = { id: number; status: string; effective_month: string | null; [k: string]: any };
 
 export function createPlan(db: DB, name: string, from: 'blank' | { livePlan: true } | { planId: number }, month: string): number {
   return db.transaction(() => {
@@ -53,39 +57,126 @@ export function planHeader(db: DB, planId: number) {
   return { incomeCents: income, allocatedCents: allocated, unallocatedCents: income - allocated, overAllocated: allocated > income };
 }
 
-export interface DiffRow { categoryId: number; name: string; oldCents: number; newCents: number; deltaCents: number; restatedBalanceDeltaCents?: number }
+
+/** The plan whose budget is in force in `today`'s month: the latest made live for a month on or before it (a plan going live next month waits its turn). */
+export function planInEffect(db: DB, today: string): PlanRow | undefined {
+  return (db.prepare('SELECT * FROM budget_plans WHERE made_live_at IS NOT NULL AND effective_month IS NOT NULL AND effective_month<=? ORDER BY effective_month DESC, made_live_at DESC, id DESC LIMIT 1').get(monthOf(today))
+    ?? db.prepare("SELECT * FROM budget_plans WHERE status='live'").get()) as PlanRow | undefined;
+}
+/** draft, live (in force now), scheduled (made live for a later month), or archived. */
+export function planPhase(db: DB, p: PlanRow, today: string): 'draft' | 'live' | 'scheduled' | 'archived' {
+  if (p.status === 'draft') return 'draft';
+  if (planInEffect(db, today)?.id === p.id) return 'live';
+  return p.status === 'live' ? 'scheduled' : 'archived';
+}
+
+/* ---------- one-time actions that ride along with a go-live ---------- */
+export type PlanActionInput = { kind: 'move'; fromCategoryId: number; toCategoryId: number; cents: number } | { kind: 'retire'; categoryId: number; moveBalanceTo?: number | null };
+export interface PlanAction { id: number; plan_id: number; kind: 'move' | 'retire'; category_id: number; to_category_id: number | null; cents: number | null; name: string; to_name: string | null }
+
+function activeCategory(db: DB, id: number): { id: number; name: string; status: string; system: number } {
+  const c = db.prepare('SELECT id, name, status, system FROM categories WHERE id=?').get(id) as any;
+  if (!c) throw new Error('Unknown category');
+  if (c.status !== 'active' || c.system) throw new Error(`${c.name} is not active: only active categories can be used`);
+  return c;
+}
+export function addPlanAction(db: DB, planId: number, a: PlanActionInput): number {
+  assertDraft(db, planId);
+  if (a.kind === 'move') {
+    if (typeof a.cents !== 'number' || !Number.isInteger(a.cents) || a.cents <= 0) throw new Error('The amount must be more than $0 (in whole cents)');
+    if (a.fromCategoryId === a.toCategoryId) throw new Error('From and to must be different envelopes');
+    for (const id of [a.fromCategoryId, a.toCategoryId]) { const c = activeCategory(db, id); if ((db.prepare('SELECT kind FROM categories WHERE id=?').get(id) as any).kind === 'income_reference') throw new Error(`${c.name} holds no money, so money cannot be moved into or out of it`); }
+    return Number(db.prepare("INSERT INTO budget_plan_actions(plan_id, kind, category_id, to_category_id, cents) VALUES (?,'move',?,?,?)").run(planId, a.fromCategoryId, a.toCategoryId, a.cents).lastInsertRowid);
+  }
+  const c = activeCategory(db, a.categoryId);
+  if (a.moveBalanceTo) { if (a.moveBalanceTo === a.categoryId) throw new Error('The leftover must go to a different envelope'); activeCategory(db, a.moveBalanceTo); }
+  if (db.prepare("SELECT 1 FROM budget_plan_actions WHERE plan_id=? AND kind='retire' AND category_id=?").get(planId, a.categoryId)) throw new Error(`${c.name} is already being retired by this plan`);
+  return Number(db.prepare("INSERT INTO budget_plan_actions(plan_id, kind, category_id, to_category_id) VALUES (?,'retire',?,?)").run(planId, a.categoryId, a.moveBalanceTo ?? null).lastInsertRowid);
+}
+export function removePlanAction(db: DB, planId: number, actionId: number): void {
+  assertDraft(db, planId);
+  db.prepare('DELETE FROM budget_plan_actions WHERE id=? AND plan_id=?').run(actionId, planId);
+}
+export function planActions(db: DB, planId: number): PlanAction[] {
+  return db.prepare(`SELECT a.*, c.name, t.name to_name FROM budget_plan_actions a JOIN categories c ON c.id=a.category_id LEFT JOIN categories t ON t.id=a.to_category_id WHERE a.plan_id=? ORDER BY a.id`).all(planId) as PlanAction[];
+}
+
+/** One plan for its own page: header, items with their group (a draft lists active categories only), its actions, and where it stands. */
+export function planDetail(db: DB, planId: number, today = new Date().toISOString().slice(0, 10)) {
+  const plan = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as PlanRow | undefined;
+  if (!plan) throw Object.assign(new Error('Unknown plan'), { statusCode: 404 });
+  const items = db.prepare(`SELECT i.*, c.name, c.kind, c.status category_status, g.name group_name FROM budget_plan_items i JOIN categories c ON c.id=i.category_id LEFT JOIN category_groups g ON g.id=c.group_id
+    WHERE i.plan_id=? AND (? != 'draft' OR c.status='active') AND c.system=0 ORDER BY g.sort, g.name, c.sort, c.name`).all(planId, plan.status);
+  return { plan, header: planHeader(db, planId), items, actions: planActions(db, planId), phase: planPhase(db, plan, today) };
+}
+
+export interface DiffRow { categoryId: number; name: string; oldCents: number; newCents: number; deltaCents: number; restatedBalanceDeltaCents?: number; retiring?: boolean }
+export interface MoveLine { id: number; fromName: string; toName: string; cents: number; date: string; fromAfterCents: number; toAfterCents: number; warning: string | null }
+export interface RetireLine { id: number; categoryId: number; name: string; moveToName: string | null; leftoverCents: number; canRetire: boolean; reason: string | null; rulesOff: number }
 export interface GoLiveDiff {
   rows: DiffRow[]; historyEntries: number; effectiveMonth: string; retroactive: boolean;
+  /** Going live for this month or an earlier one changes the balances that exist today (the month's accrual changes), so each row carries its balance change. */
+  touchesBalances: boolean; currentMonth: string;
   incomeOld: number | null; incomeNew: number; allocatedOld: number; allocatedNew: number; unallocatedNew: number;
   staleBase: boolean; // live changed after the draft was created: re-diffed against *current* live
+  moves: MoveLine[]; retires: RetireLine[]; blockers: string[];
 }
 
 /** Diff a draft against the budget as it stands now (not as it was when the draft was created: staleness guard). */
 export function diffPlan(db: DB, planId: number, effectiveMonth: string, today = new Date().toISOString().slice(0, 10)): GoLiveDiff {
+  if (!/^\d{4}-\d{2}$/.test(effectiveMonth)) throw new Error('A go-live month is required (YYYY-MM)');
   const p = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as any;
+  const actions = planActions(db, planId);
+  const retiring = new Set(actions.filter((a) => a.kind === 'retire').map((a) => a.category_id));
   const items = db.prepare('SELECT i.category_id, i.monthly_cents, c.name, c.kind FROM budget_plan_items i JOIN categories c ON c.id=i.category_id WHERE i.plan_id=? AND c.status=\'active\'').all(planId) as any[];
-  const retro = effectiveMonth < monthOf(today);
+  for (const id of retiring) if (!items.some((i) => i.category_id === id)) { const c = db.prepare("SELECT name, kind FROM categories WHERE id=? AND status='active'").get(id) as any; if (c) items.push({ category_id: id, monthly_cents: 0, name: c.name, kind: c.kind }); }
+  const month = monthOf(today);
+  const retro = effectiveMonth < month, touches = effectiveMonth <= month;
   const rows: DiffRow[] = [];
   let allocatedOld = 0, allocatedNew = 0;
   for (const it of items) {
     const v = getVersions(db, it.category_id);
     const old = monthlyAmount(v, effectiveMonth);
-    if (it.kind === 'expense') { allocatedOld += old; allocatedNew += it.monthly_cents; }
-    const laterDiffers = v.some((x) => x.effective_month > effectiveMonth && x.monthly_cents !== it.monthly_cents);
-    if (old === it.monthly_cents && !laterDiffers) continue;
-    const row: DiffRow = { categoryId: it.category_id, name: it.name, oldCents: old, newCents: it.monthly_cents, deltaCents: it.monthly_cents - old };
-    if (retro) {
+    const target = retiring.has(it.category_id) ? 0 : it.monthly_cents;
+    if (it.kind === 'expense') { allocatedOld += old; allocatedNew += target; }
+    const laterDiffers = v.some((x) => x.effective_month > effectiveMonth && x.monthly_cents !== target);
+    if (old === target && !laterDiffers) continue;
+    const row: DiffRow = { categoryId: it.category_id, name: it.name, oldCents: old, newCents: target, deltaCents: target - old };
+    if (retiring.has(it.category_id)) row.retiring = true;
+    if (touches) {
       // Restated balance change = the accrual difference as of today.
       const before = categoryBalance(db, it.category_id, today).accrued;
-      const sim = simulateAccrued(db, it.category_id, effectiveMonth, it.monthly_cents, today);
+      const sim = simulateAccrued(db, it.category_id, effectiveMonth, target, today);
       row.restatedBalanceDeltaCents = sim - before;
     }
     rows.push(row);
   }
-  const liveNow = db.prepare("SELECT id, scenario_id, income_snapshot_cents FROM budget_plans WHERE status='live'").get() as any;
+  const liveNow = planInEffect(db, today);
   const incomeNew = p.scenario_id ? scenarioMonthlyNet(db, p.scenario_id) : 0;
-  return { rows, historyEntries: rows.length, effectiveMonth, retroactive: retro, incomeOld: liveNow?.income_snapshot_cents ?? null, incomeNew, allocatedOld, allocatedNew, unallocatedNew: incomeNew - allocatedNew,
-    staleBase: (liveNow?.id ?? null) !== (p.created_from_live_plan_id ?? null) };
+
+  // moves: dated the first of the go-live month; a future month leaves today's balances alone
+  const blockers: string[] = [];
+  const date = `${effectiveMonth}-01`, asOf = date > today ? date : today;
+  const bal = new Map<number, number>(); const balance = (id: number) => { if (!bal.has(id)) bal.set(id, categoryBalance(db, id, asOf).total ?? 0); return bal.get(id)!; };
+  const net = new Map<number, number>();
+  const moves: MoveLine[] = actions.filter((a) => a.kind === 'move').map((a) => {
+    const fromAfter = balance(a.category_id) - a.cents!, toAfter = balance(a.to_category_id!) + a.cents!;
+    bal.set(a.category_id, fromAfter); bal.set(a.to_category_id!, toAfter);
+    net.set(a.category_id, (net.get(a.category_id) ?? 0) - a.cents!); net.set(a.to_category_id!, (net.get(a.to_category_id!) ?? 0) + a.cents!);
+    return { id: a.id, fromName: a.name, toName: a.to_name!, cents: a.cents!, date, fromAfterCents: fromAfter, toAfterCents: toAfter,
+      warning: fromAfter < 0 ? `${a.name} would be overspent by ${usd(-fromAfter)} after this move.` : null };
+  });
+  const retires: RetireLine[] = actions.filter((a) => a.kind === 'retire').map((a) => {
+    const rp = retirePreview(db, a.category_id, effectiveMonth, { today });
+    const moved = net.get(a.category_id) ?? 0, now = rp.currentCents + moved, after = rp.afterCents + moved;
+    const reason = effectiveMonth > month ? `${a.name} cannot be retired for ${effectiveMonth}: retiring happens straight away, so choose the current month (${month}) or an earlier one, or remove the retirement from this plan.`
+      : now < 0 ? `Cannot retire ${a.name}: it is overspent by ${usd(-now)}. Move money into it (or categorize the spending elsewhere) until it is at $0 or more.`
+      : after < 0 ? `Cannot retire ${a.name}: retiring stops its budget for ${effectiveMonth}, which would leave it overspent by ${usd(-after)}. Move at least that much into it first.` : null;
+    if (reason) blockers.push(reason);
+    return { id: a.id, categoryId: a.category_id, name: a.name, moveToName: a.to_name, leftoverCents: Math.max(0, after), canRetire: reason === null, reason, rulesOff: rulesForCategory(db, a.category_id).filter((r) => r.enabled).length };
+  });
+  return { rows, historyEntries: rows.length, effectiveMonth, retroactive: retro, touchesBalances: touches, currentMonth: month, incomeOld: liveNow?.income_snapshot_cents ?? null, incomeNew, allocatedOld, allocatedNew, unallocatedNew: incomeNew - allocatedNew,
+    staleBase: ((db.prepare("SELECT id FROM budget_plans WHERE status='live'").get() as any)?.id ?? null) !== (p.created_from_live_plan_id ?? null), moves, retires, blockers };
 }
 function simulateAccrued(db: DB, categoryId: number, month: string, cents: number, today: string): number {
   const cat = db.prepare('SELECT start_month FROM categories WHERE id=?').get(categoryId) as { start_month: string };
@@ -97,11 +188,12 @@ function simulateAccrued(db: DB, categoryId: number, month: string, cents: numbe
 }
 function nextMonth(m: string): string { const [y, mo] = m.split('-').map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; }
 
-/** Atomic go-live (§12.4): append a version per changed category, snapshot scenario income, archive the previous live plan, mark live. */
+/** Atomic go-live (§12.4): append a version per changed category, apply the plan's moves and retirements, snapshot scenario income, archive the previous live plan, mark live. */
 export function makeLive(db: DB, planId: number, opts: { effectiveMonth: string; actor?: string; today?: string; confirmRestate?: string }): GoLiveDiff {
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
   const diff = diffPlan(db, planId, opts.effectiveMonth, today);
   if (diff.retroactive && opts.confirmRestate !== 'RESTATE') throw new Error('Retroactive go-live restates history; type-to-confirm (RESTATE) required');
+  if (diff.blockers.length) throw new Error(diff.blockers.join(' '));
   db.transaction(() => {
     const p = db.prepare('SELECT * FROM budget_plans WHERE id=?').get(planId) as any;
     if (p.status === 'live') throw new Error('Plan is already live');
@@ -110,12 +202,17 @@ export function makeLive(db: DB, planId: number, opts: { effectiveMonth: string;
       if (later) audit(db, 'budget_version', r.categoryId, 'drop_later', undefined, { dropped: later, after: opts.effectiveMonth }, opts.actor);
     }
     for (const r of diff.rows) setBudget(db, r.categoryId, r.newCents, opts.effectiveMonth, { planId, reason: `plan: ${p.name}`, actor: opts.actor });
+    // money moves first, so an envelope that is topped up can then retire
+    for (const m of planActions(db, planId).filter((a) => a.kind === 'move')) createTransfer(db, 'manual', `${opts.effectiveMonth}-01`, [{ categoryId: m.category_id, cents: -m.cents! }, { categoryId: m.to_category_id!, cents: m.cents! }], `plan: ${p.name}`, opts.actor ?? 'system');
+    for (const r of planActions(db, planId).filter((a) => a.kind === 'retire')) retireCategory(db, r.category_id, opts.effectiveMonth, { moveBalanceTo: r.to_category_id ?? undefined, disableRules: true, today, actor: opts.actor });
+    // a plan that was made live for a later month and has not taken effect is overridden by this one
+    db.prepare('UPDATE budget_plans SET effective_month=NULL WHERE made_live_at IS NOT NULL AND effective_month>?').run(opts.effectiveMonth);
     db.prepare("UPDATE budget_plans SET status='archived' WHERE status='live'").run();
     // Going live from an archived snapshot is a fresh live row: clone it so the archive stays immutable.
     let liveId = planId;
     if (p.status === 'archived') liveId = cloneAsLive(db, planId);
     db.prepare("UPDATE budget_plans SET status='live', income_snapshot_cents=?, made_live_at=datetime('now'), made_live_by=?, effective_month=? WHERE id=?").run(diff.incomeNew, opts.actor ?? 'system', opts.effectiveMonth, liveId);
-    audit(db, 'plan', liveId, 'make_live', undefined, { diff: diff.rows.length, effectiveMonth: opts.effectiveMonth }, opts.actor);
+    audit(db, 'plan', liveId, 'make_live', undefined, { diff: diff.rows.length, effectiveMonth: opts.effectiveMonth, moves: diff.moves.length, retired: diff.retires.length }, opts.actor);
   })();
   return diff;
 }

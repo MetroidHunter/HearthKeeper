@@ -149,4 +149,9 @@ INSERT INTO weekly_favorites(user_id, weekly_id) SELECT user_id, weekly_id FROM 
 DROP TABLE wb_old;
 DROP TABLE wf_old;
 `,
+`
+-- one-time events a plan carries to its go-live: move money between envelopes, or retire an envelope (applied once, dated the go-live month)
+CREATE TABLE budget_plan_actions(id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('move','retire')),
+  category_id INTEGER NOT NULL REFERENCES categories(id), to_category_id INTEGER REFERENCES categories(id), cents INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+`,
 ];

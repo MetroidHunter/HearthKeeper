@@ -3,6 +3,7 @@ import { openNotices } from './notices.js';
 import type { DB } from './db.js';
 import { categoryBalance, currentAllocation, periodTotals } from './balance.js';
 import { monthOf } from './time.js';
+import { planInEffect } from './plans.js';
 
 export interface BudgetRow { id: number; group: string | null; name: string; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number]; net: [number, number]; favorite?: boolean }
 export interface Period { from: string; to: string }
@@ -26,7 +27,7 @@ export function budgetPage(db: DB, today: string, periods?: [Period, Period], us
     return { id: c.id, group: c.grp, name: c.name, kind: c.kind, targetCents: alloc.byCategory[c.id] ?? 0, currentCents: categoryBalance(db, c.id, today).total,
       spent: [pa.spent, pb.spent], gained: [pa.gained, pb.gained], net: [pa.gained - pa.spent, pb.gained - pb.spent], favorite: favs.has(c.id) };
   });
-  const live = db.prepare("SELECT id, name, income_snapshot_cents FROM budget_plans WHERE status='live'").get() as any;
+  const live = planInEffect(db, today); // the plan in force this month: one made live for a later month waits its turn
   const income = live?.income_snapshot_cents ?? 0;
   return { periods: [a, b], rows, uncategorized: uncategorized(db), header: { livePlan: live?.name ?? null, incomeCents: income, allocatedCents: alloc.allocated, unallocatedCents: income - alloc.allocated } };
 }

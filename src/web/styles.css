@@ -392,3 +392,10 @@ button.flag-btn { font-size:16px; line-height:1; } button.flag-btn[aria-pressed=
 .retire-balance { margin:var(--space-3) 0; } .retire-balance b { font-size:20px; }
 .retire-rules { margin-top:var(--space-4); display:flex; flex-direction:column; gap:var(--space-2); } .retire-rules .cat-rule { font-size:14px; overflow-wrap:anywhere; }
 .add-error { margin:0; padding:var(--space-3); border:1px solid var(--bad); border-radius:var(--radius-sm); background:color-mix(in srgb, var(--bad) 10%, transparent); }
+
+/* Plans: list table, one plan's page, and the go-live dialog */
+.plan-back { margin-bottom:var(--space-2); } .plan-back a { text-decoration:none; font-weight:600; }
+.plans-table td.pname { font-weight:600; } .plans-table td { vertical-align:middle; }
+.plan-actions .paction { padding:6px 0; border-top:1px solid var(--line); align-items:center; } .plan-actions .paction:first-of-type { border-top:0; }
+.gl-line { padding:6px 0; border-top:1px solid var(--line); } .gl-line:first-of-type { border-top:0; }
+.pstats .stat.plan select { max-width:100%; }

@@ -44,9 +44,7 @@ for (const [name, width, height] of [['desktop', 1280, 800], ['mobile', 390, 844
         await api(`/api/plans/${plan}/items/${hobby.id}`, { method: 'PUT', body: { monthlyCents: sum } });
 
         // go live through the Plans page and read the diff
-        await mount('/plans');
-        const planCard = await waitFor(() => $$('.card.row').find((c) => /Fold into Hobbies/.test(text(c))), 'the new plan');
-        planCard.click();
+        await mount(`/plans/${plan}`);
         await waitFor(() => byText('button', /Make live/), 'Make live');
         byText('button', /Make live/).click();
         const d = await waitFor(dlg, 'the diff dialog');

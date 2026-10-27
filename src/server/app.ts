@@ -6,7 +6,7 @@ import { audit } from '../core/db.js';
 import { registerAuth, type AuthConfig } from './auth.js';
 import { addCategory, budgetHistory, retireCategory, retirePreview, rulesForCategory, unretireCategory, setBudget } from '../core/categories.js';
 import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod, transactionContext } from '../core/reports.js';
-import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust } from '../core/plans.js';
+import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust, planPhase, planDetail, addPlanAction, removePlanAction } from '../core/plans.js';
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
 import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetVsActual } from '../core/analytics.js';
@@ -204,14 +204,20 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   app.post('/api/scenarios', async (req) => { const b = rec(req.body); return { id: createScenario(db, b.name, b.lines, b.notes) }; });
   app.put('/api/scenarios/:id/lines', async (req: any) => { setScenarioLines(db, Number(req.params.id), rec(req.body).lines); return { ok: true }; });
   app.post('/api/scenarios/:id/clone', async (req: any) => ({ id: cloneScenario(db, Number(req.params.id), rec(req.body).name) }));
-  app.get('/api/plans', async () => (db.prepare('SELECT * FROM budget_plans ORDER BY id DESC').all() as any[]).map((p) => ({ ...p, ...planHeader(db, p.id) })));
-  app.get('/api/plans/:id', async (req: any) => ({ plan: db.prepare('SELECT * FROM budget_plans WHERE id=?').get(req.params.id), header: planHeader(db, Number(req.params.id)),
-    items: db.prepare('SELECT i.*, c.name FROM budget_plan_items i JOIN categories c ON c.id=i.category_id WHERE plan_id=? ORDER BY c.name').all(req.params.id) }));
+  app.get('/api/plans', async () => (db.prepare('SELECT p.*, (SELECT COUNT(*) FROM budget_plan_items i WHERE i.plan_id=p.id AND i.monthly_cents>0) itemCount FROM budget_plans p ORDER BY id DESC').all() as any[]).map((p) => ({ ...p, ...planHeader(db, p.id), phase: planPhase(db, p, now()) })));
+  app.get('/api/plans/:id', async (req: any) => planDetail(db, Number(req.params.id), now()));
   app.post('/api/plans', async (req) => { const b = rec(req.body); return { id: createPlan(db, b.name, b.from === 'live' ? { livePlan: true } : b.fromPlanId ? { planId: b.fromPlanId } : 'blank', b.month ?? now().slice(0, 7)) }; });
   app.put('/api/plans/:id/items/:cat', async (req: any) => { setPlanItem(db, Number(req.params.id), Number(req.params.cat), rec(req.body).monthlyCents, rec(req.body).note); return { ok: true }; });
   app.post('/api/plans/:id/bulk', async (req: any) => { bulkAdjust(db, Number(req.params.id), rec(req.body)); return { ok: true }; });
   app.put('/api/plans/:id/scenario', async (req: any) => { assignScenario(db, Number(req.params.id), rec(req.body).scenarioId ?? null); return { ok: true }; });
   app.get('/api/plans/:id/diff', async (req: any) => diffPlan(db, Number(req.params.id), req.query.month ?? now().slice(0, 7), now()));
+  app.post('/api/plans/:id/actions', async (req: any) => {
+    const b = rec(req.body);
+    if (b.kind === 'move') return { id: addPlanAction(db, Number(req.params.id), { kind: 'move', fromCategoryId: b.fromCategoryId, toCategoryId: b.toCategoryId, cents: b.cents }) };
+    if (b.kind === 'retire') return { id: addPlanAction(db, Number(req.params.id), { kind: 'retire', categoryId: b.categoryId, moveBalanceTo: b.moveBalanceTo ?? null }) };
+    throw new Error('The action kind must be move or retire');
+  });
+  app.delete('/api/plans/:id/actions/:aid', async (req: any) => { removePlanAction(db, Number(req.params.id), Number(req.params.aid)); return { ok: true }; });
   app.post('/api/plans/:id/make-live', async (req: any) => { const b = rec(req.body); return makeLive(db, Number(req.params.id), { effectiveMonth: b.effectiveMonth ?? now().slice(0, 7), actor: actor(req), today: now(), confirmRestate: b.confirmRestate }); });
 
   /* ---------- transactions ---------- */

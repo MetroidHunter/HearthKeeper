@@ -8,10 +8,10 @@ describe('Plans: draft, diff, go-live', () => {
   async function newDraft() {
     await mount('/plans');
     byText('button', /New from live/).click();
-    await waitFor(() => $$('.card').some((c) => /E2E plan/.test(text(c)) && /draft/.test(text(c))), 'draft created');
-    await waitFor(() => $$('table input').length > 3, 'plan items');
+    await waitFor(() => /#\/plans\/\d+$/.test(location.hash) && text($('h1')) === 'E2E plan', 'draft created and opened on its own page');
+    await waitFor(() => $$('[data-group] input').length > 3, 'plan items');
   }
-  const input = (name) => $$('table tr').find((r) => text(r.firstElementChild) === name).querySelector('input');
+  const input = (name) => $$('[data-group] tr.prow').find((r) => text($('.cname', r)) === name).querySelector('input');
 
   it('edits a draft, shows an accurate diff, and goes live atomically', async () => {
     await newDraft();

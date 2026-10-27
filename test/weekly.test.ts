@@ -134,7 +134,7 @@ describe('weekly budgets created before they were tied to one category', () => {
   it('keep their first category and week start, and their pins', () => {
     const db = new Database(':memory:'); db.pragma('foreign_keys = ON');
     db.exec('CREATE TABLE _migrations(id INTEGER PRIMARY KEY)');
-    MIGRATIONS.slice(0, -1).forEach((sql, i) => { db.exec(sql); db.prepare('INSERT INTO _migrations(id) VALUES (?)').run(i); });
+    MIGRATIONS.slice(0, MIGRATIONS.findIndex((m) => m.includes('wb_old'))).forEach((sql, i) => { db.exec(sql); db.prepare('INSERT INTO _migrations(id) VALUES (?)').run(i); });
     db.exec(`INSERT INTO categories(id, name, kind, start_month) VALUES (1,'Food','expense','2026-01'),(2,'Fun','expense','2026-01');
       INSERT INTO users(id, name, email) VALUES (1,'Me','m@x.c');
       INSERT INTO weekly_budgets(id, name, amount_cents, week_start) VALUES (1,'Old one',30000,3),(2,'Empty',100,1);
