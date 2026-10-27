@@ -5,6 +5,7 @@ import { runNoteMatcher } from '../notes/matcher.js';
 import { recleanDescriptors } from '../core/reclean.js';
 import { retireGreenlight } from '../greenlight/retire.js';
 import { dedupeAgainstHistory } from '../ingest/history.js';
+import { applyDuePlanActions } from '../core/plans.js';
 import type { Notifier } from '../notify/notifier.js';
 
 /** Periodic housekeeping (design §17.1): stale provisionals, note re-matching, silence checks. Push delivery plugs into `onAlert`. */
@@ -12,6 +13,7 @@ export function startScheduler(db: DB, notifier?: Notifier, onAlert: (kind: stri
   const tick = async () => {
     try {
       markStale(db);
+      applyDuePlanActions(db, new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
       runNoteMatcher(db);
       const silent = silentTokens(db);
       if (silent.length) onAlert('silence', silent);

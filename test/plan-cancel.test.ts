@@ -26,7 +26,7 @@ describe('cancelling a scheduled plan', () => {
     const before = versions(h); const header = budgetPage(h.db, TODAY).header;
     makeLive(h.db, d, { effectiveMonth: '2026-11', today: TODAY });
     expect(planPhase(h.db, row(h, d), TODAY)).toBe('scheduled');
-    expect(h.db.prepare("SELECT COUNT(*) n FROM envelope_transfers WHERE kind='manual'").get()).toEqual({ n: 1 });
+    expect(h.db.prepare("SELECT COUNT(*) n FROM envelope_transfers WHERE kind='manual'").get()).toEqual({ n: 0 }); // the move waits for November
     cancelScheduled(h.db, d, { today: TODAY });
     expect(versions(h)).toEqual(before);
     expect(h.db.prepare("SELECT COUNT(*) n FROM envelope_transfers WHERE kind='manual'").get()).toEqual({ n: 0 });

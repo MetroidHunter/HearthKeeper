@@ -110,10 +110,16 @@ export class Plans extends Page {
     const acts: any[] = this.cur.actions;
     if (!draft && !acts.length) return nothing;
     return html`<div class="card plan-actions"><b>At go-live</b>
-      <p class="muted small" style="margin:4px 0 8px">${draft ? 'Things that happen once, together with the plan, dated the first of the go-live month: move money from one category to another, or retire a category.' : 'These happened once, when the plan went live.'}</p>
+      <p class="muted small" style="margin:4px 0 8px">${draft ? 'Things that happen once, together with the plan, dated the first of the go-live month: move money from one category to another, or retire a category. For a later month they wait until it begins, and then happen together, moves first.' : 'These happen once, together, when the plan goes live.'}</p>
       ${acts.map((a) => html`<div class="row paction"><span class="grow">${a.kind === 'move' ? html`Move <b>${money(a.cents)}</b> from <b>${a.name}</b> to <b>${a.to_name}</b>` : html`Retire <b>${a.name}</b>${a.to_name ? html`, moving what is left to <b>${a.to_name}</b>` : ', leaving what is left in it'}`}</span>
+        ${draft ? nothing : this.actionState(a)}
         ${draft ? html`<button class="icon rm-action" title="Remove" aria-label="Remove this action" @click=${() => this.removeAction(a.id)}>✕</button>` : nothing}</div>`)}
       ${draft ? html`<div class="row" style="margin-top:8px"><button class="add-move" @click=${() => this.addMove()}>＋ Move money</button><button class="add-retire" @click=${() => this.addRetire()}>＋ Retire a category</button></div>` : nothing}</div>`;
+  }
+  actionState(a: any) {
+    if (a.applied_at) return html`<span class="badge good">done ${a.applied_at}</span>`;
+    const when = `${this.cur.plan.effective_month}-01`;
+    return html`<span class="badge warn">scheduled for ${when}</span>${a.error ? html`<div class="err small">${a.error}</div>` : nothing}`;
   }
   async pickable() {
     const all: any[] = await api.get('/api/categories');
@@ -141,7 +147,7 @@ export class Plans extends Page {
   async addRetire() {
     const cats = await this.pickable(); const taken = new Set(this.cur.actions.filter((a: any) => a.kind === 'retire').map((a: any) => a.category_id));
     const f = { cat: 0, to: 0, err: '' };
-    const ok = await showDialog<boolean>((close, update) => html`<h3 class="title">Retire a category at go-live</h3><p class="muted">Its monthly amount drops to zero from the go-live month and it stops appearing in pickers. History stays. It can only be retired in the current month or an earlier one, and not while it is overspent.</p>
+    const ok = await showDialog<boolean>((close, update) => html`<h3 class="title">Retire a category at go-live</h3><p class="muted">Its monthly amount drops to zero from the go-live month and it stops appearing in pickers. History stays. It is retired when the plan goes live: straight away if the plan starts this month, otherwise on the first of its month, together with any money moves. It cannot be retired while it is overspent.</p>
         <div class="stack"><label class="stack" style="gap:4px">Category<select aria-label="Category" @change=${(e: any) => { f.cat = Number(e.target.value); update(); }}><option value="">Choose…</option>${this.options(cats.filter((c) => !taken.has(c.id)))}</select></label>
           <label class="stack" style="gap:4px">Move what is left to<select aria-label="Move what is left to" @change=${(e: any) => { f.to = Number(e.target.value); update(); }}><option value="">Leave it in the category</option>${this.options(cats.filter((c) => c.id !== f.cat))}</select></label>
           ${f.err ? html`<p class="err" role="alert">${f.err}</p>` : nothing}</div>
@@ -164,8 +170,9 @@ export class Plans extends Page {
       <div class="diff-wrap"><table class="diff-table"><thead><tr>${th('Category', 'A category whose monthly amount changes.')}${th('Old', 'Monthly amount before this plan.', 'num')}${th('New', 'Monthly amount if you go live.', 'num')}${th('Δ', 'New minus old.', 'num')}${d.touchesBalances ? th('Balance Δ', 'How much this category\'s current balance changes because the go-live month\'s (and any earlier months\') budget changes.', 'num') : nothing}</tr></thead><tbody>
         ${d.rows.map((r: any) => html`<tr><td>${r.name}${r.retiring ? html` <span class="badge warn">retiring</span>` : nothing}</td><td class="num">${money(r.oldCents)}</td><td class="num">${money(r.newCents)}</td><td class="num">${money(r.deltaCents, { sign: true })}</td>${d.touchesBalances ? html`<td class="num">${money(r.restatedBalanceDeltaCents, { sign: true })}</td>` : nothing}</tr>`)}</tbody></table></div>` : html`<p class="muted small">No category's monthly amount changes.</p>`}
       ${d.moves.length ? html`<h3 style="margin:14px 0 4px">Move money</h3>${d.moves.map((m: any) => html`<div class="gl-line"><b>${money(m.cents)}</b> from ${m.fromName} to ${m.toName}, dated ${m.date}.
-        <div class="muted small">${m.fromName} will hold ${money(m.fromAfterCents)}; ${m.toName} will hold ${money(m.toAfterCents)}.</div>${m.warning ? html`<div class="err small">${m.warning}</div>` : nothing}</div>`)}` : nothing}
-      ${d.retires.length ? html`<h3 style="margin:14px 0 4px">Retire</h3>${d.retires.map((r: any) => html`<div class="gl-line"><b>${r.name}</b> is retired from ${d.effectiveMonth}; its monthly amount drops to $0.00.
+        <div class="muted small">${m.fromName} will hold ${money(m.fromAfterCents)}; ${m.toName} will hold ${money(m.toAfterCents)}.</div>${m.scheduled ? html`<div class="muted small">Scheduled: it happens on ${m.date}, when that month begins, together with the retirements below. Nothing moves today.</div>` : nothing}${m.warning ? html`<div class="err small">${m.warning}</div>` : nothing}</div>`)}` : nothing}
+      ${d.retires.length ? html`<h3 style="margin:14px 0 4px">Retire</h3>${d.retires.map((r: any) => html`<div class="gl-line"><b>${r.name}</b> is retired from ${d.effectiveMonth}; its monthly amount drops to $0.00 from then.
+        ${r.scheduled ? html`<div class="muted small">Scheduled: it stays active, and keeps taking transactions, until ${d.effectiveMonth}-01, then is retired together with the moves above.</div>${r.warning ? html`<div class="err small">${r.warning}</div>` : nothing}` : nothing}
         ${r.canRetire ? html`<div class="muted small">${money(r.leftoverCents)} will be left in it${r.moveToName ? html`, and moves to ${r.moveToName}` : ' and stays there'}.${r.rulesOff ? ` ${r.rulesOff} rule${r.rulesOff === 1 ? '' : 's'} that file into it will be turned off.` : ''}</div>` : html`<div class="err small">${r.reason}</div>`}</div>`)}` : nothing}
       ${d.retroactive ? html`<p class="err"><b>This restates history.</b> Balances change as shown. Type RESTATE to confirm.</p><input aria-label="Type RESTATE" .value=${this.confirmText} @input=${(e: any) => (this.confirmText = e.target.value)} />` : nothing}
       <div class="row" style="margin-top:12px"><button @click=${() => (this.diff = null)}>Cancel</button><button class="primary" ?disabled=${blocked} @click=${() => this.go()}>Confirm</button></div></dialog>`;

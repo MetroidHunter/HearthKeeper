@@ -45,16 +45,14 @@ describe('plans API', () => {
     expect((await call('GET', `/api/plans/${draft}/diff?month=2026-10`)).json().retires).toEqual([]);
   });
 
-  it('go-live: a blocked plan is a 400 with the reason, a good one applies the moves', async () => {
+  it('go-live: a bad month is a 400; a retirement for a later month is scheduled, not applied', async () => {
     const { h, call, draft } = api();
     await call('POST', `/api/plans/${draft}/actions`, { kind: 'retire', categoryId: h.cats['Manicure'] });
-    const bad = await call('POST', `/api/plans/${draft}/make-live`, { effectiveMonth: '2026-12' });
-    expect(bad.statusCode).toBe(400); expect(bad.json().error).toMatch(/Manicure/);
-    const diffBad = await call('GET', `/api/plans/${draft}/diff?month=bad`);
-    expect(diffBad.statusCode).toBe(400);
-    const ok = await call('POST', `/api/plans/${draft}/make-live`, { effectiveMonth: '2026-10' });
-    expect(ok.statusCode).toBe(200);
-    expect((h.db.prepare('SELECT status FROM categories WHERE id=?').get(h.cats['Manicure']) as any).status).toBe('retired');
+    expect((await call('POST', `/api/plans/${draft}/make-live`, { effectiveMonth: 'bad' })).statusCode).toBe(400);
+    expect((await call('GET', `/api/plans/${draft}/diff?month=bad`)).statusCode).toBe(400);
+    expect((await call('POST', `/api/plans/${draft}/make-live`, { effectiveMonth: '2026-12' })).statusCode).toBe(200);
+    expect((h.db.prepare('SELECT status FROM categories WHERE id=?').get(h.cats['Manicure']) as any).status).toBe('active');
+    expect((await call('GET', `/api/plans/${draft}`)).json().actions[0]).toMatchObject({ kind: 'retire', applied_at: null });
   });
 
   it('cancels a scheduled plan (back to a draft); anything else is a 400', async () => {

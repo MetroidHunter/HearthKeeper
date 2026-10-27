@@ -92,11 +92,14 @@ describe('plan actions: move money and retire at go-live', () => {
     expect(checkInvariants(h.db)).toEqual([]);
   });
 
-  it('a move into next month does not touch this month\'s balances', () => {
+  it('a move for next month waits: nothing moves at go-live, and it lands on the first of that month', async () => {
+    const { applyDuePlanActions } = await import('../src/core/plans.js');
     const { h, draft } = scene();
     const before = categoryBalance(h.db, h.cats['Groceries'], TODAY).total!;
     addPlanAction(h.db, draft, { kind: 'move', fromCategoryId: h.cats['Groceries'], toCategoryId: h.cats['Manicure'], cents: 25000 });
     makeLive(h.db, draft, { effectiveMonth: '2026-11', today: TODAY });
+    expect(categoryBalance(h.db, h.cats['Groceries'], '2026-11-01').total).toBe(before + 80000);
+    applyDuePlanActions(h.db, '2026-11-01');
     expect(categoryBalance(h.db, h.cats['Groceries'], TODAY).total).toBe(before);
     expect(categoryBalance(h.db, h.cats['Groceries'], '2026-11-01').total).toBe(before + 80000 - 25000);
   });
@@ -135,7 +138,7 @@ describe('plan actions: move money and retire at go-live', () => {
     expect(checkInvariants(h.db)).toEqual([]);
   });
 
-  it('a retirement is blocked when the envelope is overspent, and when the go-live month is still in the future', () => {
+  it('a retirement is blocked when the envelope is overspent', () => {
     const { h, draft } = scene();
     addPlanAction(h.db, draft, { kind: 'retire', categoryId: h.cats['Fees and Taxes'] });
     h.db.prepare('UPDATE categories SET start_month=? WHERE id=?').run('2026-10', h.cats['Fees and Taxes']);
@@ -146,22 +149,22 @@ describe('plan actions: move money and retire at go-live', () => {
     expect(d.retires[0].canRetire).toBe(false);
     expect(d.blockers.join(' ')).toMatch(/Fees and Taxes/);
     expect(() => makeLive(h.db, draft, { effectiveMonth: '2026-10', today: TODAY })).toThrow(/Cannot|retire/i);
-    // future month: retiring would take effect immediately, so it is refused with that reason
-    const s = scene();
-    addPlanAction(s.h.db, s.draft, { kind: 'retire', categoryId: s.h.cats['Manicure'] });
-    const f = diffPlan(s.h.db, s.draft, '2026-12', TODAY);
-    expect(f.blockers.join(' ')).toMatch(/Manicure.*(current|past|already)/i);
-    expect(() => makeLive(s.h.db, s.draft, { effectiveMonth: '2026-12', today: TODAY })).toThrow();
-    expect((s.h.db.prepare('SELECT status FROM categories WHERE id=?').get(s.h.cats['Manicure']) as any).status).toBe('active');
+    // a later month is not a blocker any more: the retirement waits for it
+    const s2 = scene();
+    addPlanAction(s2.h.db, s2.draft, { kind: 'retire', categoryId: s2.h.cats['Manicure'] });
+    expect(diffPlan(s2.h.db, s2.draft, '2026-12', TODAY).blockers).toEqual([]);
   });
 
   it('a blocked go-live changes nothing (atomic)', () => {
     const { h, draft } = scene();
+    h.db.prepare("INSERT INTO transactions(account_id, occurred_on, amount_cents, kind, status) VALUES (?,?,?,?,?)").run(h.chase, '2026-10-02', -9000000, 'spending', 'posted');
+    const tid = (h.db.prepare('SELECT MAX(id) id FROM transactions').get() as any).id;
+    h.db.prepare("INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, origin) VALUES (?,?,?, 'user')").run(tid, h.cats['Manicure'], -9000000);
     addPlanAction(h.db, draft, { kind: 'move', fromCategoryId: h.cats['Groceries'], toCategoryId: h.cats['Eating Out'], cents: 1000 });
     addPlanAction(h.db, draft, { kind: 'retire', categoryId: h.cats['Manicure'] });
     setPlanItem(h.db, draft, h.cats['Groceries'], 1);
-    expect(() => makeLive(h.db, draft, { effectiveMonth: '2026-12', today: TODAY })).toThrow();
-    expect(currentAllocation(h.db, '2026-12').byCategory[h.cats['Groceries']]).toBe(80000);
+    expect(() => makeLive(h.db, draft, { effectiveMonth: '2026-10', today: TODAY })).toThrow(/Manicure/);
+    expect(currentAllocation(h.db, '2026-10').byCategory[h.cats['Groceries']]).toBe(80000);
     expect(h.db.prepare("SELECT COUNT(*) n FROM envelope_transfers WHERE kind='manual'").get()).toEqual({ n: 0 });
     expect((h.db.prepare('SELECT status FROM budget_plans WHERE id=?').get(draft) as any).status).toBe('draft');
   });

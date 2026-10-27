@@ -158,4 +158,9 @@ CREATE TABLE budget_plan_actions(id INTEGER PRIMARY KEY, plan_id INTEGER NOT NUL
 -- what a go-live displaced (budget versions it deleted or overwrote, the plan that was live, its transfers), so a plan that has not taken effect yet can be cancelled cleanly
 ALTER TABLE budget_plans ADD COLUMN undo_json TEXT;
 `,
+`
+-- a plan's moves and retirements for a later month wait until it arrives: applied_at is the day each happened, error why a retirement could not
+ALTER TABLE budget_plan_actions ADD COLUMN applied_at TEXT;
+ALTER TABLE budget_plan_actions ADD COLUMN error TEXT;
+`,
 ];

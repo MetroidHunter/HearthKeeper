@@ -261,17 +261,27 @@ for (const [name, width, height] of [['desktop', 1280, 800], ['mobile', 390, 844
       expect(pets.id).to.be.greaterThan(0);
     });
 
-    it('a retirement cannot go live for a future month: the dialog says why and Confirm is off', async () => {
+    it('a retirement for a later month is scheduled with the plan: the category stays active, and nothing moves, until the month arrives', async () => {
       const draft = await draftFromApi();
-      const pets = await cat('Pets');
-      await api(`/api/plans/${draft}/actions`, { method: 'POST', body: { kind: 'retire', categoryId: pets.id } });
+      const [pets, groceries, eo] = [await cat('Pets'), await cat('Groceries'), await cat('Eating Out')];
+      await api(`/api/plans/${draft}/actions`, { method: 'POST', body: { kind: 'retire', categoryId: pets.id, moveBalanceTo: groceries.id } });
+      await api(`/api/plans/${draft}/actions`, { method: 'POST', body: { kind: 'move', fromCategoryId: groceries.id, toCategoryId: eo.id, cents: 1000 } });
       await mount(`/plans/${draft}`);
-      await waitFor(() => $$('.paction').length === 1, 'action listed');
+      await waitFor(() => $$('.paction').length === 2, 'actions listed');
       setInput($('input[type=month]'), nextMonth(), 'change');
       byText('button', /Make live/).click();
       const d = await waitFor(dlg, 'dialog');
-      expect(text(d)).to.match(/cannot be retired/i).and.to.contain('Pets');
-      expect(byText('button', /^Confirm$/, d).disabled).to.equal(true);
+      const t = text(d);
+      expect(t).to.match(/scheduled/i).and.to.contain(`${nextMonth()}-01`).and.to.match(/nothing moves today/i).and.to.match(/stays active/i);
+      expect(t).to.not.match(/cannot be retired/i);
+      expect(byText('button', /^Confirm$/, d).disabled).to.equal(false);
+      expect(d.scrollWidth).to.be.at.most(d.clientWidth + 1);
+      byText('button', /^Confirm$/, d).click();
+      await waitFor(async () => (await api('/api/plans')).find((p) => p.id === draft).phase === 'scheduled', 'scheduled');
+      expect((await cat('Pets')).status, 'still active until the month').to.equal('active');
+      expect((await api('/api/transfers')).filter((x) => x.kind === 'manual')).to.have.length(0);
+      await waitFor(() => $$('.paction').length === 2 && $$('.paction').every((a) => /scheduled for/.test(text(a)) && text(a).includes(`${nextMonth()}-01`)), 'actions show as scheduled');
+      expect($('.rm-action'), 'no longer editable').to.equal(null);
       noSideScroll();
     });
   });

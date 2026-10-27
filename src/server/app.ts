@@ -6,7 +6,7 @@ import { audit } from '../core/db.js';
 import { registerAuth, type AuthConfig } from './auth.js';
 import { addCategory, budgetHistory, retireCategory, retirePreview, rulesForCategory, unretireCategory, setBudget } from '../core/categories.js';
 import { budgetPage, budgetPie, explore, inbox, spendBy, monthPeriod, transactionContext } from '../core/reports.js';
-import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust, planPhase, planDetail, cancelScheduled, addPlanAction, removePlanAction } from '../core/plans.js';
+import { createPlan, setPlanItem, assignScenario, diffPlan, makeLive, planHeader, bulkAdjust, planPhase, planDetail, cancelScheduled, applyDuePlanActions, addPlanAction, removePlanAction } from '../core/plans.js';
 import { createScenario, scenarioLines, setScenarioLines, scenarioMonthlyNet, lineMetrics, cloneScenario } from '../core/earnings.js';
 import { proposeRebalance, commitRebalance, placePool, manualTransfer, adjustment } from '../core/transfers.js';
 import { monthlySpend, categoryTrend, incomeVsSpend, treemap, yearPivot, budgetVsActual } from '../core/analytics.js';
@@ -51,6 +51,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
   const BIG = { bodyLimit: 25 * 1024 * 1024 };
   app.addHook('onSend', async (req, reply) => { if ((req.routeOptions?.url ?? '').startsWith('/api/')) reply.header('cache-control', 'no-store'); }); // never let a proxy or the browser keep financial JSON
   const now = opts.now ?? today;
+  app.addHook('preHandler', async (req) => { if (req.url.startsWith('/api/')) { try { applyDuePlanActions(db, now()); } catch (e) { console.error('plan actions', e); } } }); // a plan's moves and retirements for a month that has arrived
   registerAllParsers();
   registerAuth(app, opts.auth, opts.verifyIdToken);
   app.get('/healthz', async () => ({ ok: true }));
