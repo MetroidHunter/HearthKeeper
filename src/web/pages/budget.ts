@@ -10,6 +10,12 @@ import { weeklyCard, weeklyDialog } from '../weekly.js';
 /** Whole dollars, for the yearly figure on a phone where width is tight. */
 const whole = (c: number) => `$${Math.round(c / 100).toLocaleString('en-US')}`;
 
+const NEGATIVE = 'Negative balance', OVER = 'Over monthly budget';
+const GROUP_NOTE: Record<string, string> = {
+  [NEGATIVE]: 'These envelopes are below $0. Move money into them (or recategorize the spending) to fix them.',
+  [OVER]: 'Spent more than this month\'s amount but still have money. Often normal for envelopes used once a year or once a quarter.',
+};
+
 @customElement('hk-budget')
 export class Budget extends Page {
   @state() data: any = null; @state() weekly: any[] = []; @state() view: 'table' | 'pie' = 'table'; @state() pieMode: 'allocated' | 'spent' = 'allocated'; @state() pie: any = null; @state() drill: string | null = null; @state() editing: any = null; @state() editV = ''; @state() editM = ''; @state() q = '';
@@ -44,10 +50,13 @@ export class Budget extends Page {
     const h = d.header; const groups = new Map<string, any[]>();
     const needle = this.q.trim().toLowerCase();
     const matching = d.rows.filter((x: any) => !needle || x.name.toLowerCase().includes(needle) || (x.group ?? '').toLowerCase().includes(needle));
-    const isOver = (x: any) => x.kind === 'expense' && x.spent[0] > x.targetCents; // the same test as the red pace bar
-    const over = matching.filter(isOver);
-    if (over.length) groups.set('Over budget', over); // over-budget envelopes lead the page, out of their usual groups
-    for (const r of matching.filter((x: any) => !isOver(x))) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
+    const isNegative = (x: any) => x.currentCents < 0; // the envelope itself is below zero: needs fixing now
+    const isOver = (x: any) => x.kind === 'expense' && x.spent[0] > x.targetCents; // the same test as the red pace bar: spent more than this month's amount, which can be normal for a yearly or quarterly envelope
+    const negative = matching.filter(isNegative);
+    const over = matching.filter((x: any) => !isNegative(x) && isOver(x));
+    if (negative.length) groups.set(NEGATIVE, negative); // these lead the page, out of their usual groups; an envelope that is both appears only here
+    if (over.length) groups.set(OVER, over);
+    for (const r of matching.filter((x: any) => !isNegative(x) && !isOver(x))) (groups.get(r.group ?? 'Other') ?? groups.set(r.group ?? 'Other', []).get(r.group ?? 'Other')!).push(r);
     const unc = d.uncategorized;
     return html`${pageHead('Budget', 'Every envelope, grouped, with what you planned for it each month, what is left in it, and how this month is going. Money you do not spend stays in the envelope and rolls forward.', 'Click a category to see its history and transactions. Use the pencil to change a monthly amount; the old value is kept in its timeline. ☆ pins a category to Home.')}
       ${this.err ? html`<p class="err">${this.err}</p>` : nothing}
@@ -66,6 +75,7 @@ export class Budget extends Page {
   }
   group(name: string, rows: any[]) {
     return html`<section class="card flush group" data-group=${name}><div class="row" style="padding:16px 16px 8px"><h3 class="grow" style="font-size:19px">${name}</h3></div>
+      ${GROUP_NOTE[name] ? html`<p class="muted small group-note" style="margin:0;padding:0 16px 8px">${GROUP_NOTE[name]}</p>` : nothing}
       <div class="btable" style="overflow-x:auto"><table style="font-size:16px"><thead><tr>${th('Category', 'The envelope. Click a row for its history and transactions.')}${th('Target', 'Monthly amount planned for this envelope. Use the pencil to change it.', 'num')}${th('Current', 'What is in the envelope now: everything accrued so far, minus spending, plus or minus transfers.', 'num')}${th('Spent (this)', 'Spent this period (net of refunds). For income categories this shows what came in.', 'num')}${th('Spent (last)', 'Same, for the previous period.', 'num hide-sm')}${th('Pace', 'Spent this period against the monthly target. Red means over.', 'hide-sm')}</tr></thead>
         <tbody>${rows.map((r) => html`<tr class="clickable" @click=${() => (location.hash = `#/categories/${r.id}`)}>
           <td style="padding:12px"><span class="row" style="gap:8px"><button class="link icon fav" title=${r.favorite ? 'Remove from Home favorites' : 'Pin to Home favorites'} aria-label="Toggle favorite" @click=${(e: Event) => { e.stopPropagation(); this.toggleFavorite(r); }}>${r.favorite ? '★' : '☆'}</button><b style="font-weight:600">${r.name}</b></span></td>
