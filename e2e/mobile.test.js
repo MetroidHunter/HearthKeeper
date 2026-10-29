@@ -46,8 +46,12 @@ describe('Budget on a phone (390px wide)', () => {
     expect(location.hash).to.equal('#/budget');
     const dlg = $('dialog[open]').getBoundingClientRect(); expect(dlg.left).to.be.at.least(0); expect(dlg.right).to.be.at.most(window.innerWidth);
     byText('button', /^Cancel$/, $('dialog[open]')).click();
-    // tapping the row goes to the category
-    row.click(); await waitFor(() => /#\/categories\/\d+/.test(location.hash), 'category page');
+    // tapping the row opens the quick view (it fits the screen); its link goes to the category
+    row.click(); await waitFor(() => $('dialog.quickview[open]'), 'quick view');
+    expect(location.hash).to.equal('#/budget');
+    const qv = $('dialog.quickview').getBoundingClientRect(); expect(qv.left).to.be.at.least(0); expect(qv.right).to.be.at.most(window.innerWidth);
+    expect($('dialog.quickview').scrollWidth, 'nothing cut off sideways').to.be.at.most($('dialog.quickview').clientWidth + 1);
+    $('dialog.quickview a.qv-open').click(); await waitFor(() => /#\/categories\/\d+/.test(location.hash), 'category page');
   });
 
   it('the page explanation starts folded on a phone and remembers when you open it', async () => {

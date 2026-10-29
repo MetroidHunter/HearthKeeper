@@ -4,6 +4,7 @@ import { Page } from '../base.js';
 import { api, money, parseMoney } from '../api.js';
 import { thisMonth } from '../shared.js';
 import { pageHead, th, showDialog, confirmBox } from '../ui.js';
+import { backLink } from '../nav.js';
 import { draw, theme, PALETTE } from '../charts.js';
 
 const monthLabel = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -82,7 +83,7 @@ export class Plans extends Page {
   detail() {
     const c = this.cur; const p = c.plan; const draft = p.status === 'draft'; const h = c.header;
     const canGo = c.phase === 'draft' || c.phase === 'archived';
-    return html`<div class="plan-back"><a href="#/plans">← Plans</a></div>
+    return html`<div class="plan-back">${backLink('/plans')}</div>
       ${pageHead(p.name, 'This plan as a budget: every category with its monthly amount, grouped, and a pie of where the money goes. A draft can be edited; make it live to start using it.', 'Add moves or retirements under "At go-live" and they happen once, together with the plan, in the month you pick.')}${this.err ? html`<p class="err">${this.err}</p>` : nothing}
       <div class="row" style="margin-bottom:10px"><span class="badge plan-phase ${c.phase === 'live' ? 'good' : 'warn'}">${phaseText({ phase: c.phase, effective_month: p.effective_month })}</span>
         ${p.status !== 'draft' ? html`<button @click=${() => this.create('plan', p.id)}>Clone</button>` : nothing}

@@ -4,6 +4,7 @@ import { Page } from '../base.js';
 import { api, money, parseMoney, fmtDate } from '../api.js';
 import { thisMonth, ruleSummary, type Cat } from '../shared.js';
 import { pageHead, th, catSelect, showDialog, toast, withBusy } from '../ui.js';
+import { backLink } from '../nav.js';
 
 const balClass = (c: number | null | undefined) => (c == null ? 'muted' : c < 0 ? 'neg' : c > 0 ? 'pos' : '');
 const ruleLine = (r: any) => html`<div class="cat-rule">${ruleSummary(r)} <span class="badge">${r.mode}</span>${r.enabled ? nothing : html` <span class="badge warn">off</span>`}</div>`;
@@ -86,7 +87,7 @@ export class Categories extends Page {
   }
   detailView() {
     const d = this.detail; const c = d.category;
-    return html`<div class="row"><a href="#/categories">← Categories</a>${c.status === 'retired' && c.name.toLowerCase() !== 'needs category' ? html`<button class="unretire primary right" @click=${() => this.unretire(c)}>Unretire</button>` : nothing}</div><h1>${c.name} ${c.status === 'retired' ? html`<span class="badge">retired</span>` : nothing}</h1>
+    return html`<div class="row">${backLink('/categories')}${c.status === 'retired' && c.name.toLowerCase() !== 'needs category' ? html`<button class="unretire primary right" @click=${() => this.unretire(c)}>Unretire</button>` : nothing}</div><h1>${c.name} ${c.status === 'retired' ? html`<span class="badge">retired</span>` : nothing}</h1>
       <div class="grid2"><div class="card"><div class="muted">Balance</div><b style="font-size:22px">${money(d.balance.total)}</b><div class="bal-parts"><div><div class="muted small">Transactions</div><b>${money(d.balance.splits)}</b></div><div><div class="muted small">Transfers</div><b>${money(d.balance.transfers)}</b></div><div><div class="muted small">Accrued</div><b>${money(d.balance.accrued)}</b></div></div></div>
         <div class="card"><div class="muted">Budget history</div>${d.history.map((h: any) => html`<div class="row"><span>${h.effective_month}</span><span>${h.from_cents == null ? 'start' : money(h.from_cents)} → <b>${money(h.monthly_cents)}</b></span><span class="muted">${h.reason ?? ''}${h.plan_id ? ` · plan #${h.plan_id}` : ''}</span></div>`)}</div></div>
       <h2>Rules pointing here</h2><div class="card">${d.rules.length ? d.rules.map(ruleLine) : html`<span class="muted">None.</span>`}</div>

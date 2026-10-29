@@ -31,10 +31,11 @@ export function clickedBackdrop(d: HTMLDialogElement, e: MouseEvent) {
 
 /* ---------- dialogs: native <dialog>, shown modally, so they always sit on top of the page ---------- */
 /** `dismiss` (default true): a click outside closes it. The body gets `update` to re-render itself. Dialogs that ask for a decision pass false so a stray click never answers them (Esc still cancels). */
-export function showDialog<T = undefined>(body: (close: (v?: T) => void, update: () => void) => TemplateResult, opts: { wide?: boolean; dismiss?: boolean } = {}): Promise<T | undefined> {
+export function showDialog<T = undefined>(body: (close: (v?: T) => void, update: () => void) => TemplateResult, opts: { wide?: boolean; dismiss?: boolean; className?: string } = {}): Promise<T | undefined> {
   return new Promise((resolve) => {
     const d = document.createElement('dialog');
     if (opts.wide) d.classList.add('wide');
+    if (opts.className) d.classList.add(opts.className);
     document.body.append(d);
     let done = false;
     const close = (v?: T) => { if (done) return; done = true; d.close(); resolve(v); };

@@ -2,6 +2,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { flushQueue } from './api.js';
 import { applyTheme } from './ui.js';
+import { initNav } from './nav.js';
 import './pages/home.js';
 import './pages/budget.js';
 import './pages/transactions.js';
@@ -79,6 +80,7 @@ export class HkApp extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     applyTheme();
+    initNav();
     document.addEventListener('mousedown', (e) => { if (!(e.target as HTMLElement).closest?.('nav details')) this.closeMenus(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenus(); });
     this.loadAuth();

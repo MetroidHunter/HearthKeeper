@@ -84,7 +84,7 @@ describe('Months checklist and dashboard', () => {
     await waitFor(() => $('.needs-chip'), 'filter chip');
     expect(text($('.needs-chip'))).to.match(/need a category/);
     await waitFor(() => new RegExp(`of ${want}\\b`).test(text($('.pager'))), `the pager to show all ${want} (not the empty "of 0" it starts with)`);
-    byText('button', /Back to Months/).click();
+    byText('a.back', /Back/).click();
     await waitFor(() => $('details.month'), 'back on Months');
   });
 

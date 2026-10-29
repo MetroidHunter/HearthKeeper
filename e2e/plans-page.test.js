@@ -38,7 +38,7 @@ for (const [name, width, height] of [['desktop', 1280, 800], ['mobile', 390, 844
       dr.click();
       await waitFor(() => location.hash === `#/plans/${draft}`, 'the plan route');
       await waitFor(() => text($('h1')) === 'Table draft', 'the plan page');
-      byText('a', /Plans$/, $('.plan-back')).click();
+      $('.plan-back .back').click();
       await waitFor(() => $('table.plans-table'), 'back on the list');
     });
 
