@@ -163,4 +163,8 @@ ALTER TABLE budget_plans ADD COLUMN undo_json TEXT;
 ALTER TABLE budget_plan_actions ADD COLUMN applied_at TEXT;
 ALTER TABLE budget_plan_actions ADD COLUMN error TEXT;
 `,
+`
+-- a tip you added by hand to a pending charge: amount_cents already includes it, so the bank file's total pairs with the alert exactly
+ALTER TABLE transactions ADD COLUMN tip_cents INTEGER NOT NULL DEFAULT 0;
+`,
 ];

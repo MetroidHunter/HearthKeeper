@@ -50,6 +50,25 @@ export function setSplits(db: DB, txnId: number, splits: SplitIn[], decidedBy: '
   })();
 }
 
+/**
+ * Put the tip you know about on a pending charge, so the amount is what the bank will post and the bank file pairs with it exactly (design §8.6) instead of
+ * by tolerance. The tip is stored, so setting it again replaces it (0 takes it off). It rides on the last split, which keeps the splits equal to the amount.
+ */
+export function setTip(db: DB, txnId: number, tipCents: number, actor = 'user'): void {
+  if (!Number.isInteger(tipCents) || tipCents < 0) throw new Error('The tip must be a whole number of cents, zero or more');
+  const t = db.prepare('SELECT kind, status, amount_cents, tip_cents FROM transactions WHERE id=?').get(txnId) as { kind: Kind; status: string; amount_cents: number; tip_cents: number } | undefined;
+  if (!t) throw Object.assign(new Error('Transaction not found'), { statusCode: 404 });
+  if (!['provisional', 'stale'].includes(t.status) || t.kind === 'ignored') throw new Error('A tip can only be added to a pending charge: a posted one already has the tip in its amount');
+  if (t.kind !== 'spending' || t.amount_cents >= 0) throw new Error('A tip can only be added to spending');
+  const delta = -(tipCents - t.tip_cents); // spending is negative: more tip, more negative
+  db.transaction(() => {
+    db.prepare('UPDATE transactions SET amount_cents=amount_cents+?, tip_cents=?, version=version+1 WHERE id=?').run(delta, tipCents, txnId);
+    const last = db.prepare('SELECT id FROM transaction_splits WHERE transaction_id=? ORDER BY id DESC LIMIT 1').get(txnId) as { id: number } | undefined;
+    if (last) db.prepare('UPDATE transaction_splits SET amount_cents=amount_cents+? WHERE id=?').run(delta, last.id);
+    audit(db, 'transaction', txnId, 'tip', { tipCents: t.tip_cents, amountCents: t.amount_cents }, { tipCents, amountCents: t.amount_cents + delta }, actor);
+  })();
+}
+
 export function ignoreTransaction(db: DB, txnId: number, reason: string, actor = 'system'): void {
   db.transaction(() => {
     db.prepare('DELETE FROM transaction_splits WHERE transaction_id=?').run(txnId);

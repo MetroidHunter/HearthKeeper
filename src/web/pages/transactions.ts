@@ -80,11 +80,26 @@ export class Transactions extends Page {
     api.get(`/api/transactions/${t.id}/history`).then((h) => { this.hist = h; });
   }
   async loadItems(t: any) { await this.run(async () => { this.items = await api.get(`/api/transactions/${t.id}/item-splits`); if (this.items?.status === 'proposed') this.rows_ = this.items.items.map((i: any) => ({ categoryId: i.categoryId, cents: i.cents })); }); }
+  /** A pending charge's tip, typed in by hand: the amount becomes what the bank will post, so the bank file pairs with it exactly. */
+  tipBox(t: any) {
+    const apply = async (cents: number) => {
+      if (!Number.isFinite(cents) || cents < 0) { this.err = 'Type the tip as an amount, like 4.00'; this.requestUpdate(); return; }
+      await this.run(() => api.post(`/api/transactions/${t.id}/tip`, { tipCents: cents }));
+      if (this.err) return;
+      await this.load();
+      const fresh = this.rows.find((r) => r.id === t.id);
+      if (fresh) this.openTxn(fresh); else this.open = null;
+    };
+    const read = () => parseMoney((this.querySelector('input.tipamt') as HTMLInputElement | null)?.value || '0');
+    return html`<h2>Tip</h2><p class="muted small" style="margin:0 0 4px">${t.tip_cents ? `This amount includes a ${money(t.tip_cents)} tip.` : 'Not posted yet. If you know the tip, add it so the bank file matches this charge exactly.'}</p>
+      <div class="row tiprow"><input class="tipamt" aria-label="Tip" inputmode="decimal" placeholder="0.00" .value=${t.tip_cents ? (t.tip_cents / 100).toFixed(2) : ''} /><button class="add-tip" @click=${() => apply(read())}>${t.tip_cents ? 'Update tip' : 'Add tip'}</button>${t.tip_cents ? html`<button class="remove-tip" @click=${() => apply(0)}>Remove tip</button>` : nothing}</div>`;
+  }
   detail() {
     const t = this.open; const rows = this.rows_;
     const sum = () => rows.reduce((a: number, r: any) => a + r.cents, 0);
     return html`<dialog class="txn-detail" @close=${() => { if (this.open) this.open = null; }} @click=${(e: MouseEvent) => { if (clickedBackdrop(e.currentTarget as HTMLDialogElement, e)) this.open = null; }}><h2>${t.descriptor_raw}</h2><div class="muted">${t.occurred_on} · ${t.account} · ${money(t.amount_cents)} ${t.decided_by ? `· decided by ${t.decided_by}${t.decided_rule_id ? ` (rule #${t.decided_rule_id})` : ''}` : ''}</div>
       ${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<p>Hidden: ${t.ignored_reason}. <button @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/restore`)); this.open = null; this.load(); }}>Restore</button></p>` : html`
+      ${(t.status === 'provisional' || t.status === 'stale') && t.kind === 'spending' ? this.tipBox(t) : nothing}
       <h2>Splits</h2>${rows.map((r: any, i: number) => html`<div class="splitrow"><span class="splitcat">${catSelect(this.cats, r.categoryId, (id) => (r.categoryId = id), { includeRetired: true })}</span>
         <input class="splitamt" aria-label="Amount" .value=${(r.cents / 100).toFixed(2)} @change=${(e: any) => { r.cents = parseMoney(e.target.value); this.requestUpdate(); }} />${rows.length > 1 ? html`<button class="icon splitdel" aria-label="Remove this part" @click=${() => { rows.splice(i, 1); this.requestUpdate(); }}>✕</button>` : ''}</div>`)}
       <div class="row"><button @click=${() => { rows.push({ categoryId: null, cents: 0 }); this.requestUpdate(); }}>＋ split</button>

@@ -14,7 +14,7 @@ import { monthsOverview, NEEDS_WHERE } from '../core/months.js';
 import { answerCategory } from '../core/answers.js';
 import { merchantHistory } from '../core/merchants.js';
 import { dismissNotice } from '../core/notices.js';
-import { setSplits, ignoreTransaction, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
+import { setSplits, ignoreTransaction, setTip, restoreTransaction, createTransaction, classify } from '../core/transactions.js';
 import { addRule, backtest, type RuleMatch } from '../core/rules.js';
 import { categoryBalance, checkInvariants, getVersions, monthlyAmount } from '../core/balance.js';
 import { authenticate, captureEvent, shapes, decideShape, replay, parseEvent, silentTokens, createToken, type Source } from '../ingest/events.js';
@@ -255,6 +255,7 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     void opts.notifier?.retract(id, userIdOf(req)); // the first answer closes the prompt on the other phone
     return out;
   });
+  app.post('/api/transactions/:id/tip', async (req: any) => { setTip(db, Number(req.params.id), rec(req.body).tipCents, actor(req)); return { ok: true }; });
   app.post('/api/transactions/:id/ignore', async (req: any) => { ignoreTransaction(db, Number(req.params.id), rec(req.body).reason ?? 'user', actor(req)); return { ok: true }; });
   app.post('/api/transactions/:id/restore', async (req: any) => { restoreTransaction(db, Number(req.params.id)); return { ok: true }; });
   app.patch('/api/transactions/:id', async (req: any) => {
