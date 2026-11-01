@@ -5,6 +5,7 @@ import { api, money, parseMoney, fmtDate } from '../api.js';
 import { amt, type Cat } from '../shared.js';
 import { pageHead, th, catSelect, clickedBackdrop, pendingBadge, promptBox, toast } from '../ui.js';
 import { backLink } from '../nav.js';
+import { tipEditor, amtWithTip } from '../txn.js';
 
 @customElement('hk-transactions')
 export class Transactions extends Page {
@@ -52,7 +53,7 @@ export class Transactions extends Page {
         ${this.rows.map((t) => html`<tr class="clickable ${t.flagged ? 'flagged' : ''}" data-id=${t.id} @click=${() => this.openTxn(t)}>
           <td @click=${(e: Event) => e.stopPropagation()}><input type="checkbox" .checked=${this.sel.has(t.id)} @change=${(e: any) => { e.target.checked ? this.sel.add(t.id) : this.sel.delete(t.id); this.requestUpdate(); }} /></td>
           <td>${fmtDate(t.occurred_on)}</td><td>${t.descriptor_clean || t.descriptor_raw} ${t.status === 'provisional' ? pendingBadge() : ''}${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<span class="badge">${t.ignored_reason ?? t.kind}</span>` : ''}${t.flagged ? html`<span class="badge bad" data-flag>⚑ ${t.flag_reason ?? 'flagged'}</span>` : ''}</td>
-          <td class="num">${amt(t.amount_cents)}</td><td>${t.splits.length > 1 ? `${t.splits.length} splits` : t.splits[0]?.category ?? html`<span class="badge warn">needs category</span>`}</td><td class="muted" style="max-width:260px">${t.note ?? ''}</td>
+          <td class="num">${amtWithTip(t.amount_cents, t.tip_cents ?? 0)}</td><td>${t.splits.length > 1 ? `${t.splits.length} splits` : t.splits[0]?.category ?? html`<span class="badge warn">needs category</span>`}</td><td class="muted" style="max-width:260px">${t.note ?? ''}</td>
           <td @click=${(e: Event) => e.stopPropagation()}><button class="icon flag-btn" aria-pressed=${t.flagged ? 'true' : 'false'} aria-label=${t.flagged ? 'Remove the flag' : 'Flag for review'} title=${t.flagged ? 'Flagged: click to unflag' : 'Flag for review'} @click=${() => this.toggleFlag(t)}>${t.flagged ? '⚑' : '⚐'}</button></td></tr>`)}
         ${this.rows.length === 0 ? html`<tr><td colspan="7" class="muted">No transactions match.</td></tr>` : nothing}
       </tbody></table></div>
@@ -74,7 +75,8 @@ export class Transactions extends Page {
   /** Draft splits live in component state so re-renders (adding a row, typing an amount) never discard edits. */
   openTxn(t: any) {
     this.err = '';
-    this.rows_ = t.splits.length ? t.splits.map((s: any) => ({ categoryId: s.category_id, cents: s.amount_cents })) : [{ categoryId: null, cents: t.amount_cents }];
+    const tip = t.tip_cents ?? 0; // the tip is shown on its own line: the boxes hold the charge before it
+    this.rows_ = t.splits.length ? t.splits.map((s: any, i: number) => ({ categoryId: s.category_id, cents: s.amount_cents + (i === t.splits.length - 1 ? tip : 0) })) : [{ categoryId: null, cents: t.amount_cents + tip }];
     this.open = t; this.cands = []; this.items = null; this.hist = [];
     if (['needs_note', 'ambiguous', 'awaiting_note'].includes(t.note_state)) api.get(`/api/transactions/${t.id}/note-candidates`).then((c) => { this.cands = c; });
     api.get(`/api/transactions/${t.id}/history`).then((h) => { this.hist = h; });
@@ -83,35 +85,33 @@ export class Transactions extends Page {
   /** A pending charge's tip, typed in by hand: the amount becomes what the bank will post, so the bank file pairs with it exactly. */
   tipBox(t: any) {
     const apply = async (cents: number) => {
-      if (!Number.isFinite(cents) || cents < 0) { this.err = 'Type the tip as an amount, like 4.00'; this.requestUpdate(); return; }
       await this.run(() => api.post(`/api/transactions/${t.id}/tip`, { tipCents: cents }));
       if (this.err) return;
       await this.load();
       const fresh = this.rows.find((r) => r.id === t.id);
       if (fresh) this.openTxn(fresh); else this.open = null;
     };
-    const read = () => parseMoney((this.querySelector('input.tipamt') as HTMLInputElement | null)?.value || '0');
-    return html`<h2>Tip</h2><p class="muted small" style="margin:0 0 4px">${t.tip_cents ? `This amount includes a ${money(t.tip_cents)} tip.` : 'Not posted yet. If you know the tip, add it so the bank file matches this charge exactly.'}</p>
-      <div class="row tiprow"><input class="tipamt" aria-label="Tip" inputmode="decimal" placeholder="0.00" .value=${t.tip_cents ? (t.tip_cents / 100).toFixed(2) : ''} /><button class="add-tip" @click=${() => apply(read())}>${t.tip_cents ? 'Update tip' : 'Add tip'}</button>${t.tip_cents ? html`<button class="remove-tip" @click=${() => apply(0)}>Remove tip</button>` : nothing}</div>`;
+    return html`<h2>Tip</h2>${tipEditor(t, apply)}`;
   }
   detail() {
-    const t = this.open; const rows = this.rows_;
+    const t = this.open; const rows = this.rows_; const tip = t.tip_cents ?? 0; const base = t.amount_cents + tip;
     const sum = () => rows.reduce((a: number, r: any) => a + r.cents, 0);
-    return html`<dialog class="txn-detail" @close=${() => { if (this.open) this.open = null; }} @click=${(e: MouseEvent) => { if (clickedBackdrop(e.currentTarget as HTMLDialogElement, e)) this.open = null; }}><h2>${t.descriptor_raw}</h2><div class="muted">${t.occurred_on} · ${t.account} · ${money(t.amount_cents)} ${t.decided_by ? `· decided by ${t.decided_by}${t.decided_rule_id ? ` (rule #${t.decided_rule_id})` : ''}` : ''}</div>
+    return html`<dialog class="txn-detail" @close=${() => { if (this.open) this.open = null; }} @click=${(e: MouseEvent) => { if (clickedBackdrop(e.currentTarget as HTMLDialogElement, e)) this.open = null; }}><h2>${t.descriptor_raw}</h2><div class="muted">${t.occurred_on} · ${t.account} · ${money(base)}${tip ? ` + ${money(tip)} tip` : ''} ${t.decided_by ? `· decided by ${t.decided_by}${t.decided_rule_id ? ` (rule #${t.decided_rule_id})` : ''}` : ''}</div>
       ${t.kind === 'ignored' || t.kind === 'internal_transfer' ? html`<p>Hidden: ${t.ignored_reason}. <button @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/restore`)); this.open = null; this.load(); }}>Restore</button></p>` : html`
       ${(t.status === 'provisional' || t.status === 'stale') && t.kind === 'spending' ? this.tipBox(t) : nothing}
       <h2>Splits</h2>${rows.map((r: any, i: number) => html`<div class="splitrow"><span class="splitcat">${catSelect(this.cats, r.categoryId, (id) => (r.categoryId = id), { includeRetired: true })}</span>
         <input class="splitamt" aria-label="Amount" .value=${(r.cents / 100).toFixed(2)} @change=${(e: any) => { r.cents = parseMoney(e.target.value); this.requestUpdate(); }} />${rows.length > 1 ? html`<button class="icon splitdel" aria-label="Remove this part" @click=${() => { rows.splice(i, 1); this.requestUpdate(); }}>✕</button>` : ''}</div>`)}
       <div class="row"><button @click=${() => { rows.push({ categoryId: null, cents: 0 }); this.requestUpdate(); }}>＋ split</button>
-        <button @click=${() => { if (rows.length === 2) { rows[0].cents = Math.round(t.amount_cents * 0.5); rows[1].cents = t.amount_cents - rows[0].cents; this.requestUpdate(); } }}>Even (2-way)</button>
-        <span class="muted right">remaining ${money(t.amount_cents - sum())}</span></div>
+        <button @click=${() => { if (rows.length === 2) { rows[0].cents = Math.round(base * 0.5); rows[1].cents = base - rows[0].cents; this.requestUpdate(); } }}>Even (2-way)</button>
+        <span class="muted right">remaining ${money(base - sum())}</span></div>
+      ${tip ? html`<div class="tip-line muted small">Tip +${money(tip)} (added to the last part when you save) · total ${money(t.amount_cents)}</div>` : nothing}
       ${this.cands.length ? html`<h2>Which note is this?</h2>${this.cands.slice(0, 5).map((c) => html`<div class="row" style="margin-bottom:4px"><span class="badge">${c.source}</span><span class="grow">${c.note || '(no note)'} <span class="muted">${c.counterparty ?? ''} · ${c.occurred_on}</span></span><button class="pick-note" @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/note`, { noteId: c.id })); this.cands = []; this.load(); }}>Use this</button></div>`)}` : ''}
       <div class="row" style="margin-top:6px"><button id="assign-items" @click=${() => this.loadItems(t)}>Assign items…</button></div>
       ${this.items ? (this.items.status === 'proposed' ? html`<p class="muted">Items allocated with tax and shipping so the splits add up to the charge. Review, then Save.</p>${this.items.items.map((i: any) => html`<div class="muted">${i.name} ${i.suggestedBy ? `· ${i.suggestedBy}` : ''}</div>`)}` : html`<p class="muted">This charge covers only part of the order (${this.items.status === 'pick_subset' ? 'several item combinations match' : 'no combination matches'}); split by hand.</p>`) : ''}
       <h2>Note</h2><input style="width:100%" .value=${t.note ?? ''} @change=${async (e: any) => { await this.run(() => api.patch(`/api/transactions/${t.id}`, { note: e.target.value })); }} />`}
       <div class="row" style="margin-top:12px"><button @click=${() => (this.open = null)}>Close</button><button class="flag-detail" @click=${() => this.toggleFlag(t)}>${t.flagged ? '⚑ Remove the flag' : '⚐ Flag for review'}</button>
         ${t.kind === 'ignored' || t.kind === 'internal_transfer' ? '' : html`<button class="danger" @click=${async () => { await this.run(() => api.post(`/api/transactions/${t.id}/ignore`, { reason: 'user' })); this.open = null; this.load(); }}>Hide</button>
-        <button class="primary" @click=${async () => { if (sum() !== t.amount_cents) { this.err = 'Splits must equal the amount'; this.requestUpdate(); return; } await this.run(() => api.post(`/api/transactions/${t.id}/categorize`, { splits: rows.map((r: any) => ({ categoryId: r.categoryId, amountCents: r.cents })) })); this.open = null; this.load(); }}>Save</button>`}</div>
+        <button class="primary" @click=${async () => { if (sum() !== base) { this.err = 'Splits must equal the amount'; this.requestUpdate(); return; } await this.run(() => api.post(`/api/transactions/${t.id}/categorize`, { splits: rows.map((r: any, i: number) => ({ categoryId: r.categoryId, amountCents: r.cents - (i === rows.length - 1 ? tip : 0) })) })); this.open = null; this.load(); }}>Save</button>`}</div>
       ${this.hist.length ? html`<details style="margin-top:10px"><summary class="muted">History (${this.hist.length})</summary>${this.hist.map((h: any) => html`<div class="muted" style="font-size:12px">${h.at} · ${h.actor} · ${h.action}</div>`)}</details>` : ''}
       ${this.err ? html`<p class="err">${this.err}</p>` : ''}</dialog>`;
   }

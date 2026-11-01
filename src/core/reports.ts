@@ -127,7 +127,7 @@ export const INBOX_WHERE = {
   stale: "t.kind!='ignored' AND t.status='stale'", // hiding a never-posted charge resolves it
   flagged: 't.kind!=\'ignored\' AND t.flagged=1',
 } as const;
-const INBOX_COLS = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.note, t.note_state, t.flag_reason, t.decided_rule_id, (SELECT name FROM merchants WHERE id=t.merchant_id) merchant, a.name account,
+const INBOX_COLS = `t.id, t.occurred_on, t.amount_cents, t.descriptor_raw, t.descriptor_clean, t.status, t.kind, t.tip_cents, t.note, t.note_state, t.flag_reason, t.decided_rule_id, (SELECT name FROM merchants WHERE id=t.merchant_id) merchant, a.name account,
     CASE WHEN t.kind='greenlight_reclass' THEN -COALESCE((SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id=t.id AND amount_cents>0),0) ELSE t.amount_cents END effective_cents,
     (SELECT s.memo FROM transaction_splits s WHERE s.transaction_id=t.id AND s.category_id IS NULL LIMIT 1) legacy_origin`;
 const INBOX_BASE = (where: string) => `FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.status!='void' AND ${where}`;

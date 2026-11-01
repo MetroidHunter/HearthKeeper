@@ -1,6 +1,7 @@
 import { html, nothing, render, type TemplateResult } from 'lit';
 import { api, money, fmtDate, parseMoney } from './api.js';
 import { amt, pace } from './shared.js';
+import { tipFromInput } from './tip.js';
 import { showDialog, alertBox, promptBox, toast, catSelect, pendingBadge, withBusy, type PickCat } from './ui.js';
 
 export interface BudgetRow { id: number; name: string; group: string | null; kind: string; targetCents: number; currentCents: number | null; spent: [number, number]; gained: [number, number] }
@@ -37,7 +38,7 @@ export function ruleBuilder(cs: RuleClause[], changed: () => void, fields: [stri
     <button class="rb-and-add" @click=${() => { cs.push({ alts: [{ field: 'descriptor', value: '' }] }); changed(); }}>＋ and another condition</button></div>`;
 }
 export interface Suggestion { id: number; name: string; why: string }
-export interface TxnLike { kind?: string; id: number; occurred_on: string; amount_cents: number; effective_cents?: number; descriptor_raw: string; descriptor_clean?: string | null; account: string; status?: string; merchant?: string | null; note?: string | null; note_state?: string; flag_reason?: string | null; why?: string; suggestions?: Suggestion[] }
+export interface TxnLike { kind?: string; id: number; occurred_on: string; amount_cents: number; effective_cents?: number; tip_cents?: number; descriptor_raw: string; descriptor_clean?: string | null; account: string; status?: string; merchant?: string | null; note?: string | null; note_state?: string; flag_reason?: string | null; why?: string; suggestions?: Suggestion[] }
 
 export interface Env {
   cats: PickCat[]; rows: BudgetRow[];
@@ -50,6 +51,33 @@ export const NOT_A_BUDGET_ITEM = 'Use this when the transaction is not household
 const whyLabel: Record<string, string> = { rule: 'your rule', 'merchant history': 'what you usually choose for this merchant', similar: 'a similar merchant', 'frequently used': 'often used' };
 
 /** The whole line as the bank sent it, plus everything we know, so a decision never has to be guessed. */
+/**
+ * The tip box for a pending charge: a percentage of the charge before the tip (or dollars, with the unit switch), with the dollar figure shown as you type.
+ * `apply` receives the tip in cents (0 takes it off). The same box is used on Home and in the Transactions detail dialog.
+ */
+export function tipEditor(t: { amount_cents: number; tip_cents?: number }, apply: (cents: number) => unknown): TemplateResult {
+  const tip = t.tip_cents ?? 0, base = Math.abs(t.amount_cents) - tip;
+  const parts = (box: HTMLElement) => ({ input: box.querySelector('input.tipamt') as HTMLInputElement, unit: box.querySelector('select.tipunit') as HTMLSelectElement, preview: box.querySelector('.tip-preview') as HTMLElement });
+  const refresh = (box: HTMLElement) => {
+    const { input, unit, preview } = parts(box); const v = tipFromInput(base, input.value, unit.value as 'pct' | 'amt');
+    preview.textContent = v === null ? 'Type a percentage like 20, or switch to $ for an amount' : v === 0 ? '' : `= ${money(v)}, total ${money(base + v)}`;
+    return v;
+  };
+  const go = (e: Event, cents?: number) => { const box = (e.currentTarget as HTMLElement).closest('.tipbox') as HTMLElement; const v = cents ?? refresh(box); if (v !== null) void apply(v); };
+  const quick = (e: Event, pct: number) => { const box = (e.currentTarget as HTMLElement).closest('.tipbox') as HTMLElement; const { input, unit } = parts(box); unit.value = 'pct'; input.value = String(pct); refresh(box); };
+  const pct = tip && base > 0 ? Math.round((tip / base) * 1000) / 10 : 0;
+  return html`<div class="tipbox" @input=${(e: Event) => refresh(e.currentTarget as HTMLElement)} @change=${(e: Event) => refresh(e.currentTarget as HTMLElement)}>
+    <div class="muted small tip-now">${tip ? `Total includes a ${money(tip)} tip (${pct}% of ${money(base)}).` : 'Not posted yet. Add the tip if you know it, so the bank file matches this charge exactly.'}</div>
+    <div class="row tiprow"><span class="muted small">Tip</span><input class="tipamt" aria-label="Tip" inputmode="decimal" placeholder="0" />
+      <select class="tipunit" aria-label="Tip unit"><option value="pct">%</option><option value="amt">$</option></select>
+      ${[15, 18, 20].map((n) => html`<button class="tipquick" @click=${(e: Event) => quick(e, n)}>${n}%</button>`)}
+      <button class="add-tip" @click=${(e: Event) => go(e)}>${tip ? 'Update tip' : 'Add tip'}</button>${tip ? html`<button class="remove-tip" @click=${(e: Event) => go(e, 0)}>Remove tip</button>` : nothing}</div>
+    <div class="tip-preview muted small" aria-live="polite"></div></div>`;
+}
+
+/** The amount without its tip, and the tip as its own small line beneath. */
+export const amtWithTip = (cents: number, tip = 0) => html`${amt(cents + tip)}${tip ? html`<span class="tiptag muted small">+${money(tip)} tip</span>` : nothing}`;
+
 export const fullLine = (t: TxnLike) => html`<div class="txn-line" title="Exactly as received">${fmtDate(t.occurred_on)} · ${t.account} · ${t.descriptor_raw}${t.note ? html` · note: ${t.note}` : nothing}</div>`;
 
 /** Log-style context: what came just before and after this on the same account. */
@@ -66,7 +94,7 @@ export async function showContext(t: TxnLike) {
  * the sign of the original is applied on save. Save stays disabled until every part has a category and the parts add up exactly.
  */
 export function splitDialog(env: Env, t: TxnLike): Promise<{ parts: { categoryId: number; amountCents: number }[]; note?: string } | undefined> {
-  const sign = (t.effective_cents ?? t.amount_cents) < 0 ? -1 : 1; const total = Math.abs(t.effective_cents ?? t.amount_cents);
+  const sign = (t.effective_cents ?? t.amount_cents) < 0 ? -1 : 1; const tip = t.tip_cents ?? 0; const total = Math.abs(t.effective_cents ?? t.amount_cents) - tip; // the tip is kept apart: the parts add up to the charge before it
   const fmt = (c: number) => (c / 100).toFixed(2);
   const lines: { categoryId: number | null; cents: number; text: string }[] = [{ categoryId: null, cents: total, text: fmt(total) }, { categoryId: null, cents: 0, text: '0.00' }];
   const original = t.note ?? ''; let note = original;
@@ -81,9 +109,9 @@ export function splitDialog(env: Env, t: TxnLike): Promise<{ parts: { categoryId
       <div class="row" style="margin-top:8px"><button class="splitadd" @click=${() => { const rest = Math.max(0, total - sum()); lines.push({ categoryId: null, cents: rest, text: fmt(rest) }); draw(); }}>＋ Add a part</button>
         <button class="spliteven" @click=${() => { const n = lines.length, each = Math.floor(total / n); lines.forEach((l, i) => { l.cents = i === n - 1 ? total - each * (n - 1) : each; l.text = fmt(l.cents); }); draw(); }}>Split evenly</button>
         <span class="right splitleft ${sum() === total ? 'pos' : 'neg'}" aria-live="polite">${sum() === total ? (lines.some((l) => !l.categoryId) ? 'Amounts add up. Choose a category for each part.' : lines.some((l) => l.cents <= 0) ? 'Every part needs an amount.' : 'Adds up') : sum() < total ? `${money(total - sum())} left to place` : `${money(sum() - total)} too much`}</span></div>
-      <div class="actions"><button class="cancel" @click=${() => close(undefined)}>Cancel</button><button class="primary splitsave" ?disabled=${!valid()} @click=${() => close({ parts: lines.map((l) => ({ categoryId: l.categoryId!, amountCents: sign * l.cents })), note: note.trim() !== original.trim() ? note.trim() : undefined })}>Save split</button></div>`;
+      <div class="actions"><button class="cancel" @click=${() => close(undefined)}>Cancel</button><button class="primary splitsave" ?disabled=${!valid()} @click=${() => close({ parts: lines.map((l, i) => ({ categoryId: l.categoryId!, amountCents: sign * (l.cents + (i === lines.length - 1 ? tip : 0)) })), note: note.trim() !== original.trim() ? note.trim() : undefined })}>Save split</button></div>`;
     draw();
-    return html`<h3 class="title">Split ${t.descriptor_clean || t.descriptor_raw}</h3><p class="muted small">${fmtDate(t.occurred_on)} · total ${money(total)} ${sign < 0 ? 'out' : 'in'}. Divide it between categories; the parts must add up to the total.</p>
+    return html`<h3 class="title">Split ${t.descriptor_clean || t.descriptor_raw}</h3><p class="muted small">${fmtDate(t.occurred_on)} · total ${money(total)} ${sign < 0 ? 'out' : 'in'}. Divide it between categories; the parts must add up to the total.${tip ? ` The ${money(tip)} tip is added to the last part.` : ''}</p>
       <label class="stack splitnote-l"><span class="muted small">Note${t.note ? '' : ' (none yet)'}</span><input class="splitnote" placeholder="Note" aria-label="Note" .value=${note} @input=${(e: any) => { note = e.target.value; }} /></label>${box}`;
   }, { dismiss: false });
 }
@@ -207,7 +235,7 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
     <div class="tcells">
       <span class="tdate">${fmtDate(t.occurred_on)}</span>
       <span class="tdesc" title=${t.descriptor_raw}>${t.descriptor_clean || t.descriptor_raw}${t.status === 'provisional' ? pendingBadge() : nothing}</span>
-      <span class="tamt">${amt(shown)}</span>
+      <span class="tamt">${amtWithTip(shown, t.tip_cents ?? 0)}</span>
       <span class="tcat">${catCell}</span>
       <span class="tnote">${noteCell}</span>
     </div>
@@ -220,6 +248,7 @@ export function txnRow(env: Env, t: TxnLike & { reason?: string; reasons?: { rea
       ${why.map((w) => html`<div class="muted small why-text"><span aria-hidden="true">ⓘ</span> ${w}</div>`)}
       <div class="muted small">${t.account}${t.status === 'provisional' ? ' · pending, not posted yet' : ''}</div>
       ${fullLine(t)}
+      ${(t.status === 'provisional' || t.status === 'stale') && t.kind === 'spending' ? tipEditor(t, (cents) => attempt(() => api.post(`/api/transactions/${t.id}/tip`, { tipCents: cents }), cents ? 'Tip saved' : 'Tip removed')) : nothing}
       <div class="row">${!catMissing ? html`<span class="muted small">Change category:</span>${catSelect(env.cats, null, (id) => { if (id) void decide(id); }, { placeholder: 'Search all categories…', reset: true })}` : nothing}
         ${!noteMissing ? html`<span class="muted small">${t.note ? 'Edit note:' : 'Add a note:'}</span><input class="note-edit" placeholder="Note" .value=${t.note ?? ''} @change=${(e: any) => saveNote(e.target.value)} />` : nothing}</div>
       <div class="row"><button class="split-btn" ?hidden=${t.kind === 'greenlight_reclass'} @click=${async () => { const s = await splitDialog(env, t); if (s) await attempt(async () => { if (s.note !== undefined) await patch({ note: s.note }); await api.post(`/api/transactions/${t.id}/categorize`, { splits: s.parts }); }, 'Split saved'); }}>Split…</button><button @click=${() => showContext(t)}>Show nearby transactions</button>${env.ignore ? html`<button data-tip=${NOT_A_BUDGET_ITEM} @click=${() => attempt(() => env.ignore!(t), 'Marked: not a budget item')}>Not a budget item</button>` : nothing}</div>
